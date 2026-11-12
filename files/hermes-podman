@@ -1,0 +1,17 @@
+#!/bin/sh
+# Podman for Hermes sandboxes (HERMES_DOCKER_BINARY in /etc/hermes/.env). Installed by hermes-manager.
+#
+# A rootless container's network helper (pasta) and its conmon are children of the podman command
+# that started the container. When the Hermes gateway starts a sandbox they land in the gateway's
+# systemd unit, and every gateway restart kills them: the container keeps running with no network.
+# Running `podman run|start|restart` in its own transient user scope keeps them out of the gateway
+# unit. Every other podman command passes straight through. Hermes recognises Podman by this file's
+# name, which must contain "podman".
+case "$1" in
+  run|start|restart)
+    if [ -n "$XDG_RUNTIME_DIR" ] && [ -S "$XDG_RUNTIME_DIR/systemd/private" ] && command -v systemd-run >/dev/null 2>&1; then
+      exec systemd-run --user --scope --quiet --collect -p Slice=hermes-sandboxes.slice -- /usr/bin/podman "$@"
+    fi
+    ;;
+esac
+exec /usr/bin/podman "$@"
