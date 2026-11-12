@@ -125,15 +125,16 @@ def build_webapp(force: bool = False) -> None:
         hermes_root(["webapp", "--build-only"], timeout=3600)
 
 
+def managed_files(s: Settings) -> dict[Path, str]:
+    return {MANAGED / "config.yaml": render.managed_config(s),
+            MANAGED / ".env": render.managed_env(),
+            MANAGED / "allowed-models.txt": render.allowed_models(s),
+            MANAGED / "model-guard-message.txt": render.model_guard_message(s)}
+
+
 def write_managed_scope(s: Settings) -> bool:
     """/etc/hermes; True when anything changed (gateways need a restart to see it)."""
-    changed = [
-        write_file(MANAGED / "config.yaml", render.managed_config(s)),
-        write_file(MANAGED / ".env", render.managed_env()),
-        write_file(MANAGED / "allowed-models.txt", render.allowed_models(s)),
-        write_file(MANAGED / "model-guard-message.txt", render.model_guard_message(s)),
-    ]
-    return any(changed)
+    return any([write_file(path, text) for path, text in managed_files(s).items()])
 
 
 def install_units(s: Settings) -> None:
