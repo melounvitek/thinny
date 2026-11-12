@@ -56,6 +56,7 @@ def server(tmp_path, monkeypatch):
     srv = Server(tmp_path)
     monkeypatch.setattr(system, "LOG_FILE", tmp_path / "hermes-manager.log")
     monkeypatch.setattr(update, "STATUS_FILE", tmp_path / "status.json")
+    monkeypatch.setattr(update, "UNFINISHED", tmp_path / "update-unfinished")
     monkeypatch.setattr(update, "REBOOT_REQUIRED", tmp_path / "reboot-required")
     monkeypatch.setattr(host, "latest_release",
                         lambda: ("v2", dt.datetime.now(dt.UTC) - dt.timedelta(hours=srv.age)))
@@ -65,7 +66,8 @@ def server(tmp_path, monkeypatch):
     for step in ("fix_permissions", "ensure_plugins", "build_webapp"):
         monkeypatch.setattr(host, step, srv.record(step))
     monkeypatch.setattr(people, "hermes", lambda name, args, **kw: srv.calls.append(f"{name}: hermes {' '.join(args)}"))
-    monkeypatch.setattr(people, "restart_all", lambda ps: srv.calls.append("restart " + " ".join(p.name for p in ps)))
+    monkeypatch.setattr(people, "restart_all",
+                        lambda ps, reg: srv.calls.append("restart " + " ".join(p.name for p in ps)))
     monkeypatch.setattr(update, "as_user", srv.as_user)
     return srv
 
@@ -103,27 +105,33 @@ def test_full_update(server):
     (server.tmp / "reboot-required").touch()
     assert update.run(S, registry()) == 0
     assert server.status()["detail"] == "updated to v2; the OS needs a reboot"
-    assert server.calls == [
-        "backup", UPDATE, "fix_permissions", "ensure_plugins", "build_webapp", "fix_permissions",
-        "alice: hermes pm install --extra all", "bob: hermes pm install --extra all", "restart alice bob",
-        "alice: podman image inspect --format {{.Id}} img", "alice: podman pull img",
-        "alice: podman image inspect --format {{.Id}} img", "alice: podman ps -a --format {{.Names}}",
-        "alice: podman rm -f hermes-1", "alice: podman rm -f --ignore hermes-1", "alice: podman image prune -f",
-        "bob: podman image inspect --format {{.Id}} img", "bob: podman pull img",
-        "bob: podman image inspect --format {{.Id}} img", "bob: podman ps --format {{.Names}}",
-        "bob: podman exec hermes-1 curl -s -o /dev/null -m 8 -w %{http_code} https://example.com/",
-        "bob: podman rm -f hermes-1", "bob: podman rm -f --ignore hermes-1", "bob: podman image prune -f",
-        "fix_permissions"]
+    calls = server.calls
+    # Backup before the code changes; people's environments follow the new lock before their
+    # gateways restart; the sandboxes are refreshed last. Pending people are left alone.
+    assert calls.index("backup") < calls.index(UPDATE) < calls.index("build_webapp")
+    assert calls.index("build_webapp") < calls.index("alice: hermes pm install --extra all") < calls.index(
+        "restart alice bob") < calls.index("alice: podman pull img")
+    assert not any(c.startswith("carol") for c in calls)
+    assert "alice: podman rm -f hermes-1" in calls       # new image: the old sandbox goes
+    assert "bob: podman rm -f hermes-1" in calls         # same image but no network: it goes too
+    assert not (server.tmp / "update-unfinished").exists()
 
 
-def test_a_failing_step_fails_the_update(server, monkeypatch):
-    def restart_all(ps):
+def test_an_interrupted_update_is_finished_by_the_next_run(server, monkeypatch):
+    def restart_all(ps, reg):
         raise CommandError("bob: gateway not active, Webapp HTTP 000")
     monkeypatch.setattr(people, "restart_all", restart_all)
     assert update.run(S, registry()) == 1
     assert (server.status()["result"], server.status()["detail"]) == (
         "FAILED", "bob: gateway not active, Webapp HTTP 000")
-    assert server.calls[-2:] == ["bob: hermes pm install --extra all", "fix_permissions"]
+
+    monkeypatch.setattr(people, "restart_all", lambda ps, reg: server.calls.append("restart"))
+    server.calls.clear()
+    assert update.run(S, registry()) == 0   # v2 is installed now, but the rollout was not finished
+    assert server.status()["result"] == "ok"
+    assert UPDATE not in server.calls and "restart" in server.calls
+    assert update.run(S, registry()) == 0
+    assert server.status()["result"] == "up-to-date"
 
 
 def test_backup_keeps_the_newest_ones(tmp_path, monkeypatch):

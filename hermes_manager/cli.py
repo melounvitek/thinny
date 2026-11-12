@@ -79,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
                 return update.run(s, reg, check=a.check, now=a.now)
             elif a.command == "restart":
                 targets = [reg.get(n) for n in a.names] if a.names else reg.current()
-                people.restart_all([p for p in targets if p.state == "active"])
+                people.restart_all([p for p in targets if p.state == "active"], reg)
         return 0
     except (SettingsError, RegistryError, CommandError) as e:
         print(f"hermes-manager: {e}", file=sys.stderr)

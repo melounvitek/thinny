@@ -39,5 +39,5 @@ def apply(s: Settings) -> None:
     if managed_changed:
         log("the managed scope changed: restarting every gateway")
         to_restart = active
-    people.restart_all(to_restart)
+    people.restart_all(to_restart, reg)
     log("applied")

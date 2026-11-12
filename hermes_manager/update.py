@@ -15,6 +15,8 @@ from .settings import Settings
 from .system import STATE_DIR, CommandError, as_user, hermes_root, log, write_file
 
 STATUS_FILE = STATE_DIR / "update-status.json"
+# Present from the start of an update until every gateway runs it; a later run finishes the job.
+UNFINISHED = STATE_DIR / "update-unfinished"
 BACKUP_DIR = Path("/var/backups/hermes-manager")
 BACKUPS_KEPT = 14
 REBOOT_REQUIRED = Path("/run/reboot-required")
@@ -29,7 +31,11 @@ def run(s: Settings, reg: Registry, *, check: bool = False, now: bool = False) -
         installed = host.installed_tags()
         age = (dt.datetime.now(dt.UTC) - published).total_seconds() / 3600
         log(f"installed: {', '.join(sorted(installed)) or 'untagged'}; latest stable: {tag}, out {age:.0f} h")
-        if tag in installed:
+        if UNFINISHED.exists() and not check:
+            log("finishing the interrupted update")
+            rollout(s, reg)
+            result, detail = "ok", f"finished the interrupted update ({', '.join(sorted(installed))})"
+        elif tag in installed:
             result, detail = "up-to-date", tag
         elif age < s.min_release_age_hours and not now:
             result, detail = "waiting", f"{tag} is {age:.0f} h old, waiting for {s.min_release_age_hours:.0f} h"
@@ -55,18 +61,26 @@ def run(s: Settings, reg: Registry, *, check: bool = False, now: bool = False) -
 
 
 def update(s: Settings, reg: Registry, tag: str) -> None:
+    UNFINISHED.parent.mkdir(parents=True, exist_ok=True)
+    UNFINISHED.write_text(tag + "\n")
     log(f"backup: {backup(s)}")
     log(f"updating Hermes to {tag}")
     res = hermes_root(["update", "--yes", "--no-gateway-restart"], timeout=3600)
     for line in (res.stdout + res.stderr).strip().splitlines()[-8:]:
         log(f"  | {line}")
+    if tag not in host.installed_tags():
+        raise CommandError(f"hermes update finished but the install is not at {tag}")
+    rollout(s, reg)
+
+
+def rollout(s: Settings, reg: Registry) -> None:
+    """Everything after the code changed: permissions, plugins, Webapp, people's environments,
+    gateways, sandboxes. Safe to repeat."""
     log("restoring permissions and local plugins")
     host.fix_permissions()
     host.ensure_plugins(s)
     host.build_webapp(force=True)
     host.fix_permissions()
-    if tag not in host.installed_tags():
-        raise CommandError(f"hermes update finished but the install is not at {tag}")
 
     active = [p for p in reg.current() if p.state == "active"]
     for p in active:
@@ -75,9 +89,10 @@ def update(s: Settings, reg: Registry, tag: str) -> None:
         # person's own home (and skips the root-owned tool store).
         log(f"{p.name}: Hermes environment (hermes pm install --extra all)")
         people.hermes(p.name, ["pm", "install", "--extra", "all"], timeout=1800)
-    people.restart_all(active)
+    people.restart_all(active, reg)
     for p in active:
         refresh_sandboxes(s, p.name)
+    UNFINISHED.unlink(missing_ok=True)
 
 
 def backup(s: Settings) -> Path:

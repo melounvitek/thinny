@@ -13,11 +13,12 @@ from pathlib import Path
 from . import host, render
 from .registry import Person, Registry, RegistryError
 from .settings import ACCESS_METHODS, Settings
-from .system import (CommandError, as_user, as_user_interactive, gateway_active, http_status, log, run,
-                     tailscale_name, uid_of, write_user_file)
+from .system import (STATE_DIR, CommandError, as_user, as_user_interactive, gateway_active, http_status, log,
+                     run, tailscale_name, uid_of, write_file, write_user_file)
 
 AUTH_PREFIX = "HERMES_DASHBOARD_BASIC_AUTH_"
 RESTART_TIMEOUT = 45 * 60  # a restart waits for a running reply (up to 30 min by default)
+RESTART_PENDING = STATE_DIR / "restart-pending"
 
 
 def hermes(name: str, args: list[str], **kw):
@@ -153,12 +154,18 @@ def start_or_restart_gateway(p: Person) -> None:
     check_gateway(p)
 
 
-def restart_all(people: list[Person]) -> None:
-    """One gateway at a time (each waits for a running reply); stop at the first failure."""
-    for p in people:
+def restart_all(people: list[Person], reg: Registry) -> None:
+    """One gateway at a time (each waits for a running reply); stop at the first failure.
+    Gateways not restarted yet are remembered, and the next restart_all does them too."""
+    pending = RESTART_PENDING.read_text().split() if RESTART_PENDING.exists() else []
+    targets = list({p.name: p for p in [*people, *(reg.people[n] for n in pending if n in reg.people)]
+                    if p.state == "active"}.values())
+    for i, p in enumerate(targets):
+        write_file(RESTART_PENDING, "".join(f"{t.name}\n" for t in targets[i:]), 0o600)
         log(f"restarting {p.name} (port {p.port})")
         start_or_restart_gateway(p)
         log(f"  ok {p.name}")
+    RESTART_PENDING.unlink(missing_ok=True)
 
 
 # ---------- commands ----------
