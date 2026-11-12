@@ -206,7 +206,7 @@ def exposed_listeners(ss_output: str) -> list[tuple[str, str, list[int]]]:
         if len(cols) < 6:
             continue  # no owning process (kernel sockets)
         local, process = cols[3], cols[5]
-        address = local.rpartition(":")[0].strip("[]").partition("%")[0]
+        address = local.rpartition(":")[0].partition("%")[0].strip("[]")
         if address != "*" and ipaddress.ip_address(address).is_loopback:
             continue
         program = re.search(r'\(\("([^"]*)"', process)

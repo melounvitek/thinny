@@ -21,6 +21,7 @@ LISTEN 0      128          0.0.0.0:8080       0.0.0.0:*    users:(("python3",pid
 LISTEN 0      4096            [::]:9999          [::]:*    users:(("node",pid=3001,fd=20))
 LISTEN 0      4096               *:7000             *:*    users:(("my app",pid=4001,fd=5))
 LISTEN 0      4096   100.64.0.5%tailscale0:443 0.0.0.0:* users:(("tailscaled",pid=600,fd=7))
+LISTEN 0      4096   [fd7a:115c:a1e0::5]%tailscale0:443 [::]:* users:(("tailscaled",pid=600,fd=8))
 LISTEN 0      64           0.0.0.0:2049       0.0.0.0:*
 """
     assert checks.exposed_listeners(ss) == [
@@ -28,6 +29,7 @@ LISTEN 0      64           0.0.0.0:2049       0.0.0.0:*
         ("[::]:9999", "node", [3001]),
         ("*:7000", "my app", [4001]),
         ("100.64.0.5%tailscale0:443", "tailscaled", [600]),
+        ("[fd7a:115c:a1e0::5]%tailscale0:443", "tailscaled", [600]),
     ]
 
 
