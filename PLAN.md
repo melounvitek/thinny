@@ -1,7 +1,7 @@
 # hermes-manager: plan
 
-Status: agreed after review; round 0 (spike on the test server) done, findings in section 4.
-Next: round 1. No code yet.
+Status: rounds 0-5 implemented and tested on the test server (2026-11-12). The README is the
+user documentation; this file keeps the design and what we learned.
 
 ## 1. Goal
 
@@ -97,11 +97,15 @@ accounts on a separate v0.23.0 install, updated it to v0.23.1 and rebooted the s
   shared across accounts.
 - After a code update, the automatic resync at launch is refused for a root-owned
   checkout ("refusing to update ... owned by uid 0") and Hermes keeps running on the old
-  dependencies; `hermes pm repair` as the person works (7 s) **[tested]**. `hermes update`
-  leaves `install-stamp.json` at 600, so `pm repair` fails until permissions are fixed
-  **[tested]**. Even after `pm repair`, person accounts keep printing "venv out of sync with
-  uv.lock" and retrying the refused resync; root and the prototype account do not.
-  Gateways restart and pass the checks anyway **[tested]**; cause open.
+  dependencies. `hermes pm repair` does **not** fix that: it rebuilds the recorded (old)
+  dependency set, so people ran new code on old dependencies (a package v0.23.1 removed was
+  still loaded) and kept printing "venv out of sync with uv.lock". `hermes pm install --extra
+  all` as the person syncs to the new lock in their own home, skips the root-owned tool store,
+  removes the warning and is a no-op when current **[tested]**. `hermes update` leaves
+  `install-stamp.json` at 600, so person commands fail until permissions are fixed **[tested]**.
+  For a new person `pm repair` builds a current environment **[tested]**.
+- Old environment generations (~130 MB each) pile up in people's homes; `hermes pm gc` as a
+  person fails on the root-owned tool store lock **[tested]**.
 - Account home dir 700, linger on. Rootless Podman images are per account (~4 GB each).
 - `/proc` mounted `hidepid=invisible` with a `proc-viewers` group for logind **[proto]**.
 
@@ -281,18 +285,20 @@ accounts on a separate v0.23.0 install, updated it to v0.23.1 and rebooted the s
 ### 6.1 Repository layout
 
 ```
-install.sh                    thin bootstrap: packages, files, then `hermes-manager apply`
-hermes-manager                admin CLI, Python 3 stdlib only, runs as root
+install.sh                    thin bootstrap: packages, the tool, then `hermes-manager install`
+hermes-manager                admin CLI entry point (Python 3 stdlib only, runs as root)
+hermes_manager/               settings, registry, render (all generated text), system, host
+                              (shared install, firewall, access), people, apply, checks, update
+files/                        installed as-is: hermes-podman, model-guard/
 site.example.toml             every site setting, commented
-files/                        installed as-is
-  hermes-podman
-  hermes-nightly-update (+ .service, .timer)
-  model-guard/
-templates/                    rendered from site.toml: managed config + .env, UI template,
-                              nft table + its unit, Caddy sites
-extras/                       later: netcup snapshot, morning watchdog
-tests/                        pytest: rendering, registry, port allocation, name validation
+extras/                       netcup snapshot, nightly watch (run off the server)
+tests/                        pytest
 ```
+
+The nightly update is `hermes-manager update` (unit `hermes-manager-update.timer`), and the
+one-by-one restart is `hermes-manager restart`. The language pack is a catalog plugin name;
+its commit comes from the installed Hermes plugin catalog. A proxy account for `url` access
+comes from `access.proxy_users` (not asked per person).
 
 ### 6.2 State on the server
 
@@ -415,10 +421,11 @@ blocked_networks = []            # e.g. the office LAN; tailnet blocked when Tai
 Ported from the prototype with these changes:
 - `auto_update = false` only checks and writes the status file.
 - People from the registry, not from unit files.
-- If the snapshot extra is configured, that night's snapshot must have succeeded.
-- After `hermes update`: fix permissions, rebuild the Webapp if needed, `hermes pm repair`
-  as each person, then `gateway restart --yes` one by one with the checks; stop at the
-  first failure.
+- Not implemented: waiting for that night's snapshot (it runs off the server, so the server
+  cannot see it); the README says the snapshot is the only way back.
+- After `hermes update`: fix permissions, restore plugins, rebuild the Webapp, `hermes pm
+  install --extra all` as each person, then `gateway restart --yes` one by one with the
+  checks; stop at the first failure.
 - Pull the sandbox image per person and recreate idle sandboxes.
 - After the update: model-guard and the language pack still enabled.
 - Report when the OS needs a reboot (`/run/reboot-required`); never reboot.
@@ -458,8 +465,8 @@ prerequisites stay), snapshotted, and restored before each installer test.
 
 ## 9. Open questions
 
-- Why person accounts keep reporting "venv out of sync" after `pm repair` (round 3).
-- Whether `hermes update` rebuilds the Webapp bundle (round 3).
+- Report upstream: `refuse_foreign_owned_venv` refusing the borrowed resync although it
+  writes only to the person's home; `pm gc` failing for borrowers.
 - Alerting from the server itself (no mail sender today; the watchdog runs off-server).
 - A shared read-only image store for rootless Podman if disk becomes a problem.
 - Per-person ChatGPT seats versus one API account per organisation (a local proxy such as
