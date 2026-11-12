@@ -29,7 +29,7 @@ CADDYFILE = Path("/etc/caddy/Caddyfile")
 FIREWALL_FILE = Path("/etc/hermes-manager/hermes-manager.nft")
 SYSTEMD = Path("/etc/systemd/system")
 RELEASES_API = "https://api.github.com/repos/NousResearch/hermes-agent/releases/latest"
-INSTALLER_URL = "https://raw.githubusercontent.com/NousResearch/hermes-agent/{tag}/scripts/install.sh"
+INSTALLER_URL = "https://hermes-agent.nousresearch.com/install.sh"
 
 
 def latest_release() -> tuple[str, dt.datetime]:
@@ -50,12 +50,11 @@ def install_hermes() -> None:
     would update Hermes outside the careful nightly update."""
     if (CHECKOUT / ".git").exists():
         return
-    tag, _ = latest_release()
-    log(f"installing Hermes {tag} into {INSTALL} (takes a few minutes)")
-    with urllib.request.urlopen(INSTALLER_URL.format(tag=tag), timeout=60) as r:
+    log(f"installing the latest stable Hermes into {INSTALL} (takes a few minutes)")
+    with urllib.request.urlopen(INSTALLER_URL, timeout=60) as r:
         script = r.read()
     ROOT_HERMES_HOME_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-    installer = ROOT_HERMES_HOME_DIR / f"hermes-install-{tag}.sh"
+    installer = ROOT_HERMES_HOME_DIR / "hermes-install.sh"
     installer.write_bytes(script)
     env = {"PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C.UTF-8",
            "HOME": str(ROOT_HERMES_HOME_DIR), "HERMES_HOME": str(INSTALL), "HERMES_HOME_MODE": "0711"}
