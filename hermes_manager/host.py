@@ -4,6 +4,7 @@ firewall, units and the proxies that publish Webapps."""
 from __future__ import annotations
 
 import datetime as dt
+import fcntl
 import io
 import json
 import re
@@ -27,6 +28,7 @@ FILES = LIB / "files"
 WEBAPP_INDEX = CHECKOUT / "apps/desktop/dist-webapp/index.html"
 CADDYFILE = Path("/etc/caddy/Caddyfile")
 FIREWALL_FILE = Path("/etc/hermes-manager/hermes-manager.nft")
+FIREWALL_LOCK = Path("/run/hermes-manager-firewall.lock")
 SYSTEMD = Path("/etc/systemd/system")
 RELEASES_API = "https://api.github.com/repos/NousResearch/hermes-agent/releases/latest"
 INSTALLER_URL = "https://hermes-agent.nousresearch.com/install.sh"
@@ -148,22 +150,28 @@ def install_units(s: Settings) -> None:
     run(["systemctl", "enable", "--now", "hermes-manager-firewall.service", "hermes-manager-update.timer"])
 
 
-def proxy_uids(s: Settings) -> list[int]:
-    names = [*s.proxy_users, "caddy"]
-    return sorted(uid for uid in map(uid_of, names) if uid is not None)
+def proxy_uids(s: Settings, reg: Registry) -> list[int]:
+    """Accounts allowed to connect to people's Webapps besides root; never a person."""
+    people = {p.uid for p in reg.people.values()}
+    return sorted(uid for uid in map(uid_of, [*s.proxy_users, "caddy"]) if uid is not None and uid not in people)
 
 
-def firewall(s: Settings, reg: Registry) -> None:
-    """Load the person-isolation table. Never restart nftables.service: on Debian that flushes
-    every table, Tailscale's included."""
-    uids = [p.uid for p in reg.people.values() if p.uid is not None]
-    text = render.firewall(people_uids=uids, slice_uids=slice_uids(), proxy_uids=proxy_uids(s),
-                           blocked_networks=list(s.blocked_networks),
-                           # installed, not running: at boot the table loads before tailscaled is up
-                           tailscale=shutil.which("tailscale") is not None)
-    write_file(FIREWALL_FILE, text, 0o644)
-    run(["nft", "-c", "-f", str(FIREWALL_FILE)])
-    run(["nft", "-f", str(FIREWALL_FILE)])
+def firewall(s: Settings) -> None:
+    """Load the person-isolation table from the registry and the user slices as they are now.
+    Several user managers start at once at boot, so loads are serialised: a load with an older
+    snapshot must not replace a newer one. Never restart nftables.service: on Debian that
+    flushes every table, Tailscale's included."""
+    with FIREWALL_LOCK.open("w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        reg = Registry.load()
+        text = render.firewall(people=[(p.uid, p.port) for p in reg.people.values() if p.uid is not None],
+                               slice_uids=slice_uids(), proxy_uids=proxy_uids(s, reg),
+                               blocked_networks=list(s.blocked_networks),
+                               # installed, not running: at boot the table loads before tailscaled is up
+                               tailscale=shutil.which("tailscale") is not None)
+        write_file(FIREWALL_FILE, text, 0o644)
+        run(["nft", "-c", "-f", str(FIREWALL_FILE)])
+        run(["nft", "-f", str(FIREWALL_FILE)])
 
 
 def reconcile_access(s: Settings, reg: Registry) -> None:
@@ -175,7 +183,7 @@ def reconcile_access(s: Settings, reg: Registry) -> None:
             log("installing Caddy for office-network access")
             run(["apt-get", "install", "-y", "-q", "caddy"], env={"DEBIAN_FRONTEND": "noninteractive",
                                                                 "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}, timeout=900)
-            firewall(s, reg)  # the new caddy account may now reach people's Webapps
+            firewall(s)  # the new caddy account may now reach people's Webapps
         if write_file(CADDYFILE, render.caddyfile(s, lan)):
             run(["caddy", "validate", "--config", str(CADDYFILE), "--adapter", "caddyfile"], check=False)
             run(["systemctl", "restart", "caddy"])  # no admin API, so no reload

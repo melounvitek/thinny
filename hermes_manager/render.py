@@ -112,17 +112,21 @@ def caddyfile(s: Settings, lan_ports: list[int]) -> str:
     return f"# {HEADER}\n{{\n\tadmin off\n\tskip_install_trust\n}}\n{sites}"
 
 
-def firewall(*, people_uids: list[int], slice_uids: list[int], proxy_uids: list[int],
+def firewall(*, people: list[tuple[int, int]], slice_uids: list[int], proxy_uids: list[int],
              blocked_networks: list[str], tailscale: bool) -> str:
-    """nft table for person isolation.
+    """nft table for person isolation; `people` are (uid, Webapp port) pairs.
 
     Loopback: a new TCP connection to a socket inside a person's user slice is accepted only
     from root, that person, or a proxy account (the sender's uid travels in the packet mark).
-    nft resolves cgroup paths when loading, so only slices that exist get a rule; the table
-    is reloaded whenever a person's user manager starts.
-    Outgoing: people may not reach the blocked networks (the tailnet when Tailscale runs,
-    except MagicDNS).
+    A person's Webapp port only reaches a socket in that person's slice, so nobody else can
+    take the port over while their gateway is down and receive their browser's sign-in.
+    nft resolves cgroup paths when loading, so only slices that exist get a rule (a port
+    without its owner's slice is closed); the table is reloaded whenever a person's user
+    manager starts.
+    Outgoing: people may not reach the blocked networks (the tailnet with Tailscale, except
+    MagicDNS).
     """
+    people_uids = [uid for uid, _ in people]
     nets = [ipaddress.ip_network(n) for n in [*blocked_networks, *(TAILNET if tailscale else ())]]
     # nft refuses overlapping intervals in one set.
     v4 = list(ipaddress.collapse_addresses(n for n in nets if n.version == 4))
@@ -138,6 +142,9 @@ def firewall(*, people_uids: list[int], slice_uids: list[int], proxy_uids: list[
     out += ['\t\tmeta skuid @people ip daddr @blocked_v4 reject',
             '\t\tmeta skuid @people ip6 daddr @blocked_v6 reject']
     inp = []
+    for uid, port in sorted(people, key=lambda p: p[1]):
+        owner = f'socket cgroupv2 level 2 != "user.slice/user-{uid}.slice" ' if uid in slice_uids else ""
+        inp.append(f'\t\tiif "lo" tcp dport {port} ct state new {owner}reject with tcp reset')
     for uid in sorted(set(people_uids) & set(slice_uids)):
         allowed = ", ".join(str(u) for u in sorted({0, uid, *proxy_uids}))
         inp.append(f'\t\tiif "lo" meta l4proto tcp ct state new socket cgroupv2 level 2 '

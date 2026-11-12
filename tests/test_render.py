@@ -65,7 +65,7 @@ def test_caddyfile_has_one_https_site_per_lan_person_and_no_admin_api():
 
 
 def test_firewall_protects_people_whose_slice_exists():
-    text = render.firewall(people_uids=[1001, 1002], slice_uids=[1000, 1001], proxy_uids=[987],
+    text = render.firewall(people=[(1001, 9120), (1002, 9121)], slice_uids=[1000, 1001], proxy_uids=[987],
                            blocked_networks=["192.168.1.0/24"], tailscale=False)
     assert 'socket cgroupv2 level 2 "user.slice/user-1001.slice" meta mark != { 0, 987, 1001 } reject' in text
     assert "user-1002.slice" not in text   # no slice yet: nft would refuse the path
@@ -76,8 +76,17 @@ def test_firewall_protects_people_whose_slice_exists():
     assert text.startswith("# ") and "delete table inet hermes_manager" in text
 
 
+def test_webapp_ports_only_reach_their_owner():
+    text = render.firewall(people=[(1001, 9120), (1002, 9121)], slice_uids=[1001], proxy_uids=[],
+                           blocked_networks=[], tailscale=False)
+    assert ('iif "lo" tcp dport 9120 ct state new socket cgroupv2 level 2 != "user.slice/user-1001.slice" '
+            "reject with tcp reset") in text
+    # Without the owner's slice nobody may serve the port.
+    assert 'iif "lo" tcp dport 9121 ct state new reject with tcp reset' in text
+
+
 def test_firewall_blocks_the_tailnet_except_magicdns_when_tailscale_runs():
-    text = render.firewall(people_uids=[], slice_uids=[], proxy_uids=[], blocked_networks=[], tailscale=True)
+    text = render.firewall(people=[], slice_uids=[], proxy_uids=[], blocked_networks=[], tailscale=True)
     assert "elements = { 100.64.0.0/10 }" in text
     assert "elements = { fd7a:115c:a1e0::/48 }" in text
     assert text.index("100.100.100.100") < text.index("@blocked_v4 reject")
@@ -85,7 +94,7 @@ def test_firewall_blocks_the_tailnet_except_magicdns_when_tailscale_runs():
 
 
 def test_firewall_merges_overlapping_networks():
-    text = render.firewall(people_uids=[], slice_uids=[], proxy_uids=[], blocked_networks=["fd00::/8"],
+    text = render.firewall(people=[], slice_uids=[], proxy_uids=[], blocked_networks=["fd00::/8"],
                            tailscale=True)
     assert "elements = { fd00::/8 }" in text
 

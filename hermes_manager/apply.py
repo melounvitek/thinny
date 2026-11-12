@@ -25,7 +25,7 @@ def apply(s: Settings) -> None:
     managed_changed = host.write_managed_scope(s)
     host.ensure_plugins(s)
     host.fix_permissions()
-    host.firewall(s, reg)
+    host.firewall(s)
 
     active = [p for p in reg.current() if p.state == "active"]
     to_restart = []

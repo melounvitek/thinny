@@ -179,6 +179,8 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
             raise CommandError(f"{name} was removed; names are not reused")
         log(f"resuming the unfinished setup of {name}")
     else:
+        if name in ("caddy", *s.proxy_users):
+            raise CommandError(f"{name!r} is reserved for a proxy account; choose another name")
         if uid_of(name) is not None:
             raise CommandError(f"a Linux account {name!r} already exists; choose another name")
         p = reg.add(name, access, s.port_range)
@@ -188,7 +190,7 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     log(f"{name}: account")
     p.uid = ensure_account(name)
     reg.save()
-    host.firewall(s, reg)  # the user slice exists now, so the loopback rule can load
+    host.firewall(s)  # the user slice exists now, so the loopback rule can load
     log(f"{name}: Hermes environment (hermes pm repair)")
     hermes(name, ["pm", "repair"], timeout=1800)
     p.url = url_for(s, p)
@@ -264,7 +266,7 @@ def remove(s: Settings, reg: Registry, name: str) -> None:
     p.state = "disabled"
     reg.save()
     host.reconcile_access(s, reg)
-    host.firewall(s, reg)
+    host.firewall(s)
     print(f"{name} removed: account locked, Webapp and agent stopped. Their data stays in "
           f"{pwd.getpwnam(name).pw_dir if uid_of(name) is not None else '(no home)'}.")
 

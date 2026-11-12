@@ -1,6 +1,5 @@
 import datetime as dt
 import json
-import os
 
 import pytest
 
@@ -76,15 +75,12 @@ def write(path, text):
     path.write_text(text)
 
 
-def test_bypasses_are_reported_by_name_only(tmp_path):
-    hermes_home = tmp_path / ".hermes"
-    write(hermes_home / ".env", "# HERMES_BUNDLED_PLUGINS=/off\nexport HERMES_MANAGED_DIR=/home/alice/mine\n"
-                                "HERMES_ENABLE_PROJECT_PLUGINS=1\nOPENAI_API_KEY=sk-secret\n")
-    (hermes_home / "plugins/model-guard").mkdir(parents=True)
-    write(tmp_path / ".config/systemd/user/hermes-gateway.service",
-          "[Service]\nEnvironment=HERMES_BUNDLED_PLUGINS=/home/alice/p\nExecStart=/home/alice/bin/hermes gateway run\n")
+def test_bypasses_are_reported_by_name_only():
+    env = ("# HERMES_BUNDLED_PLUGINS=/off\nexport HERMES_MANAGED_DIR=/home/alice/mine\n"
+           "HERMES_ENABLE_PROJECT_PLUGINS=1\nOPENAI_API_KEY=sk-secret\n")
+    unit = "[Service]\nEnvironment=HERMES_BUNDLED_PLUGINS=/home/alice/p\nExecStart=/home/alice/bin/hermes gateway run\n"
 
-    results = checks.bypasses("alice", hermes_home)
+    results = checks.bypasses("alice", env, unit, own_guard=True)
     assert {level for level, _, _ in results} == {"WARN"}
     messages = [message for _, message, _ in results]
     assert messages[0].endswith(".env sets HERMES_MANAGED_DIR, HERMES_ENABLE_PROJECT_PLUGINS")
@@ -95,19 +91,10 @@ def test_bypasses_are_reported_by_name_only(tmp_path):
     assert "/home/alice/mine" not in "".join(m + f for _, m, f in results)
 
 
-def test_untouched_home_has_no_bypass(tmp_path):
-    hermes_home = tmp_path / ".hermes"
-    write(hermes_home / ".env", "HERMES_DASHBOARD_BASIC_AUTH_USERNAME=alice\n")
-    write(tmp_path / ".config/systemd/user/hermes-gateway.service",
-          "[Service]\nExecStart=/opt/hermes/hermes-agent/.hermes/bin/hermes gateway run --replace\n")
-    assert [level for level, _, _ in checks.bypasses("alice", hermes_home)] == ["OK"]
-
-
-def test_a_planted_fifo_is_not_read(tmp_path):
-    hermes_home = tmp_path / ".hermes"
-    hermes_home.mkdir()
-    os.mkfifo(hermes_home / ".env")  # opening it for reading would block forever
-    assert [level for level, _, _ in checks.bypasses("alice", hermes_home)] == ["OK"]
+def test_untouched_home_has_no_bypass():
+    unit = "[Service]\nExecStart=/opt/hermes/hermes-agent/.hermes/bin/hermes gateway run --replace\n"
+    results = checks.bypasses("alice", "HERMES_DASHBOARD_BASIC_AUTH_USERNAME=alice\n", unit, own_guard=False)
+    assert [level for level, _, _ in results] == ["OK"]
 
 
 @pytest.mark.parametrize("reboot, warned", [("02:00", True), ("03:00", True), ("04:30", False), ("now", False)])

@@ -10,10 +10,8 @@ import datetime as dt
 import grp
 import ipaddress
 import json
-import os
 import re
 import shutil
-import stat
 from pathlib import Path
 
 from . import host, people, render, system
@@ -252,48 +250,34 @@ def environment(p: Person):
 
 
 def bypass(p: Person):
-    yield from bypasses(p.name, people.home(p.name))
+    home = people.home(p.name)
+
+    def read(path):  # as the person: as root, a planted symlink or FIFO could redirect or hang the read
+        return system.as_user(p.name, ["cat", str(path)], check=False, timeout=30).stdout
+
+    unit = home.parent / ".config/systemd/user/hermes-gateway.service"
+    own_guard = system.as_user(p.name, ["test", "-e", str(home / "plugins/model-guard")],
+                               check=False, timeout=30).returncode == 0
+    yield from bypasses(p.name, read(home / ".env"), read(unit), own_guard)
 
 
-def bypasses(name: str, hermes_home: Path) -> list:
+def bypasses(name: str, env_text: str, unit_text: str, own_guard: bool) -> list:
     """Ways around the central policy in a person's own files (a guardrail, so WARN).
     Reports variable names only, never file contents."""
     found = []
-    env = hermes_home / ".env"
-    env_text = read_person_file(env)
     names = [v for v in BYPASS_VARS if re.search(rf"^\s*(export\s+)?{v}\s*=", env_text, re.M)]
     if names:
-        found.append(warn(f"{name}: {env} sets {', '.join(names)}", f"remove them from {env}, as {name}"))
-    plugin = hermes_home / "plugins/model-guard"
-    if plugin.exists():
-        found.append(warn(f"{name}: {plugin} replaces the server's model guard",
-                          f"runuser -u {name} -- rm -r {plugin}"))
-    unit = hermes_home.parent / ".config/systemd/user/hermes-gateway.service"
-    unit_text = read_person_file(unit)
+        found.append(warn(f"{name}: ~/.hermes/.env sets {', '.join(names)}", f"remove them, as {name}"))
+    if own_guard:
+        found.append(warn(f"{name}: ~/.hermes/plugins/model-guard replaces the server's model guard",
+                          f"runuser -l {name} -c 'rm -r ~/.hermes/plugins/model-guard'"))
     names = [v for v in BYPASS_VARS if v in unit_text]
     if names:
-        found.append(warn(f"{name}: {unit} sets {', '.join(names)}"))
+        found.append(warn(f"{name}: their hermes-gateway.service sets {', '.join(names)}"))
     commands = {c for c in re.findall(r'^\s*ExecStart\s*=\s*[-@:+!]*"?([^\s"]*)', unit_text, re.M) if c}
     if unit_text and commands != {GATEWAY_BINARY}:
-        found.append(warn(f"{name}: {unit} does not start {GATEWAY_BINARY}"))
+        found.append(warn(f"{name}: their hermes-gateway.service does not start {GATEWAY_BINARY}"))
     return found or [ok(f"{name}: no way around the policy found")]
-
-
-def read_person_file(path: Path) -> str:
-    """Text of a file a person controls, read as root. Only a regular file is opened: a planted FIFO
-    would hang the check and opening some devices has side effects. Empty when missing."""
-    try:
-        fd = os.open(path, os.O_PATH)  # resolves the path without opening the file itself
-    except OSError:
-        return ""
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            return ""
-        # Reopen the inode just checked; opening the path again could follow a swapped symlink.
-        with open(f"/proc/self/fd/{fd}", encoding="utf-8", errors="replace") as f:
-            return f.read(1_000_000)
-    finally:
-        os.close(fd)
 
 
 def sandboxes(p: Person):

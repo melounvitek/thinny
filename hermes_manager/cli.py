@@ -54,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
             people.list_people(Registry.load())
             return 0
         if a.command == "firewall":  # no lock: runs while other commands wait for a user manager
-            host.firewall(s, Registry.load())
+            host.firewall(s)
             return 0
         with lock():
             reg = Registry.load()
