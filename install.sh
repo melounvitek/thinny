@@ -12,6 +12,7 @@ SRC=$(cd "$(dirname "$0")" && pwd)
 [ "${ID:-}" = debian ] && [ "${VERSION_ID:-}" = 13 ] || echo "warning: tested on Debian 13 only" >&2
 
 echo "Installing packages"
+apt-get update -q >/dev/null
 DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
 	podman uidmap passt fuse-overlayfs git curl python3 nftables >/dev/null
 
