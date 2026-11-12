@@ -133,9 +133,13 @@ def managed_files(s: Settings) -> dict[Path, str]:
             MANAGED / "model-guard-message.txt": render.model_guard_message(s)}
 
 
-def write_managed_scope(s: Settings) -> bool:
-    """/etc/hermes; True when anything changed (gateways need a restart to see it)."""
-    return any([write_file(path, text) for path, text in managed_files(s).items()])
+def managed_scope_current(s: Settings) -> bool:
+    return all(path.is_file() and path.read_text(encoding="utf-8") == text for path, text in managed_files(s).items())
+
+
+def write_managed_scope(s: Settings) -> None:
+    for path, text in managed_files(s).items():
+        write_file(path, text)
 
 
 def install_units(s: Settings) -> None:

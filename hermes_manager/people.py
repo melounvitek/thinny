@@ -14,7 +14,7 @@ from . import host, render
 from .registry import Person, Registry, RegistryError
 from .settings import ACCESS_METHODS, Settings
 from .system import (STATE_DIR, CommandError, as_user, as_user_interactive, gateway_active, http_status, log,
-                     run, tailscale_name, uid_of, write_file, write_user_file)
+                     read_user_file, run, tailscale_name, uid_of, write_file, write_user_file)
 
 AUTH_PREFIX = "HERMES_DASHBOARD_BASIC_AUTH_"
 RESTART_TIMEOUT = 45 * 60  # a restart waits for a running reply (up to 30 min by default)
@@ -73,18 +73,16 @@ def configure_webapp(s: Settings, p: Person) -> bool:
     """Webapp settings in the person's config; True when something changed."""
     wanted = {"enabled": "true", "host": "127.0.0.1", "port": str(p.port), "public_url": p.url}
     current = webapp_settings(p.name)
-    changed = False
-    for key, value in wanted.items():
-        if current.get(key) != value:
-            hermes(p.name, ["config", "set", f"webapp.{key}", value])
-            changed = True
-    return changed
+    changes = {key: value for key, value in wanted.items() if current.get(key) != value}
+    if changes:
+        mark_restart([p.name])
+    for key, value in changes.items():
+        hermes(p.name, ["config", "set", f"webapp.{key}", value])
+    return bool(changes)
 
 
 def _env_lines(name: str) -> list[str]:
-    """The person's .env, read as the person: as root, a planted symlink could pull another
-    file's content into it."""
-    return as_user(name, ["cat", str(home(name) / ".env")], check=False, timeout=30).stdout.splitlines()
+    return read_user_file(name, str(home(name) / ".env")).splitlines()
 
 
 def ensure_sign_in(name: str) -> str | None:
@@ -146,6 +144,11 @@ def check_gateway(p: Person, timeout: float = 180) -> None:
 
 
 def start_or_restart_gateway(p: Person) -> None:
+    _gateway_up(p)
+    _set_pending([n for n in _pending() if n != p.name])
+
+
+def _gateway_up(p: Person) -> None:
     unit = home(p.name).parent / ".config/systemd/user/hermes-gateway.service"
     if unit.exists():
         hermes(p.name, ["gateway", "restart", "--yes"], timeout=RESTART_TIMEOUT)
@@ -154,18 +157,35 @@ def start_or_restart_gateway(p: Person) -> None:
     check_gateway(p)
 
 
+def _pending() -> list[str]:
+    return RESTART_PENDING.read_text().split() if RESTART_PENDING.exists() else []
+
+
+def _set_pending(names: list[str]) -> None:
+    if names:
+        write_file(RESTART_PENDING, "".join(f"{n}\n" for n in names), 0o600)
+    else:
+        RESTART_PENDING.unlink(missing_ok=True)
+
+
+def mark_restart(names: list[str]) -> None:
+    """Remember gateways that must restart, before changing what they read: a failure on the
+    way leaves them for the next restart_all (apply, update or restart)."""
+    _set_pending(list(dict.fromkeys([*_pending(), *names])))
+
+
 def restart_all(people: list[Person], reg: Registry) -> None:
-    """One gateway at a time (each waits for a running reply); stop at the first failure.
-    Gateways not restarted yet are remembered, and the next restart_all does them too."""
-    pending = RESTART_PENDING.read_text().split() if RESTART_PENDING.exists() else []
-    targets = list({p.name: p for p in [*people, *(reg.people[n] for n in pending if n in reg.people)]
-                    if p.state == "active"}.values())
-    for i, p in enumerate(targets):
-        write_file(RESTART_PENDING, "".join(f"{t.name}\n" for t in targets[i:]), 0o600)
+    """Restart these gateways and every remembered one, one at a time (each waits for a
+    running reply); stop at the first failure, leaving the rest remembered."""
+    mark_restart([p.name for p in people])
+    for name in _pending():
+        p = reg.people.get(name)
+        if p is None or p.state != "active":
+            _set_pending([n for n in _pending() if n != name])
+            continue
         log(f"restarting {p.name} (port {p.port})")
         start_or_restart_gateway(p)
         log(f"  ok {p.name}")
-    RESTART_PENDING.unlink(missing_ok=True)
 
 
 # ---------- commands ----------

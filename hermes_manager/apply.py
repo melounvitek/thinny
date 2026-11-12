@@ -21,23 +21,19 @@ def install(s: Settings) -> None:
 
 def apply(s: Settings) -> None:
     reg = Registry.load()
+    active = [p for p in reg.current() if p.state == "active"]
     host.install_units(s)
-    managed_changed = host.write_managed_scope(s)
+    if not host.managed_scope_current(s):
+        log("the managed scope changes: every gateway restarts")
+        people.mark_restart([p.name for p in active])  # before the change, so a failure keeps the intent
+        host.write_managed_scope(s)
     host.ensure_plugins(s)
     host.fix_permissions()
     host.firewall(s)
-
-    active = [p for p in reg.current() if p.state == "active"]
-    to_restart = []
     for p in active:
         p.url = people.url_for(s, p)
-        if people.configure_webapp(s, p):
-            to_restart.append(p)
+        people.configure_webapp(s, p)  # remembers the restart when it changes something
     reg.save()
     host.reconcile_access(s, reg)
-
-    if managed_changed:
-        log("the managed scope changed: restarting every gateway")
-        to_restart = active
-    people.restart_all(to_restart, reg)
+    people.restart_all([], reg)
     log("applied")
