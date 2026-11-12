@@ -105,7 +105,7 @@ def test_full_update(server):
     assert server.status()["detail"] == "updated to v2; the OS needs a reboot"
     assert server.calls == [
         "backup", UPDATE, "fix_permissions", "ensure_plugins", "build_webapp", "fix_permissions",
-        "alice: hermes pm repair", "bob: hermes pm repair", "restart alice bob",
+        "alice: hermes pm install --extra all", "bob: hermes pm install --extra all", "restart alice bob",
         "alice: podman image inspect --format {{.Id}} img", "alice: podman pull img",
         "alice: podman image inspect --format {{.Id}} img", "alice: podman ps -a --format {{.Names}}",
         "alice: podman rm -f hermes-1", "alice: podman rm -f --ignore hermes-1", "alice: podman image prune -f",
@@ -123,7 +123,7 @@ def test_a_failing_step_fails_the_update(server, monkeypatch):
     assert update.run(S, registry()) == 1
     assert (server.status()["result"], server.status()["detail"]) == (
         "FAILED", "bob: gateway not active, Webapp HTTP 000")
-    assert server.calls[-2:] == ["bob: hermes pm repair", "fix_permissions"]
+    assert server.calls[-2:] == ["bob: hermes pm install --extra all", "fix_permissions"]
 
 
 def test_backup_keeps_the_newest_ones(tmp_path, monkeypatch):

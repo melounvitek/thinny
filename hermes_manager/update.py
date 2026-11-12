@@ -70,9 +70,11 @@ def update(s: Settings, reg: Registry, tag: str) -> None:
 
     active = [p for p in reg.current() if p.state == "active"]
     for p in active:
-        # The automatic resync at launch is refused for the root-owned checkout.
-        log(f"{p.name}: Hermes environment (hermes pm repair)")
-        people.hermes(p.name, ["pm", "repair"], timeout=1800)
+        # The automatic resync at launch is refused for the root-owned checkout, and `pm repair` only
+        # rebuilds the old dependency set; `pm install --extra all` syncs to the new lock in the
+        # person's own home (and skips the root-owned tool store).
+        log(f"{p.name}: Hermes environment (hermes pm install --extra all)")
+        people.hermes(p.name, ["pm", "install", "--extra", "all"], timeout=1800)
     people.restart_all(active)
     for p in active:
         refresh_sandboxes(s, p.name)
