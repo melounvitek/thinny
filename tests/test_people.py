@@ -53,3 +53,15 @@ def test_disabled_people_are_not_restarted(gateways):
     reg.get("bob").state = "disabled"
     people.restart_all(list(reg.people.values()), reg)
     assert restarted == ["alice", "carol"]
+
+
+def test_an_oversized_env_is_refused_not_truncated(monkeypatch):
+    import subprocess
+
+    data = ("#" + "é" * 500_000).encode()   # 1,000,001 bytes but only 500,001 characters
+    monkeypatch.setattr(system, "as_user_cmd", lambda name, cmd: cmd)
+    monkeypatch.setattr(system.pwd, "getpwnam", lambda name: type("pw", (), {"pw_dir": "/"})())
+    monkeypatch.setattr(subprocess, "run",
+                        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, data[:int(cmd[2])], b""))
+    with pytest.raises(CommandError, match="larger than"):
+        system.read_user_file("alice", "/home/alice/.hermes/.env")

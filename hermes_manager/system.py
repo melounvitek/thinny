@@ -95,10 +95,17 @@ def write_file(path: Path, content: str, mode: int = 0o644) -> bool:
 def read_user_file(name: str, path: str, limit: int = 1_000_000) -> str:
     """A file in a person's home, read as the person (as root, a planted symlink could pull in
     another file) and bounded (it could point at /dev/zero). Empty when unreadable."""
-    data = as_user(name, ["head", "-c", str(limit + 1), path], check=False, timeout=30).stdout
-    if len(data) > limit:
+    try:
+        res = subprocess.run(as_user_cmd(name, ["head", "-c", str(limit + 1), path]), capture_output=True,
+                             timeout=30, cwd=pwd.getpwnam(name).pw_dir, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired as e:
+        raise CommandError(f"reading {path} of {name} timed out") from e
+    if len(res.stdout) > limit:  # bytes, before decoding
         raise CommandError(f"{path} of {name} is larger than {limit} bytes")
-    return data
+    try:
+        return res.stdout.decode("utf-8")
+    except UnicodeDecodeError:
+        raise CommandError(f"{path} of {name} is not UTF-8 text") from None
 
 
 def write_user_file(name: str, path: str, content: str) -> None:
