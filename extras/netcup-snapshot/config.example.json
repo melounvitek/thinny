@@ -1,0 +1,7 @@
+{
+  "server_id": "<server id>",
+  "refresh_token": "",
+  "prefix": "daily-",
+  "keep": 7,
+  "time": "02:30"
+}

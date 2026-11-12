@@ -1,0 +1,16 @@
+{
+  "max_age_hours": 26,
+  "jobs": [
+    {
+      "name": "Hermes nightly update",
+      "kind": "hermes-update",
+      "host": "root@<server>"
+    },
+    {
+      "name": "Nightly snapshot",
+      "kind": "netcup-snapshot",
+      "host": "<user>@<snapshot machine>",
+      "file": "<snapshot dir>/status.json"
+    }
+  ]
+}
