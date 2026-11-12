@@ -64,6 +64,11 @@ def test_caddyfile_has_one_https_site_per_lan_person_and_no_admin_api():
     assert "reverse_proxy 127.0.0.1:9122" in text
 
 
+def test_caddyfile_without_lan_people_needs_no_address():
+    s = Settings(model="m1", allowed_models=("m1",), access_default="local")
+    assert "https://" not in render.caddyfile(s, [])
+
+
 def test_firewall_protects_people_whose_slice_exists():
     text = render.firewall(people=[(1001, 9120), (1002, 9121)], slice_uids=[1000, 1001], proxy_uids=[987],
                            blocked_networks=["192.168.1.0/24"], tailscale=False)

@@ -104,9 +104,9 @@ def person_url(s: Settings, name: str, access: str, port: int, *, url: str = "",
 
 
 def caddyfile(s: Settings, lan_ports: list[int]) -> str:
-    host = host_for_url(s.lan_address)
     sites = "".join(
-        f"\nhttps://{host}:{port} {{\n\tbind {s.lan_address}\n\ttls internal\n\treverse_proxy 127.0.0.1:{port}\n}}\n"
+        f"\nhttps://{host_for_url(s.lan_address)}:{port} {{\n\tbind {s.lan_address}\n\ttls internal\n"
+        f"\treverse_proxy 127.0.0.1:{port}\n}}\n"
         for port in lan_ports)
     # No admin API: on localhost it would let any account rewrite the proxy.
     return f"# {HEADER}\n{{\n\tadmin off\n\tskip_install_trust\n}}\n{sites}"
