@@ -242,6 +242,15 @@ def webapp(p: Person):
            else warn(f"{p.name}: Webapp public_url is {public_url or 'not set'}, not {p.url}", "hermes-manager apply"))
 
 
+def environment(p: Person):
+    """After an update, a person's Python environment must follow the new dependency lock."""
+    res = people.hermes(p.name, ["config", "path"], check=False, timeout=600)
+    stale = "out of sync" in res.stdout + res.stderr
+    yield (warn(f"{p.name}: Hermes environment out of sync with the installed release",
+                f"runuser -l {p.name} -c 'hermes pm install --extra all' && hermes-manager restart {p.name}")
+           if stale else ok(f"{p.name}: Hermes environment current"))
+
+
 def bypass(p: Person):
     yield from bypasses(p.name, people.home(p.name))
 
@@ -310,7 +319,7 @@ def sandboxes(p: Person):
 # ---------- runner ----------
 
 CHECKS = [install, prerequisites, firewall, lan_access, listeners]
-PERSON_CHECKS = [webapp, bypass, sandboxes]
+PERSON_CHECKS = [webapp, environment, bypass, sandboxes]
 
 
 def run(s: Settings, reg: Registry) -> int:
