@@ -174,6 +174,7 @@ def reconcile_access(s: Settings, reg: Registry) -> None:
             log("installing Caddy for office-network access")
             run(["apt-get", "install", "-y", "-q", "caddy"], env={"DEBIAN_FRONTEND": "noninteractive",
                                                                 "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}, timeout=900)
+            firewall(s, reg)  # the new caddy account may now reach people's Webapps
         if write_file(CADDYFILE, render.caddyfile(s, lan)):
             run(["caddy", "validate", "--config", str(CADDYFILE), "--adapter", "caddyfile"], check=False)
             run(["systemctl", "restart", "caddy"])  # no admin API, so no reload
