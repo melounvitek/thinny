@@ -29,6 +29,8 @@ def run(s: Settings, reg: Registry, *, check: bool = False, now: bool = False) -
     log(f"=== hermes-manager update{' --check' if check else ''}{' --now' if now else ''}")
     try:
         phase, _, target = UNFINISHED.read_text().strip().partition(" ") if UNFINISHED.exists() else ("", "", "")
+        if phase == "code" and target in host.installed_tags():  # the code update got through
+            phase = "rollout"
         if phase == "rollout" and not check:  # the install is at the tag already: no release lookup needed
             log(f"finishing the interrupted update to {target}")
             rollout(s, reg)

@@ -148,6 +148,18 @@ def test_a_cut_off_code_update_is_retried_whatever_its_age(server, monkeypatch):
     assert server.status()["detail"] == "updated to v2"
 
 
+def test_a_code_update_that_got_through_is_rolled_out_without_github(server, monkeypatch):
+    (server.tmp / "update-unfinished").write_text("code v2\n")
+    server.installed = {"v2"}   # hermes update finished, the run stopped before recording it
+
+    def offline():
+        raise OSError("GitHub is down")
+    monkeypatch.setattr(host, "latest_release", offline)
+    assert update.run(dataclasses.replace(S, auto_update=False), registry()) == 0
+    assert server.status()["detail"] == "finished the interrupted update to v2"
+    assert UPDATE not in server.calls
+
+
 def test_a_failed_backup_leaves_nothing_to_resume(server, monkeypatch):
     def failing_backup(s):
         raise OSError("disk full")
