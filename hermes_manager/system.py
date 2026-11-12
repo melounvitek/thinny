@@ -92,6 +92,15 @@ def write_file(path: Path, content: str, mode: int = 0o644) -> bool:
     return True
 
 
+def read_user_file(name: str, path: str, limit: int = 1_000_000) -> str:
+    """A file in a person's home, read as the person (as root, a planted symlink could pull in
+    another file) and bounded (it could point at /dev/zero). Empty when unreadable."""
+    data = as_user(name, ["head", "-c", str(limit + 1), path], check=False, timeout=30).stdout
+    if len(data) > limit:
+        raise CommandError(f"{path} of {name} is larger than {limit} bytes")
+    return data
+
+
 def write_user_file(name: str, path: str, content: str) -> None:
     """Write a private file as the person (a root write could follow a planted symlink)."""
     as_user(name, ["sh", "-c", 'umask 077 && cat > "$1.tmp" && mv -f "$1.tmp" "$1"', "sh", path], input=content)

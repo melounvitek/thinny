@@ -60,10 +60,8 @@ def install(s: Settings, reg: Registry):
         path = host.CHECKOUT / "plugins" / plugin
         yield ok(f"plugin {plugin} present") if path.is_dir() else fail(f"{path} missing", "hermes-manager apply")
 
-    stale = [path.name for path, text in host.managed_files(s).items()
-             if not path.is_file() or path.read_text(encoding="utf-8") != text]
-    yield (ok(f"{host.MANAGED} matches site.toml") if not stale
-           else warn(f"{host.MANAGED}: {', '.join(stale)} not as site.toml says", "hermes-manager apply"))
+    yield (ok(f"{host.MANAGED} matches site.toml") if host.managed_scope_current(s)
+           else warn(f"{host.MANAGED} is not as site.toml says", "hermes-manager apply"))
 
     state = system.run(["systemctl", "is-active", "hermes-manager-firewall.service"], check=False).stdout.strip()
     yield (ok("hermes-manager-firewall.service active") if state == "active"
@@ -251,14 +249,11 @@ def environment(p: Person):
 
 def bypass(p: Person):
     home = people.home(p.name)
-
-    def read(path):  # as the person: as root, a planted symlink or FIFO could redirect or hang the read
-        return system.as_user(p.name, ["cat", str(path)], check=False, timeout=30).stdout
-
     unit = home.parent / ".config/systemd/user/hermes-gateway.service"
     own_guard = system.as_user(p.name, ["test", "-e", str(home / "plugins/model-guard")],
                                check=False, timeout=30).returncode == 0
-    yield from bypasses(p.name, read(home / ".env"), read(unit), own_guard)
+    yield from bypasses(p.name, system.read_user_file(p.name, str(home / ".env")),
+                        system.read_user_file(p.name, str(unit)), own_guard)
 
 
 def bypasses(name: str, env_text: str, unit_text: str, own_guard: bool) -> list:
