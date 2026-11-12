@@ -117,7 +117,7 @@ def test_full_update(server):
     assert not (server.tmp / "update-unfinished").exists()
 
 
-def test_an_interrupted_update_is_finished_by_the_next_run(server, monkeypatch):
+def test_an_interrupted_rollout_is_finished_without_github(server, monkeypatch):
     def restart_all(ps, reg):
         raise CommandError("bob: gateway not active, Webapp HTTP 000")
     monkeypatch.setattr(people, "restart_all", restart_all)
@@ -125,13 +125,36 @@ def test_an_interrupted_update_is_finished_by_the_next_run(server, monkeypatch):
     assert (server.status()["result"], server.status()["detail"]) == (
         "FAILED", "bob: gateway not active, Webapp HTTP 000")
 
+    def offline():
+        raise OSError("GitHub is down")
+    monkeypatch.setattr(host, "latest_release", offline)
     monkeypatch.setattr(people, "restart_all", lambda ps, reg: server.calls.append("restart"))
     server.calls.clear()
-    assert update.run(S, registry()) == 0   # v2 is installed now, but the rollout was not finished
-    assert server.status()["result"] == "ok"
-    assert UPDATE not in server.calls and "restart" in server.calls
     assert update.run(S, registry()) == 0
-    assert server.status()["result"] == "up-to-date"
+    assert (server.status()["result"], server.status()["detail"]) == ("ok", "finished the interrupted update to v2")
+    assert UPDATE not in server.calls and "restart" in server.calls
+    assert not (server.tmp / "update-unfinished").exists()
+
+
+def test_a_cut_off_code_update_is_retried_whatever_its_age(server, monkeypatch):
+    def failing_update(args, **kw):
+        raise CommandError("hermes update -> exit 1")
+    monkeypatch.setattr(update, "hermes_root", failing_update)
+    assert update.run(S, registry()) == 1
+
+    monkeypatch.setattr(update, "hermes_root", server.hermes_root)
+    server.age = 1   # a newer release appeared meanwhile; the cut-off update still goes on
+    assert update.run(S, registry()) == 0
+    assert server.status()["detail"] == "updated to v2"
+
+
+def test_a_failed_backup_leaves_nothing_to_resume(server, monkeypatch):
+    def failing_backup(s):
+        raise OSError("disk full")
+    monkeypatch.setattr(update, "backup", failing_backup)
+    assert update.run(S, registry()) == 1
+    assert not (server.tmp / "update-unfinished").exists()
+    assert UPDATE not in server.calls
 
 
 def test_backup_keeps_the_newest_ones(tmp_path, monkeypatch):
