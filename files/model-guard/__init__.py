@@ -40,14 +40,15 @@ def _message(model: Any, allowed: set[str]) -> str:
         return DEFAULT_MESSAGE.format(model=model, allowed=shown)
 
 
-def _normalise(model: Any) -> str:
+def _is_allowed(model: Any, allowed: set[str]) -> bool:
     name = str(model or "").strip().lower()
-    return name.rsplit("/", 1)[-1]  # "openai-codex/gpt-x" -> "gpt-x"
+    # The full id ("vendor/model"), or the id without a provider prefix ("openai-codex/gpt-x").
+    return bool(name) and (name in allowed or name.rsplit("/", 1)[-1] in allowed)
 
 
 def _on_pre_llm_call(model: Any = None, session_id: str = "", **_: Any):
     allowed = _allowed_models()
-    if _normalise(model) in allowed:
+    if _is_allowed(model, allowed):
         return None
     logger.warning("model-guard: blocked turn on model %r (session %s); allowed: %s",
                    model, session_id or "?", sorted(allowed))
