@@ -80,20 +80,23 @@ def configure_webapp(s: Settings, p: Person) -> bool:
     return changed
 
 
+def _env_lines(name: str) -> list[str]:
+    """The person's .env, read as the person: as root, a planted symlink could pull another
+    file's content into it."""
+    return as_user(name, ["cat", str(home(name) / ".env")], check=False, timeout=30).stdout.splitlines()
+
+
 def ensure_sign_in(name: str) -> str | None:
     """Webapp username and password in the person's .env; returns a new password, or None
     when they already have one."""
-    env = home(name) / ".env"
-    lines = env.read_text().splitlines() if env.exists() else []
+    lines = _env_lines(name)
     if any(line.startswith(AUTH_PREFIX + "USERNAME=") for line in lines):
         return None
     return _write_sign_in(name, lines)
 
 
 def reset_password(name: str) -> str:
-    env = home(name) / ".env"
-    lines = env.read_text().splitlines() if env.exists() else []
-    return _write_sign_in(name, [line for line in lines if not line.startswith(AUTH_PREFIX)])
+    return _write_sign_in(name, [line for line in _env_lines(name) if not line.startswith(AUTH_PREFIX)])
 
 
 def _write_sign_in(name: str, lines: list[str]) -> str:
