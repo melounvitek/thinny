@@ -33,7 +33,8 @@ operating system keeps other accounts out:
   (hidepid, a prerequisite);
 - a firewall table rejects any loopback connection to a person's programs from another
   account (only root and the Webapp proxy may connect), so nobody can reach another person's
-  Webapp, browser or other local services;
+  Webapp, browser or other local services. A person's Webapp port only ever reaches that
+  person's gateway, so nobody can take it over while their gateway is down;
 - people's accounts and their sandboxes cannot reach the networks you block. When Tailscale
   is installed, the tailnet is blocked automatically, except its DNS;
 - every Webapp asks for a username and password.
@@ -421,7 +422,7 @@ The tunnel must run as root, because the firewall refuses connections from other
       environment to the new release's dependencies;
    5. it restarts the gateways one by one. After each restart, it checks that the gateway is
       active, the Webapp answers and model-guard is enabled. **It stops at the first failure.**
-      The remaining gateways keep running until they are restarted;
+      The remaining gateways keep running the old code until they are restarted;
    6. it pulls each person's sandbox image. A new image replaces that person's sandboxes.
       Otherwise, it removes sandboxes that lost their network. Hermes recreates removed
       sandboxes on next use, and old images are pruned.
@@ -449,6 +450,10 @@ hermes-manager restart [alice ...] # restart gateways one by one (all, or the na
 - **Night-time jobs can be cut off.** A gateway restart waits for a reply in progress, but it
   cuts off scheduled jobs and background tasks. Keep people's scheduled jobs away from
   `update_time`.
+- **Interrupted work is finished later.** If an update stops halfway, the next run (or
+  `hermes-manager update --now`) finishes it first, without waiting for the minimum age.
+  Gateways that `apply`, `update` or `restart` could not restart are remembered and restarted
+  by the next of these commands.
 - **One run at a time.** hermes-manager runs one command at a time. During the update, other
   commands that change things refuse to start. If such a command is still running at
   `update_time`, that night's update fails.
