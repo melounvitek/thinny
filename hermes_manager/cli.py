@@ -36,7 +36,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("check", help="isolation and health checks")
     upd = sub.add_parser("update", help="nightly Hermes update (run by hermes-manager-update.timer)")
     upd.add_argument("--check", action="store_true", help="only report what would happen")
-    upd.add_argument("--now", action="store_true", help="ignore the minimum release age")
+    upd.add_argument("--now", action="store_true",
+                     help="update now: ignore the minimum release age and auto_update = false")
     rst = sub.add_parser("restart", help="restart gateways one by one (all, or the named people)")
     rst.add_argument("names", nargs="*")
     sub.add_parser("firewall", help=argparse.SUPPRESS)  # run by systemd units
