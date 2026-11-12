@@ -1,6 +1,7 @@
 # hermes-manager: plan
 
-Status: agreed after review. Next: round 0 (spike on the test server). No code yet.
+Status: agreed after review; round 0 (spike on the test server) done, findings in section 4.
+Next: round 1. No code yet.
 
 ## 1. Goal
 
@@ -65,13 +66,12 @@ tamper-proof against a person with a shell.
 ## 4. What we know
 
 Hermes v0.23.1, Debian 13, rootless Podman 5.4. Sources are marked: **[proto]** seen on the
-hand-built test server, **[tested]** tried on the test server during the review
+hand-built test server, **[tested]** tried on the test server during the review and round 0
 (2026-11-12), **[src]** read in the Hermes source (also present in v0.23.1 unless noted),
 **[static]** read in the source but not run.
 
-The prototype ran one Linux account with two Hermes homes, so isolation between accounts
-was never tested beyond the Webapp firewall rule (another account gets no connection
-**[tested]**).
+The prototype ran one Linux account with two Hermes homes. Round 0 added two person
+accounts on a separate v0.23.0 install, updated it to v0.23.1 and rebooted the server.
 
 ### Layout
 - Hermes installed with the official installer into `/opt/hermes` (`HERMES_HOME` of the
@@ -80,16 +80,28 @@ was never tested beyond the Webapp firewall rule (another account gets no connec
 - **`/opt/hermes` must be mode 711.** Hermes chmods its `HERMES_HOME` to 700 on almost every
   command (`_secure_dir`), so root's `hermes` with `HERMES_HOME=/opt/hermes` breaks every
   user's `hermes` (running gateways keep working, so it goes unnoticed) **[proto]**.
-  `HERMES_HOME_MODE=0711` in root's environment keeps it **[src, newer source; verify on
-  v0.23.1]**. `auth.json` saves chmod the parent regardless **[static]**.
+  `HERMES_HOME_MODE=0711` in root's environment keeps it, also through `hermes update`
+  **[tested]**. `auth.json` saves chmod the parent regardless **[static]**.
+- The official installer leaves a fresh install at 700 and does not build the Webapp; a
+  person cannot build it into the root-owned checkout. After installing: fix permissions
+  and run `hermes webapp --build-only` as root (~2 min, ~1 GB in `.build`) **[tested]**.
+- Run as root, the installer publishes launchers into the invoking `HOME`'s `~/.local/bin`;
+  run it with a separate `HOME` **[tested]**.
+- The host-side `cua-driver` fails to install (missing `libXi`); harmless, computer_use
+  runs in the sandbox **[tested]**.
 - **One person = one Linux account with Hermes's default home `~/.hermes`.** The gateway
   unit is the standard `hermes-gateway.service` (`hermes gateway install`, needs linger)
   **[tested]**. This is the topology upstream supports: one gateway per OS user.
 - **Each home builds its own Python venv** via `hermes pm repair` (15 s, 440 MB for a new
   account **[tested]**; ~0.9 GB per generation in newer source **[static]**). It cannot be
-  shared across accounts. The automatic resync at launch after a code update calls
-  `refuse_foreign_owned_venv(checkout)`, which may refuse for a root-owned checkout;
-  `hermes pm repair` does not **[static]**. So the update runs `pm repair` per person.
+  shared across accounts.
+- After a code update, the automatic resync at launch is refused for a root-owned
+  checkout ("refusing to update ... owned by uid 0") and Hermes keeps running on the old
+  dependencies; `hermes pm repair` as the person works (7 s) **[tested]**. `hermes update`
+  leaves `install-stamp.json` at 600, so `pm repair` fails until permissions are fixed
+  **[tested]**. Even after `pm repair`, person accounts keep printing "venv out of sync with
+  uv.lock" and retrying the refused resync; root and the prototype account do not.
+  Gateways restart and pass the checks anyway **[tested]**; cause open.
 - Account home dir 700, linger on. Rootless Podman images are per account (~4 GB each).
 - `/proc` mounted `hidepid=invisible` with a `proc-viewers` group for logind **[proto]**.
 
@@ -162,8 +174,19 @@ was never tested beyond the Webapp firewall rule (another account gets no connec
   login, real chat and clipboard work **[tested, with the certificate warning bypassed]**.
 - A signed-in Webapp user can run any command as the account (host terminal) **[docs]**.
 - Changing `webapp.*` needs a gateway restart **[docs]**.
-- **Loopback is shared by all Linux accounts.** An nft output rule on `lo` lets ports
-  9120-9199 through only for the owner uid, root and listed proxy accounts **[proto, tested]**.
+- **Loopback is shared by all Linux accounts.** The prototype's nft output rule lets ports
+  9120-9199 through only for the owner uid and root **[proto, tested]**, but every other
+  loopback port stays open to all accounts.
+- **Fix [tested]:** one generic rule per person instead of port lists. Output: `oif lo`
+  new TCP gets `meta mark set meta skuid`. Input: `iif lo` new TCP whose receiving socket
+  is in `user.slice/user-<uid>.slice` (`socket cgroupv2 level 2`) and whose mark is not 0,
+  `<uid>` or a proxy account is rejected. Blocked a test listener for other
+  accounts; owner and root still connect. nft resolves the cgroup path at load and refuses
+  a missing one, so a loader rebuilds the rules from the existing user slices: a oneshot
+  unit (`After=`/`PartOf=nftables.service`) at boot and a `user@.service` drop-in
+  (`ExecStartPre=+`) before each person's manager starts. Survived a reboot, a
+  `user@<uid>` restart and `systemctl restart nftables`. A proxy account not on the list
+  gets 502 through the proxy. It replaces the Webapp port rule.
 - Webapp look (light mode, text size, simple interface, visible models) is server-side
   `~/.hermes/ui-preferences.json`; applied from a template through
   `hermes_cli.ui_preferences.write_preferences`, run as the user with the home's venv
@@ -171,6 +194,13 @@ was never tested beyond the Webapp firewall rule (another account gets no connec
   plugin toggle) are browser localStorage only.
 - Cookie names carry a hash of the home, so two Webapps on one hostname do not clash
   **[src]**.
+- With an untrusted certificate (Caddy's local CA), the browser shows a warning; after
+  "Advanced" -> "Proceed" login and all features work **[tested]**.
+- A loopback `public_url` (`http://127.0.0.1:<port>/`) does **not** turn on password sign-in;
+  the Webapp still asks for a one-use link. A one-use link through an SSH tunnel opened as
+  root gets 403 (Hermes checks the connection belongs to the person's account). A
+  `public_url` of `http://<name>.localhost:<port>/` through a root SSH tunnel works: login
+  required, secure context, all features **[tested]**.
 - Without a ChatGPT login, the Webapp's first screen invites the person to connect other
   providers **[tested]**: do the login before the hand-over.
 - `hermes -p <profile> webapp` does not lock a Webapp to one profile; profiles of one gateway
@@ -180,12 +210,17 @@ was never tested beyond the Webapp firewall rule (another account gets no connec
 - nft output rules: non-root accounts may not reach the tailnet (100.64.0.0/10,
   fd7a:115c:a1e0::/48) except MagicDNS port 53; root exempt (`meta skuid 0`) **[proto]**.
   Rootless Podman traffic leaves as the user, so sandboxes are covered.
+- A sandbox reached no host port: loopback-bound Webapps, another account's port
+  bound to all interfaces, SSH on the public and the Tailscale address; the internet works
+  **[tested]**.
 - Tailscale socket root-only (drop-in: `RuntimeDirectoryMode=0700`, chmod 600 on the
-  socket) **[proto]**; the plan's claim that any user could otherwise drive `tailscale
-  serve` is verified in round 0.
+  socket) **[proto]**. Without it another account can read the whole tailnet (devices,
+  addresses) and the `serve` config with everyone's URLs, but cannot change it ("Access
+  denied") **[tested]**: an information leak, not a hijack.
 - **Debian's `systemctl restart nftables` runs `nft flush ruleset`** and removes every table,
   Tailscale's included; restarting `tailscaled` restores them **[tested]**. Never restart
-  `nftables.service`; load our table with `nft -f`.
+  `nftables.service`; load our table with `nft -f`. Elements added at runtime are gone
+  after a reboot, so everything is regenerated from the registry.
 - nft changes on a remote server go with an auto-rollback timer (`systemd-run
   --on-active=240`) and are verified before persisting **[proto]**.
 
@@ -208,7 +243,14 @@ was never tested beyond the Webapp firewall rule (another account gets no connec
   - Homes were discovered from user-writable unit files; use the registry.
   - Rerunning the official installer on an existing checkout updates it to the latest
     stable release **[proto: installer source]**.
-- UNVERIFIED: a real update to a new release end to end.
+- Round 0 update v0.23.0 -> v0.23.1 with two person gateways running **[tested]**: `hermes
+  update` 1:43 min; `/opt/...` stayed 711 with `HERMES_HOME_MODE`; local plugins survived;
+  after fixing permissions and `pm repair`, `gateway restart --yes` per person came back with
+  the Webapp answering and model-guard + language pack enabled. A restart without `pm
+  repair` also came back, on the old dependencies. Not checked: whether `hermes update`
+  rebuilds the Webapp bundle.
+- After a reboot every gateway, Webapp, the firewall rules, hidepid and the Tailscale
+  socket mode came back **[tested]**.
 
 ### Per-person ChatGPT login
 - `hermes auth add openai-codex --type oauth --no-browser` as the person; device code,
@@ -263,9 +305,10 @@ tests/                        pytest: rendering, registry, port allocation, name
 
 - Registry per person: Linux account, uid, Webapp port, access method, URL, state
   (`pending`, `active`, `disabled`). Uids and ports are never reused.
-- Our nft table uses numeric uids, is checked with `nft -c` before loading, is loaded with
-  `nft -f` by our own unit at boot, and never touches the admin's tables. `check` verifies
-  it is loaded.
+- Our nft table holds the per-person loopback rules (section 4, Webapp) and the blocked
+  networks. It uses numeric uids, is checked with `nft -c`, is loaded with `nft -f` by our
+  unit at boot (`PartOf=nftables.service`) and by a `user@.service` drop-in, and never
+  touches the admin's tables. `check` verifies it is loaded.
 - Root never writes inside a person's home: everything there runs as the person
   (`runuser`), so a planted symlink cannot redirect a root write.
 - `hermes-manager` and the nightly update share one lock.
@@ -283,7 +326,8 @@ Documented in the README, verified by `check` with the exact fix:
 Idempotent; a rerun repairs and never destroys data or updates Hermes:
 packages (podman, uidmap, passt, fuse-overlayfs, git, curl, python3; Caddy when an access
 method needs it), the official Hermes installer pinned by version into `/opt/hermes` only
-when no checkout exists, `HERMES_HOME_MODE=0711` for root's `hermes`, launchers, wrappers,
+when no checkout exists (with a separate `HOME`), permissions fixed, the Webapp built as
+root, `HERMES_HOME_MODE=0711` for root's `hermes`, launchers, wrappers,
 model-guard + language pack (pinned sha) + git excludes, nightly timer, `hermes-manager`
 itself, then `hermes-manager apply` renders `/etc/hermes` and the rest.
 
@@ -326,8 +370,8 @@ Choice [1]:
   when Tailscale is installed.
 - **Own address:** `public_url` = the URL entered; asks which account runs the proxy (root by
   default) for the firewall; prints "forward to `http://127.0.0.1:<port>`".
-- **Local only:** `public_url = http://127.0.0.1:<port>/`; `ssh -L <port>:127.0.0.1:<port>`
-  (to be verified in round 0).
+- **Local only:** `public_url = http://<name>.localhost:<port>/`; the admin opens
+  `ssh -L <port>:127.0.0.1:<port> root@<server>` and browses to that URL.
 - One method per person (a Webapp accepts only its own `public_url` address).
 
 ### 6.7 Settings (`site.toml`, sketch)
@@ -371,8 +415,9 @@ Ported from the prototype with these changes:
 - `auto_update = false` only checks and writes the status file.
 - People from the registry, not from unit files.
 - If the snapshot extra is configured, that night's snapshot must have succeeded.
-- After `hermes update`: `hermes pm repair` as each person, then `gateway restart --yes` one
-  by one with the checks; stop at the first failure.
+- After `hermes update`: fix permissions, rebuild the Webapp if needed, `hermes pm repair`
+  as each person, then `gateway restart --yes` one by one with the checks; stop at the
+  first failure.
 - Pull the sandbox image per person and recreate idle sandboxes.
 - After the update: model-guard and the language pack still enabled.
 - Report when the OS needs a reboot (`/run/reboot-required`); never reboot.
@@ -393,12 +438,11 @@ Ported from the prototype with these changes:
 
 Each round ends with a stop for review and a commit.
 
-0. **Spike on the test server** (disposable): loopback isolation between accounts;
-   a real update from an older release with person accounts (`pm repair`, `restart --yes`,
-   model-guard and language pack after it); our own nft table loading at boot and on
-   reload; the Tailscale socket claim; whether a sandbox reaches host ports; access option
-   4 through an SSH tunnel (loopback `public_url`; one-use link through a root tunnel);
-   Caddy's certificate warning in a real browser; `HERMES_HOME_MODE` on v0.23.1.
+0. **Spike on the test server** (done; findings in section 4): loopback isolation
+   between accounts; a real update from an older release with person
+   accounts; our own nft table at boot, on `user@` restart and nftables restart; the
+   Tailscale socket; sandbox reach to host ports; access option 4; Caddy's certificate
+   warning in a real browser; `HERMES_HOME_MODE` on v0.23.1; a reboot.
 1. Skeleton, `site.example.toml`, settings + registry code, rendering (managed config, nft
    table, Caddy, units), unit tests, README section "what is and is not protected".
 2. `hermes-manager` add/access/login/remove/list/check/apply and the thin `install.sh`,
@@ -413,6 +457,10 @@ prerequisites stay), snapshotted, and restored before each installer test.
 
 ## 9. Open questions
 
+- Why person accounts keep reporting "venv out of sync" after `pm repair` (round 3).
+- Whether `hermes update` rebuilds the Webapp bundle (round 3).
+- Severity of a missing root-only Tailscale socket in `check`: FAIL or warning (it leaks
+  the tailnet and everyone's URLs, it does not allow changes).
 - Alerting from the server itself (no mail sender today; the watchdog runs off-server).
 - A shared read-only image store for rootless Podman if disk becomes a problem.
 - Per-person ChatGPT seats versus one API account per organisation (a local proxy such as
