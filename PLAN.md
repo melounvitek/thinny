@@ -319,7 +319,8 @@ Documented in the README, verified by `check` with the exact fix:
 - warnings: SSH key-only and on a private network, firewall input policy, unattended
   upgrades with a reboot window after the update window;
 - **FAIL** (they are part of person isolation): `/proc` hidepid, root-only Tailscale socket
-  when Tailscale is installed.
+  when Tailscale is installed (without it other accounts read the tailnet and everyone's
+  URLs).
 
 ### 6.4 `install.sh`
 
@@ -459,8 +460,6 @@ prerequisites stay), snapshotted, and restored before each installer test.
 
 - Why person accounts keep reporting "venv out of sync" after `pm repair` (round 3).
 - Whether `hermes update` rebuilds the Webapp bundle (round 3).
-- Severity of a missing root-only Tailscale socket in `check`: FAIL or warning (it leaks
-  the tailnet and everyone's URLs, it does not allow changes).
 - Alerting from the server itself (no mail sender today; the watchdog runs off-server).
 - A shared read-only image store for rootless Podman if disk becomes a problem.
 - Per-person ChatGPT seats versus one API account per organisation (a local proxy such as
