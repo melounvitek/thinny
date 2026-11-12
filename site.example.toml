@@ -1,0 +1,39 @@
+# hermes-manager site settings: /etc/hermes-manager/site.toml
+# After editing, run: hermes-manager apply
+
+[hermes]
+auto_update = true              # false: the nightly job only checks and reports a new release
+update_time = "03:00"           # nightly update (schedule the OS reboot window after it)
+min_release_age_hours = 48      # install a stable release only once it is this old
+
+[policy]
+model_provider = "openai-codex"
+model = "<model id>"            # default model for everyone
+allowed_models = ["<model id>"] # the model-guard plugin blocks every other model
+reasoning_effort = "high"
+approvals = "smart"             # manual | smart (never off: computer_use would run on the host)
+language = "en"                 # Hermes UI language (display.language) for new people
+language_pack = ""              # catalog plugin for that language, e.g. "hermes-lang-cs"
+model_guard_message = "Model {model} is not allowed on this server. Allowed: {allowed}."
+
+[sandbox]
+image = "docker.io/nousresearch/hermes-sandbox:desktop"
+cpu = 2
+memory_mb = 4096
+disk_mb = 20480
+
+[webapp]
+port_range = [9120, 9199]       # one local port per person
+theme = "light"                 # light | dark, for new people
+text_scale = 100
+interface = "simple"
+known_models = []               # other model ids the model picker should not announce as new
+
+[access]
+default = "lan"                 # lan | tailscale | url | local (asked per person)
+lan_address = "<server LAN IP>" # the address office PCs use (required for lan)
+proxy_users = []                # extra Linux accounts your own proxy runs as (url access)
+
+[network]
+blocked_networks = []           # networks people's agents may not reach, e.g. ["192.168.1.0/24"]
+                                # (the tailnet is blocked automatically when Tailscale is installed)
