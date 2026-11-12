@@ -158,7 +158,9 @@ def firewall(s: Settings, reg: Registry) -> None:
     every table, Tailscale's included."""
     uids = [p.uid for p in reg.people.values() if p.uid is not None]
     text = render.firewall(people_uids=uids, slice_uids=slice_uids(), proxy_uids=proxy_uids(s),
-                           blocked_networks=list(s.blocked_networks), tailscale=tailscale_status() is not None)
+                           blocked_networks=list(s.blocked_networks),
+                           # installed, not running: at boot the table loads before tailscaled is up
+                           tailscale=shutil.which("tailscale") is not None)
     write_file(FIREWALL_FILE, text, 0o644)
     run(["nft", "-c", "-f", str(FIREWALL_FILE)])
     run(["nft", "-f", str(FIREWALL_FILE)])
