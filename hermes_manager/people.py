@@ -168,7 +168,7 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     if access not in ACCESS_METHODS:
         raise CommandError(f"access must be one of {', '.join(ACCESS_METHODS)}")
     if access == "url" and not url.startswith(("https://", "http://")):
-        raise CommandError("url access needs the address, e.g. --access url=https://alice.example.org/")
+        raise CommandError("url access needs the address, e.g. url=https://alice.example.org/")
     if access == "lan" and not s.lan_address:
         raise CommandError("set access.lan_address in site.toml first")
     if name in reg.people:
@@ -224,7 +224,7 @@ def change_access(s: Settings, reg: Registry, name: str, access: str, url: str =
     if access not in ACCESS_METHODS:
         raise CommandError(f"access must be one of {', '.join(ACCESS_METHODS)}")
     if access == "url" and not url.startswith(("https://", "http://")):
-        raise CommandError("url access needs the address, e.g. --access url=https://alice.example.org/")
+        raise CommandError("url access needs the address, e.g. url=https://alice.example.org/")
     p.access, p.url = access, url if access == "url" else ""
     p.url = url_for(s, p)
     reg.save()
