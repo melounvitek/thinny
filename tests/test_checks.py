@@ -3,13 +3,57 @@ import json
 
 import pytest
 
-from hermes_manager import checks
+from hermes_manager import checks, render
 from hermes_manager.registry import Registry
 from hermes_manager.settings import Settings
 
 S = Settings(model="m1", allowed_models=("m1",), lan_address="192.168.1.10")
 NOW = dt.datetime(2026, 11, 12, 9, 0, tzinfo=dt.UTC)
 BINARY = "/home/alice/.hermes/hermes-agent/.hermes/bin/hermes"
+
+
+# `nft list table inet hermes_manager` on Debian 13 after loading render.firewall("eth0", ["203.0.113.0/24"])
+LISTED = """table inet hermes_manager {
+	set blocked_v4 {
+		type ipv4_addr
+		flags interval
+		elements = { 0.0.0.0/8, 10.0.0.0/8,
+			     100.64.0.0/10, 127.0.0.0/8,
+			     169.254.0.0/16, 172.16.0.0/12,
+			     192.168.0.0/16, 203.0.113.0/24,
+			     224.0.0.0/3 }
+	}
+
+	chain forward {
+		type filter hook forward priority filter - 1; policy accept;
+		iifname "hm-*" oifname != "eth0" drop
+		iifname "hm-*" ip daddr @blocked_v4 drop
+		iifname "hm-*" meta nfproto ipv6 drop
+		oifname "hm-*" ct state != { established, related } drop
+	}
+
+	chain input {
+		type filter hook input priority filter - 1; policy accept;
+		iifname "hm-*" ct state != { established, related } drop
+	}
+
+	chain postrouting {
+		type nat hook postrouting priority srcnat; policy accept;
+		oifname "eth0" ip saddr 10.78.0.0/24 masquerade
+	}
+}
+"""
+
+
+def test_the_loaded_firewall_must_have_every_rendered_rule():
+    rendered = render.firewall("eth0", ["203.0.113.0/24"])
+    assert checks.missing_rules(rendered, LISTED) == []
+    nat_only = LISTED[LISTED.index("\tchain postrouting"):]
+    assert len(checks.missing_rules(rendered, nat_only)) == 8   # 2 hooks, 5 filter rules, the networks
+    assert checks.missing_rules(render.firewall("eth0", ["198.51.100.0/24"]), LISTED) == [
+        "elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, "
+        "192.168.0.0/16, 198.51.100.0/24, 224.0.0.0/3 }"]
+    assert checks.missing_rules(render.firewall("ens3", []), "") != []
 
 
 @pytest.mark.parametrize("status, level", [

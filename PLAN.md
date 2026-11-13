@@ -466,8 +466,10 @@ private ones and the tailnet are always blocked). `site.example.toml` lists ever
   `--commit <sha>` (the same path as add-person), `hermes webapp --build-only`, the language
   pack (`hermes plugins install --force`), `hermes pm gc`, then `gateway restart --yes` with
   the checks. Stop at the first failure.
-- `update-unfinished` holds tag and commit; a later run finishes the rollout without asking
-  GitHub, whatever its age, skipping people already at the commit. The recorded release
+- `update-unfinished` holds tag, commit and the person being updated; a later run finishes the
+  rollout without asking GitHub, whatever its age: that person again from the start (their
+  checkout may be at the commit while their Webapp build is not), then the people not yet at
+  the commit. The recorded release
   moves only when everyone runs it; add-person installs it (the latest stable release when
   none is recorded yet).
 - No pre-update backup: `/etc/hermes`, model-guard and the language pack can all be
@@ -482,7 +484,7 @@ private ones and the tailnet are always blocked). `site.example.toml` lists ever
   timer enabled (WARN); last update status (FAIL when failed, WARN when missing or older than
   48 h).
 - Prerequisites (section 6.3), all WARN.
-- Firewall: our table loaded (FAIL); its file is what `site.toml` renders (WARN).
+- Firewall: the loaded table has every rule and blocked network `site.toml` renders (FAIL).
 - Office network: Caddy active when anyone uses LAN access (FAIL).
 - Per person: container running and reaching the internet (FAIL; the fix shows the
   forward-chain lines); gateway active and Webapp answering (FAIL), `public_url` as recorded

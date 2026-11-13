@@ -120,11 +120,12 @@ def installed_commit(name: str) -> str:
 
 
 def ensure_model_guard(name: str) -> None:
-    """The server's model guard as a bundled plugin, read-only, hidden from the checkout's git."""
-    add_device(name, "model-guard", "disk", f"source={host.FILES / 'model-guard'}",
-               f"path={home(name) / 'hermes-agent/plugins/model-guard'}", "readonly=true", "shift=true")
+    """The server's model guard as a bundled plugin, read-only. Hidden from the checkout's git first:
+    the installer stashes untracked files, which it cannot do with a read-only mount."""
     as_user(name, ["sh", "-c", 'grep -qx /plugins/model-guard/ "$1" || echo /plugins/model-guard/ >> "$1"', "sh",
                    str(home(name) / "hermes-agent/.git/info/exclude")])
+    add_device(name, "model-guard", "disk", f"source={host.FILES / 'model-guard'}",
+               f"path={home(name) / 'hermes-agent/plugins/model-guard'}", "readonly=true", "shift=true")
 
 
 def webapp_settings(name: str) -> dict[str, str]:

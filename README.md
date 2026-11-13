@@ -198,6 +198,7 @@ Hermes itself is installed into each person's container by `add-person`.
 
 Rerunning `install.sh` is safe. It repairs what is missing, keeps all data and never updates
 Hermes. If the rerun changes `/etc/hermes`, it restarts the gateways one by one, like `apply`.
+A changed model guard reaches the gateways at their next restart (`hermes-manager restart`).
 
 To update hermes-manager itself:
 
@@ -454,7 +455,8 @@ hermes-manager restart [alice ...] # restart gateways one by one (all, or the na
   `update_time`.
 - **Interrupted work is finished later.** If an update stops halfway, the next run (or
   `hermes-manager update --now`) finishes it first, to the same release and without waiting
-  for the minimum age. People already at that release are skipped. Gateways that `apply`,
+  for the minimum age. It starts with the person it stopped at, from the beginning, and skips
+  the people already done. Gateways that `apply`,
   `update` or `restart` could not restart are remembered and restarted by the next of these
   commands.
 - **One run at a time.** hermes-manager runs one command at a time. During the update, other
@@ -479,8 +481,8 @@ helps. It exits with status 1 when anything fails, so you can use it from monito
   - the last nightly update result: `FAIL` if it failed, `WARN` if it is missing or older
     than 48 h.
 - **Prerequisites:** everything in [Prerequisites](#prerequisites-your-part).
-- **Firewall:** the `inet hermes_manager` table is loaded (`FAIL` if not), and its file
-  follows `site.toml`.
+- **Firewall:** the loaded `inet hermes_manager` table has every rule and blocked network that
+  `site.toml` gives (`FAIL` if not).
 - **Office network:** Caddy is running when anyone uses LAN access.
 - **Per person:**
   - the container is running and reaches the internet. If it does not, the fix shows the

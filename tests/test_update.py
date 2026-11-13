@@ -24,6 +24,7 @@ class Server:
         self.commits = {"alice": "c1", "bob": "c1", "carol": "c1"}
         self.age = 72
         self.broken = set()
+        self.stops_after_checkout = set()   # their installer moves the checkout, then fails
 
     def status(self):
         return json.loads((self.tmp / "status.json").read_text())
@@ -33,6 +34,8 @@ class Server:
             raise CommandError(f"{name}: installer -> exit 1")
         self.calls.append(f"install {name} {commit}")
         self.commits[name] = commit
+        if name in self.stops_after_checkout:
+            raise CommandError(f"{name}: hermes webapp --build-only -> exit 1")
 
     def restart(self, p):
         if p.name in self.broken:
@@ -123,14 +126,28 @@ def test_an_interrupted_update_is_finished_without_github(server, monkeypatch):
     assert server.release == ("v2", "c2")
 
 
-def test_a_failed_restart_is_owed_to_the_next_run(server, monkeypatch):
+def test_a_resume_redoes_the_person_it_stopped_at_although_their_checkout_moved(server):
+    server.stops_after_checkout.add("alice")
+    assert update.run(S, registry()) == 1
+    assert server.commits["alice"] == "c2"   # the checkout moved, the Webapp build failed
+
+    server.stops_after_checkout.clear()
+    server.calls.clear()
+    assert update.run(S, registry()) == 0
+    assert server.calls == ["packages alice", "install alice c2", "restart alice",
+                            "packages bob", "install bob c2", "restart bob"]
+
+
+def test_nobody_else_is_touched_while_a_restart_keeps_failing(server, monkeypatch):
     def broken(p):
         raise CommandError(f"{p.name}: gateway not active")
     monkeypatch.setattr(people, "_gateway_up", broken)
     assert update.run(S, registry()) == 1
-    assert server.commits["alice"] == "c2"   # Hermes got through, its restart did not
+    assert update.run(S, registry()) == 1
+    assert server.commits["bob"] == "c1"
 
     monkeypatch.setattr(people, "_gateway_up", server.restart)
+    server.calls.clear()
     assert update.run(S, registry()) == 0
-    assert [c for c in server.calls if not c.startswith("packages")] == [
-        "install alice c2", "install bob c2", "restart alice", "restart bob"]
+    assert server.calls == ["packages alice", "install alice c2", "restart alice",
+                            "packages bob", "install bob c2", "restart bob"]

@@ -19,8 +19,12 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
 
 echo "Installing hermes-manager into $LIB"
 mkdir -p "$LIB"
-rm -rf "$LIB/hermes_manager" "$LIB/files"
-cp -r "$SRC/hermes_manager" "$SRC/files" "$SRC/hermes-manager" "$SRC/site.example.toml" "$LIB/"
+rm -rf "$LIB/hermes_manager"
+cp -r "$SRC/hermes_manager" "$SRC/hermes-manager" "$SRC/site.example.toml" "$LIB/"
+# In place: every person's container mounts files/model-guard, and a replaced directory would
+# leave them an empty one. Gateways load a changed model guard at their next restart.
+mkdir -p "$LIB/files"
+cp -r "$SRC/files/." "$LIB/files/"
 find "$LIB" -name __pycache__ -prune -exec rm -rf {} +
 chmod 755 "$LIB/hermes-manager"
 ln -sfn "$LIB/hermes-manager" /usr/local/sbin/hermes-manager

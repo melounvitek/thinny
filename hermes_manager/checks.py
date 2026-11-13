@@ -121,15 +121,19 @@ def unattended_upgrades(apt_dump: str, update_time: str):
 
 
 def firewall(s: Settings, reg: Registry):
-    fix = "hermes-manager apply"
-    table = system.run(["nft", "list", "table", "inet", "hermes_manager"], check=False)
-    if table.returncode != 0 or f'oifname "{s.network_interface}" ip saddr' not in table.stdout:
-        yield fail("firewall table inet hermes_manager not loaded: containers can reach each other and the host", fix)
-        return
-    yield ok("firewall table inet hermes_manager loaded")
-    current = host.FIREWALL_FILE.exists() and \
-        host.FIREWALL_FILE.read_text() == render.firewall(s.network_interface, list(s.blocked_networks))
-    yield ok("firewall follows site.toml") if current else warn("firewall is not as site.toml says", fix)
+    listed = system.run(["nft", "list", "table", "inet", "hermes_manager"], check=False).stdout
+    missing = missing_rules(render.firewall(s.network_interface, list(s.blocked_networks)), listed)
+    yield (ok("firewall table inet hermes_manager loaded as site.toml says") if not missing
+           else fail(f"firewall table inet hermes_manager lacks {len(missing)} of its rules: containers may reach "
+                     "each other, the host or blocked networks", "hermes-manager apply"))
+
+
+def missing_rules(rendered: str, listed: str) -> list[str]:
+    """The rules and blocked networks of the rendered table that `nft list table` does not show."""
+    wanted = [line for line in rendered.splitlines() if line.startswith("\t\t")]
+    wanted += re.findall(r"elements = \{[^}]*\}", rendered)
+    live = " ".join(listed.split())
+    return [w for w in wanted if " ".join(w.split()) not in live]
 
 
 def lan_access(s: Settings, reg: Registry):

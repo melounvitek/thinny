@@ -13,7 +13,7 @@ from .settings import Settings
 from .system import STATE_DIR, log, write_file
 
 STATUS_FILE = STATE_DIR / "update-status.json"
-# "<tag> <commit>" while an update runs; a later run finishes the job.
+# "<tag> <commit> [<person being updated>]" while an update runs; a later run finishes the job.
 UNFINISHED = STATE_DIR / "update-unfinished"
 REBOOT_REQUIRED = Path("/run/reboot-required")
 
@@ -25,9 +25,9 @@ def run(s: Settings, reg: Registry, *, check: bool = False, now: bool = False) -
     try:
         unfinished = UNFINISHED.read_text().split() if UNFINISHED.exists() else []
         if unfinished and not check:  # whatever its age, and without asking GitHub
-            tag, commit = unfinished
+            tag, commit, *current = unfinished
             log(f"finishing the interrupted update to {tag}")
-            rollout(s, reg, tag, commit)
+            rollout(s, reg, tag, commit, *current)
             result, detail = "ok", f"finished the interrupted update to {tag}"
         else:
             result, detail, tag = due(s, check=check, now=now)
@@ -64,15 +64,17 @@ def due(s: Settings, *, check: bool, now: bool) -> tuple[str, str, str]:
     return "due", "", tag
 
 
-def rollout(s: Settings, reg: Registry, tag: str, commit: str) -> None:
+def rollout(s: Settings, reg: Registry, tag: str, commit: str, current: str = "") -> None:
     """Every active person to `commit`, one at a time, each followed by a checked restart. Stops
-    at the first failure; a repeat skips the people already done. New people get the release
-    once everyone runs it."""
+    at the first failure. A repeat starts with the person it stopped at (their checkout may be at
+    the commit while the rest of their update is not), then skips the people already done. New
+    people get the release once everyone runs it."""
     for p in [p for p in reg.current() if p.state == "active"]:
-        if people.installed_commit(p.name) == commit:
+        if p.name != current and people.installed_commit(p.name) == commit:
             continue
         log(f"{p.name}: Hermes {tag}")
-        people.mark_restart([p.name])  # first: a failure on the way still owes the restart
+        write_file(UNFINISHED, f"{tag} {commit} {p.name}\n", 0o600)
+        people.mark_restart([p.name])
         people.ensure_packages(p.name)  # a new Hermes may need packages the list gained since
         people.install_hermes(s, p.name, commit)
         people.restart_all([p], reg)  # with the restarts an interrupted run still owes

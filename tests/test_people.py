@@ -179,6 +179,9 @@ def test_a_new_person_gets_their_own_container_with_hermes(incus):
                       "hermes gateway install")
     assert "path=/home/alice/.hermes/hermes-agent/plugins/model-guard readonly=true shift=true" in \
         incus.calls[incus.index("incus config device add alice model-guard")]
+    # git ignores the read-only mount before it appears (the installer stashes untracked files)
+    assert next(i for i, c in enumerate(incus.calls) if "grep -qx /plugins/model-guard/" in c) \
+        < incus.index("incus config device add alice model-guard")
 
 
 def test_an_interrupted_add_resumes_where_it_stopped(incus):
