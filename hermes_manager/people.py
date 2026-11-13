@@ -76,13 +76,17 @@ def ensure_container(p: Person) -> None:
 
 
 def ensure_packages(name: str) -> None:
-    try:
-        in_container(name, ["sh", "-c", 'export DEBIAN_FRONTEND=noninteractive && apt-get update -q && '
-                            'apt-get install -y -q --no-install-recommends "$@" && apt-get clean',
-                            "sh", *render.PACKAGES], timeout=3600)
-    except CommandError as e:
-        raise CommandError(f"{e}\nNo internet in {name}'s container? See README, Requirements "
-                           "(the forward chain).") from None
+    # Without a network apt does not fail, it retries for a very long time: find out first.
+    for _ in range(5):
+        if in_container(name, ["getent", "hosts", "deb.debian.org"], check=False, timeout=60).returncode == 0:
+            break
+        time.sleep(3)
+    else:
+        raise CommandError(f"{name}'s container cannot reach the internet. Does your firewall's forward chain "
+                           "let it through? See README, Requirements.")
+    in_container(name, ["sh", "-c", 'export DEBIAN_FRONTEND=noninteractive && apt-get update -q --error-on=any && '
+                        'apt-get install -y -q --no-install-recommends "$@" && apt-get clean',
+                        "sh", *render.PACKAGES], timeout=3600)
 
 
 def ensure_account(name: str) -> None:

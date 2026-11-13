@@ -114,6 +114,8 @@ class Incus:
             cmd = list(itertools.dropwhile(lambda a: "=" in a, cmd[cmd.index("-i") + 1:]))
         if cmd[:2] == ["id", "-u"]:
             return "", 0 if c["account"] else 1
+        if cmd[0] == "getent":
+            return "", 0 if c.get("internet", True) else 2
         if cmd[0] == "useradd":
             c["account"] = True
         elif cmd[:2] == ["test", "-d"]:
@@ -195,6 +197,14 @@ def test_an_interrupted_add_resumes_where_it_stopped(incus):
     assert not incus.ran("useradd")
     assert incus.ran("incus start alice")
     assert incus.ran("hermes webapp --build-only")   # the install may have stopped before it
+
+
+def test_a_container_without_internet_fails_fast_with_the_fix(incus, monkeypatch):
+    monkeypatch.setattr(people.time, "sleep", lambda s: None)
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {"eth0", "policy", "webapp"}, "internet": False}
+    with pytest.raises(CommandError, match="forward chain"):
+        people.ensure_packages("alice")
+    assert not incus.ran("apt-get")
 
 
 def test_an_unknown_container_with_the_name_is_left_alone(incus):
