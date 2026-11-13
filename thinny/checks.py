@@ -170,7 +170,7 @@ def lan_access(s: Settings, reg: Registry):
 
 # ---------- per-person checks ----------
 
-def container(p: Person):
+def container(s: Settings, p: Person):
     state = people.container_state(p.name)
     if state != "RUNNING":
         yield fail(f"{p.name}: container is {state or 'missing'}", f"incus start {p.name}")
@@ -182,7 +182,7 @@ def container(p: Person):
            else fail(f"{p.name}: container cannot reach the internet (HTTP {code or '000'})", FORWARD_FIX))
 
 
-def webapp(p: Person):
+def webapp(s: Settings, p: Person):
     url = f"http://127.0.0.1:{p.port}/"
     fix = f"thinny instance restart {p.name}"
     yield (ok(f"{p.name}: gateway active") if system.gateway_active(p.name)
@@ -195,18 +195,18 @@ def webapp(p: Person):
            else warn(f"{p.name}: Webapp public_url is {public_url or 'not set'}, not {p.url}", "thinny config apply"))
 
 
-def version(p: Person):
+def version(s: Settings, p: Person):
     tag, commit = host.release() or ("none", "")
     yield (ok(f"{p.name}: Hermes {tag}") if people.installed_commit(p.name) == commit
            else warn(f"{p.name}: Hermes is not at {tag}, the release everyone runs (changed by them, or an "
                      "update is unfinished); the next update puts it back"))
 
 
-def bypass(p: Person):
+def bypass(s: Settings, p: Person):
     home = people.home(p.name)
     unit = home.parent / ".config/systemd/user/hermes-gateway.service"
-    own_guard = system.as_user(p.name, ["test", "-e", str(home / "plugins/model-guard")],
-                               check=False, timeout=30).returncode == 0
+    own_guard = s.model_lock and system.as_user(p.name, ["test", "-e", str(home / "plugins/model-guard")],
+                                                check=False, timeout=30).returncode == 0
     yield from bypasses(p.name, system.read_user_file(p.name, str(home / ".env")),
                         system.read_user_file(p.name, str(unit)), own_guard,
                         str(home / "hermes-agent/.hermes/bin/hermes"))
@@ -238,7 +238,7 @@ def overview(s: Settings, reg: Registry):
     yield update_status(UPDATE_STATUS, dt.datetime.now(dt.UTC))
 
 
-def running(p: Person):
+def running(s: Settings, p: Person):
     state = people.container_state(p.name)
     if state != "RUNNING":
         yield fail(f"{p.name}: container is {state or 'missing'}", f"incus start {p.name}")
@@ -267,7 +267,7 @@ def status(s: Settings, reg: Registry) -> int:
 def run_checks(s: Settings, reg: Registry, checks, person_checks) -> int:
     """Print every result; 1 when anything failed."""
     jobs = [(check.__name__, check, (s, reg)) for check in checks]
-    jobs += [(f"{check.__name__} {p.name}", check, (p,)) for p in active(reg) for check in person_checks]
+    jobs += [(f"{check.__name__} {p.name}", check, (s, p)) for p in active(reg) for check in person_checks]
     failed = False
     for name, check, args in jobs:
         try:

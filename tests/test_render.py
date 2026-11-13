@@ -1,3 +1,4 @@
+import dataclasses
 import json
 
 import pytest
@@ -6,16 +7,25 @@ from thinny import render
 from thinny.settings import Settings
 
 S = Settings(model="m1", allowed_models=("m1", "m2"), lan_address="192.168.1.10", language_pack="hermes-lang-cs")
+LOCKED = dataclasses.replace(S, model_lock=True)
 
 
 def test_managed_config_pins_the_policy():
     yaml = pytest.importorskip("yaml")
-    config = yaml.safe_load(render.managed_config(S))
+    config = yaml.safe_load(render.managed_config(LOCKED))
     assert config["model"] == {"provider": "openai-codex", "default": "m1"}
+    assert config["agent"] == {"reasoning_effort": "high"}
     assert config["plugins"] == {"enabled": ["model-guard", "hermes-lang-cs"], "disabled": []}
     assert config["terminal"] == {"backend": "local"}   # the person's container is the sandbox
     assert config["bot_desktop"] == {"placement": "terminal"}
     assert config["approvals"] == {"mode": "smart"}
+
+
+def test_without_the_model_lock_people_choose_their_model_effort_and_plugins():
+    yaml = pytest.importorskip("yaml")
+    config = yaml.safe_load(render.managed_config(S))
+    assert config == {"terminal": {"backend": "local"}, "bot_desktop": {"placement": "terminal"},
+                      "security": {"redact_secrets": True}, "approvals": {"mode": "smart"}}
 
 
 def test_managed_env_keeps_the_agent_in_the_container():
@@ -30,12 +40,19 @@ def test_allowed_models_one_per_line():
 
 
 def test_ui_preferences_show_only_allowed_models():
-    prefs = render.ui_preferences(S)
+    prefs = render.ui_preferences(LOCKED)
     assert json.loads(prefs["hermes.desktop.visible-models"]) == ["openai-codex::m1", "openai-codex::m2"]
     assert json.loads(prefs["hermes.desktop.model-presets"]) == {
         "openai-codex::m1": {"effort": "high", "serviceTier": "normal", "fast": False}}
     assert prefs["hermes-desktop-mode-v1"] == "light"
     assert all(key.startswith(("hermes.desktop.", "hermes-desktop-")) for key in prefs)
+
+
+def test_ui_preferences_without_the_model_lock_leave_the_model_picker_alone():
+    prefs = render.ui_preferences(S)
+    assert "hermes.desktop.visible-models" not in prefs and "hermes.desktop.known-models" not in prefs
+    assert json.loads(prefs["hermes.desktop.model-presets"]) == {
+        "openai-codex::m1": {"effort": "high", "serviceTier": "normal", "fast": False}}
 
 
 @pytest.mark.parametrize("access, expected", [

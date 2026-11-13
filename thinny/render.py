@@ -45,12 +45,16 @@ def to_yaml(value, indent: int = 0) -> str:
 
 
 def managed_config(s: Settings) -> str:
-    plugins = ["model-guard"] + ([s.language_pack] if s.language_pack else [])
-    config = {
-        "model": {"provider": s.model_provider, "default": s.model},
-        "agent": {"reasoning_effort": s.reasoning_effort},
-        # Pinned lists replace the user's lists, so everything that must be on is listed here.
-        "plugins": {"enabled": plugins, "disabled": []},
+    config = {}
+    if s.model_lock:  # without it, the person's own config holds these, seeded at instance add
+        plugins = ["model-guard"] + ([s.language_pack] if s.language_pack else [])
+        config = {
+            "model": {"provider": s.model_provider, "default": s.model},
+            "agent": {"reasoning_effort": s.reasoning_effort},
+            # Pinned lists replace the user's lists, so everything that must be on is listed here.
+            "plugins": {"enabled": plugins, "disabled": []},
+        }
+    config |= {
         # The person's container is the agent's sandbox.
         "terminal": {"backend": "local"},
         "bot_desktop": {"placement": "terminal"},
@@ -79,19 +83,21 @@ def ui_preferences(s: Settings) -> dict[str, str]:
     """Webapp look for a new person (keys of Hermes's ui-preferences.json)."""
     def key(model):
         return f"{s.model_provider}::{model}"
-    allowed = [key(m) for m in s.allowed_models]
-    return {
+    prefs = {
         "hermes-desktop-mode-v1": s.theme,
         "hermes.desktop.chat-text-scale.v1": str(s.text_scale),
         "hermes.desktop.interfaceMode.v1": s.interface,
-        "hermes.desktop.visible-models": json.dumps(allowed),
         "hermes.desktop.panesFlipped": "false",
         "hermes.desktop.showAllProfiles": "false",
         "hermes.desktop.model-presets": json.dumps(
             {key(s.model): {"effort": s.reasoning_effort, "serviceTier": "normal", "fast": False}}),
-        # Models missing here show up as "new" in the model picker.
-        "hermes.desktop.known-models": json.dumps(sorted(set(allowed) | {key(m) for m in s.known_models})),
     }
+    if s.model_lock:  # the model picker shows the allowed models only
+        allowed = [key(m) for m in s.allowed_models]
+        prefs["hermes.desktop.visible-models"] = json.dumps(allowed)
+        # Models missing here show up as "new" in the model picker.
+        prefs["hermes.desktop.known-models"] = json.dumps(sorted(set(allowed) | {key(m) for m in s.known_models}))
+    return prefs
 
 
 def host_for_url(address: str) -> str:

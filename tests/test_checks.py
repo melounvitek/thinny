@@ -1,5 +1,7 @@
+import dataclasses
 import datetime as dt
 import json
+import subprocess
 
 import pytest
 
@@ -107,6 +109,14 @@ def test_untouched_home_has_no_bypass():
     results = checks.bypasses("alice", "HERMES_DASHBOARD_BASIC_AUTH_USERNAME=alice\n", unit, own_guard=False,
                               gateway_binary=BINARY)
     assert [level for level, _, _ in results] == ["OK"]
+
+
+def test_an_own_model_guard_is_a_bypass_only_with_the_model_lock(monkeypatch):
+    monkeypatch.setattr(system, "as_user", lambda name, cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""))
+    monkeypatch.setattr(system, "read_user_file", lambda name, path: "")
+    alice = Person("alice", 9120, "local", state="active")
+    assert [r[0] for r in checks.bypass(S, alice)] == ["OK"]
+    assert [r[0] for r in checks.bypass(dataclasses.replace(S, model_lock=True), alice)] == ["WARN"]
 
 
 @pytest.mark.parametrize("reboot, warned", [("02:00", True), ("03:00", True), ("04:30", False), ("now", False)])

@@ -8,13 +8,15 @@ min_release_age_hours = 48      # install a stable release only once it is this 
 
 [policy]
 model_provider = "openai-codex"
-model = "<model id>"            # default model for everyone
-allowed_models = ["<model id>"] # the model-guard plugin blocks every other model
+model = "<model id>"            # default model (with model_lock = false, only where new people start)
 reasoning_effort = "high"
+model_lock = false              # true: everyone uses model_provider, reasoning_effort and allowed_models
+                                # only, and the plugins the policy turns on
+allowed_models = []             # with model_lock: the model-guard plugin blocks every other model
 approvals = "smart"             # manual | smart (never off: every command would run unasked)
 language = "en"                 # Hermes UI language (display.language) for new people
 language_pack = ""              # catalog plugin for that language, e.g. "hermes-lang-cs"
-model_guard_message = "Model {model} is not allowed on this server. Allowed: {allowed}."
+model_guard_message = "Model {model} is not allowed on this server. Allowed: {allowed}."  # with model_lock
 
 [container]                     # limits of each person's container
 cpu = 2
@@ -26,7 +28,7 @@ port_range = [9120, 9199]       # one local port per person
 theme = "light"                 # light | dark, for new people
 text_scale = 110                # chat text size in %
 interface = "simple"
-known_models = []               # other model ids the model picker should not announce as new
+known_models = []               # with model_lock: other model ids the model picker should not announce as new
 
 [access]
 default = "lan"                 # lan | tailscale | url | local (asked per person)

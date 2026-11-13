@@ -105,15 +105,17 @@ def ensure_account(name: str) -> None:
     raise CommandError(f"the user manager of {name} did not start")
 
 
-def install_hermes(s: Settings, name: str, commit: str) -> None:
+def install_hermes(s: Settings, name: str, commit: str, enable: bool) -> None:
     """Hermes at exactly `commit` with the official installer (a first install or an update),
-    the Webapp and the language pack that release's catalog pins."""
+    the Webapp and the language pack that release's catalog pins. `enable` turns the plugins on in
+    the person's own list (with the model lock, the policy turns them on anyway)."""
     write_user_file(name, "/tmp/hermes-install.sh", host.installer())
     as_user(name, ["bash", "/tmp/hermes-install.sh", "--channel", "stable", "--commit", commit, "--non-interactive"],
             timeout=3600)
     hermes(name, ["webapp", "--build-only"], timeout=3600)  # the installer does not build it
     if s.language_pack:
-        hermes(name, ["plugins", "install", s.language_pack, "--force", "--yes-deps", "--no-enable"], timeout=1800)
+        hermes(name, ["plugins", "install", s.language_pack, "--force", "--yes-deps",
+                      "--enable" if enable else "--no-enable"], timeout=1800)
     hermes(name, ["pm", "gc"], check=False, timeout=600)
 
 
@@ -200,8 +202,8 @@ def seed_ui(s: Settings, name: str) -> None:
             input=json.dumps(render.ui_preferences(s)))
 
 
-def check_gateway(p: Person, timeout: float = 180) -> None:
-    """Gateway active, Webapp answering, model-guard enabled; raise otherwise."""
+def check_gateway(s: Settings, p: Person, timeout: float = 180) -> None:
+    """Gateway active, Webapp answering, model-guard enabled with the model lock; raise otherwise."""
     deadline = time.time() + timeout
     while True:
         active = gateway_active(p.name)
@@ -211,24 +213,26 @@ def check_gateway(p: Person, timeout: float = 180) -> None:
         if time.time() > deadline:
             raise CommandError(f"{p.name}: gateway {'active' if active else 'not active'}, Webapp HTTP {code}")
         time.sleep(5)
+    if not s.model_lock:
+        return
     plugins = hermes(p.name, ["plugins", "list"], timeout=600).stdout
     row = next((line for line in plugins.splitlines() if "model-guard" in line), "")
     if "enabled" not in row or "not enabled" in row or "disabled" in row:
         raise CommandError(f"{p.name}: model-guard is not enabled")
 
 
-def start_or_restart_gateway(p: Person) -> None:
-    _gateway_up(p)
+def start_or_restart_gateway(s: Settings, p: Person) -> None:
+    _gateway_up(s, p)
     _set_pending([n for n in _pending() if n != p.name])
 
 
-def _gateway_up(p: Person) -> None:
+def _gateway_up(s: Settings, p: Person) -> None:
     unit = home(p.name).parent / ".config/systemd/user/hermes-gateway.service"
     if as_user(p.name, ["test", "-e", str(unit)], check=False).returncode == 0:
         hermes(p.name, ["gateway", "restart", "--yes"], timeout=RESTART_TIMEOUT)
     else:
         hermes(p.name, ["gateway", "install"], timeout=600)
-    check_gateway(p)
+    check_gateway(s, p)
 
 
 def _pending() -> list[str]:
@@ -248,7 +252,7 @@ def mark_restart(names: list[str]) -> None:
     _set_pending(list(dict.fromkeys([*_pending(), *names])))
 
 
-def restart_all(people: list[Person], reg: Registry) -> None:
+def restart_all(s: Settings, people: list[Person], reg: Registry) -> None:
     """Restart these gateways and every remembered one, one at a time (each waits for a
     running reply); stop at the first failure, leaving the rest remembered."""
     mark_restart([p.name for p in people])
@@ -258,7 +262,7 @@ def restart_all(people: list[Person], reg: Registry) -> None:
             _set_pending([n for n in _pending() if n != name])
             continue
         log(f"restarting {p.name} (port {p.port})")
-        start_or_restart_gateway(p)
+        start_or_restart_gateway(s, p)
         log(f"  ok {p.name}")
 
 
@@ -294,17 +298,20 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     ensure_account(name)
     tag, commit = host.release() or host.first_release()
     log(f"{name}: Hermes {tag} (takes a few minutes)")
-    install_hermes(s, name, commit)  # a resumed add repeats it: it may have stopped halfway
+    install_hermes(s, name, commit, enable=True)  # a resumed add repeats it: it may have stopped halfway
     ensure_model_guard(name)
     p.url = url_for(s, p)
     reg.save()
     configure_webapp(s, p)
     hermes(name, ["config", "set", "display.language", s.language])
+    if not s.model_lock:  # with the lock the policy sets them
+        for key, value in starting_model(s).items():
+            hermes(name, ["config", "set", key, value])
     password = ensure_sign_in(name)
     seed_ui(s, name)
     host.reconcile_access(s, reg)
     log(f"{name}: gateway")
-    start_or_restart_gateway(p)
+    start_or_restart_gateway(s, p)
     p.state = "active"
     reg.save()
 
@@ -313,6 +320,11 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
           else "  Password: unchanged (reset with: thinny instance reset-password " + name + ")")
     _print_access_hint(p)
     print(f"Next: sign {name} in to {s.model_provider} before handing over: thinny instance login {name}")
+
+
+def starting_model(s: Settings) -> dict[str, str]:
+    """Where a person added without the model lock starts, in their own config."""
+    return {"model.provider": s.model_provider, "model.default": s.model, "agent.reasoning_effort": s.reasoning_effort}
 
 
 def _print_access_hint(p: Person) -> None:
@@ -335,7 +347,7 @@ def change_access(s: Settings, reg: Registry, name: str, access: str, url: str =
     reg.save()
     configure_webapp(s, p)
     host.reconcile_access(s, reg)
-    start_or_restart_gateway(p)
+    start_or_restart_gateway(s, p)
     print(f"{name}: {p.url}")
     _print_access_hint(p)
 
@@ -347,10 +359,10 @@ def login(s: Settings, reg: Registry, name: str) -> None:
         raise CommandError("the login did not finish")
 
 
-def password(reg: Registry, name: str) -> None:
+def password(s: Settings, reg: Registry, name: str) -> None:
     p = _active(reg, name)
     new = reset_password(name)
-    start_or_restart_gateway(p)
+    start_or_restart_gateway(s, p)
     print(f"{name}: new Webapp password: {new}   (shown once; open browsers must sign in again)")
 
 

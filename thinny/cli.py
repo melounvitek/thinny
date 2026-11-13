@@ -89,12 +89,12 @@ def main(argv: list[str] | None = None) -> int:
             elif command == "instance login":
                 people.login(s, reg, a.name)
             elif command == "instance reset-password":
-                people.password(reg, a.name)
+                people.password(s, reg, a.name)
             elif command == "instance disable":
                 people.disable(s, reg, a.name)
             elif command == "instance restart":
                 targets = [reg.get(n) for n in a.names] if a.names else reg.current()
-                people.restart_all([p for p in targets if p.state == "active"], reg)
+                people.restart_all(s, [p for p in targets if p.state == "active"], reg)
         return 0
     except (SettingsError, RegistryError, CommandError) as e:
         print(f"thinny: {e}", file=sys.stderr)

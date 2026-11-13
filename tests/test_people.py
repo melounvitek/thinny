@@ -1,3 +1,4 @@
+import dataclasses
 import itertools
 import subprocess
 import sys
@@ -15,7 +16,7 @@ def gateways(tmp_path, monkeypatch):
     """Records restarts; restarting a name in `broken` fails."""
     restarted, broken = [], set()
 
-    def restart(p):
+    def restart(s, p):
         if p.name in broken:
             raise CommandError(f"{p.name}: gateway not active")
         restarted.append(p.name)
@@ -34,13 +35,13 @@ def test_gateways_left_by_a_failed_restart_are_restarted_next_time(gateways):
     reg = registry()
     broken.add("bob")
     with pytest.raises(CommandError):
-        people.restart_all(reg.current(), reg)
+        people.restart_all(S, reg.current(), reg)
     assert restarted == ["alice"]
 
     broken.clear()
-    people.restart_all([], reg)   # e.g. an apply that changed nothing
+    people.restart_all(S, [], reg)   # e.g. an apply that changed nothing
     assert restarted == ["alice", "bob", "carol"]
-    people.restart_all([], reg)
+    people.restart_all(S, [], reg)
     assert restarted == ["alice", "bob", "carol"]
 
 
@@ -48,7 +49,7 @@ def test_a_marked_restart_survives_a_failure_before_any_restart(gateways):
     restarted, _ = gateways
     reg = registry()
     people.mark_restart(["bob"])   # e.g. apply changed bob's settings, then failed
-    people.restart_all([], reg)
+    people.restart_all(S, [], reg)
     assert restarted == ["bob"]
 
 
@@ -56,7 +57,7 @@ def test_disabled_people_are_not_restarted(gateways):
     restarted, _ = gateways
     reg = registry()
     reg.get("bob").state = "disabled"
-    people.restart_all(list(reg.people.values()), reg)
+    people.restart_all(S, list(reg.people.values()), reg)
     assert restarted == ["alice", "carol"]
 
 
@@ -127,7 +128,7 @@ class Incus:
         elif cmd[:3] == ["hermes", "gateway", "install"]:
             c["unit"] = True
         elif cmd[:3] == ["hermes", "plugins", "list"]:
-            return "model-guard  enabled\n", 0
+            return f"model-guard  {'enabled' if c.get('guard', True) else 'not enabled'}\n", 0
         elif cmd[:2] == ["systemctl", "--user"]:
             return "active\n", 0
         return "", 0
@@ -141,6 +142,7 @@ class Incus:
 
 
 S = Settings(model="m1", allowed_models=("m1",), access_default="local", language_pack="hermes-lang-cs")
+LOCKED = dataclasses.replace(S, model_lock=True)
 
 
 @pytest.fixture
@@ -169,7 +171,10 @@ def test_a_new_person_gets_their_own_container_with_hermes(incus):
     assert incus.ran("incus config device add alice webapp proxy listen=tcp:127.0.0.1:9120 connect=tcp:127.0.0.1:9120")
     assert incus.ran("useradd --create-home --shell /bin/bash --uid 1000 --groups sudo alice")
     assert incus.ran("bash /tmp/hermes-install.sh --channel stable --commit c0ffee --non-interactive")
-    assert incus.ran("hermes plugins install hermes-lang-cs --force --yes-deps --no-enable")
+    assert incus.ran("hermes plugins install hermes-lang-cs --force --yes-deps --enable")
+    # without the model lock, the policy's model is only where the person starts
+    for setting in ("model.provider openai-codex", "model.default m1", "agent.reasoning_effort high"):
+        assert incus.ran(f"hermes config set {setting}")
     # network before packages, packages before the account, model guard into the finished checkout
     assert incus.index("incus exec alice -- sh -c cat > /etc/systemd/network/eth0.network") \
         < incus.index("incus exec alice -- sh -c export DEBIAN_FRONTEND") < incus.index("incus exec alice -- id -u")
@@ -184,6 +189,17 @@ def test_a_new_person_gets_their_own_container_with_hermes(incus):
     # git ignores the read-only mount before it appears (the installer stashes untracked files)
     assert next(i for i, c in enumerate(incus.calls) if "grep -qx /plugins/model-guard/" in c) \
         < incus.index("incus config device add alice model-guard")
+
+
+def test_with_the_model_lock_the_policy_sets_the_model_and_the_guard_must_be_on(incus):
+    people.add(LOCKED, Registry(), "alice", "local")
+    assert not incus.ran("hermes config set model.")   # managed: Hermes refuses it
+
+    incus.containers["alice"]["guard"] = False
+    alice = Person("alice", 9120, "local", state="active")
+    with pytest.raises(CommandError, match="model-guard is not enabled"):
+        people.check_gateway(LOCKED, alice)
+    people.check_gateway(S, alice)   # without the lock, model-guard stays off
 
 
 def test_an_interrupted_add_resumes_where_it_stopped(incus):

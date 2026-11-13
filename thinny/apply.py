@@ -24,11 +24,18 @@ def apply(s: Settings) -> None:
     if not host.managed_scope_current(s):
         log("the managed scope changes: every gateway restarts")
         people.mark_restart([p.name for p in active])  # before the change, so a failure keeps the intent
+        if s.model_lock:
+            # Before the lock pins them: Hermes drops pinned keys from a person's config whenever it
+            # saves it, and writes a `model:` section left empty as invalid YAML (v0.23.1). Pending
+            # people too: a resumed add would start their gateway under the lock.
+            for p in reg.current():
+                for key in people.starting_model(s):
+                    people.hermes(p.name, ["config", "unset", key], check=False)  # 1 when not set
         host.write_managed_scope(s)
     for p in active:
         p.url = people.url_for(s, p)
         people.configure_webapp(s, p)  # remembers the restart when it changes something
     reg.save()
     host.reconcile_access(s, reg)
-    people.restart_all([], reg)
+    people.restart_all(s, [], reg)
     log("applied")

@@ -34,8 +34,14 @@ def test_example_needs_real_values_before_use():
 def test_example_parses_once_filled_in():
     text = EXAMPLE.read_text().replace("<model id>", "m1").replace("<server LAN IP>", "10.0.0.5")
     s = parse(text)
-    assert s.allowed_models == ("m1",)
+    assert s.model_lock is False
     assert s.port_range == (9120, 9199)
+
+
+def test_model_lock_is_off_by_default_and_then_needs_no_allowed_models():
+    s = parse(site(policy__allowed_models=None, policy__model="m3"))
+    assert (s.model_lock, s.model, s.allowed_models) == (False, "m3", ())
+    assert parse(site(policy__model_lock=True)).model_lock is True
 
 
 @pytest.mark.parametrize("changes, message", [
@@ -48,7 +54,10 @@ def test_example_parses_once_filled_in():
     ({"access__default": "vpn"}, "access.default"),
     ({"network__blocked_networks": ["office"]}, "not a network"),
     ({"policy__approvals": "off"}, "manual or smart"),
-    ({"policy__model": "m3"}, "one of policy.allowed_models"),
+    ({"policy__model": "m3", "policy__model_lock": True}, "one of policy.allowed_models"),
+    ({"policy__allowed_models": None, "policy__model_lock": True}, "one of policy.allowed_models"),
+    ({"policy__model_lock": "yes"}, "model_lock must be bool"),
+    ({"policy__model": None}, "policy.model is required"),
     ({"access__lan_address": None}, "lan_address is required"),
     ({"access__lan_address": "server.lan"}, "must be an IP address"),
     ({"access__proxy_users": ["www-data"]}, "unknown setting access.proxy_users"),

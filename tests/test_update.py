@@ -29,7 +29,7 @@ class Server:
     def status(self):
         return json.loads((self.tmp / "status.json").read_text())
 
-    def install_hermes(self, s, name, commit):
+    def install_hermes(self, s, name, commit, enable):
         if name in self.broken:
             raise CommandError(f"{name}: installer -> exit 1")
         self.calls.append(f"install {name} {commit}")
@@ -37,7 +37,7 @@ class Server:
         if name in self.stops_after_checkout:
             raise CommandError(f"{name}: hermes webapp --build-only -> exit 1")
 
-    def restart(self, p):
+    def restart(self, s, p):
         if p.name in self.broken:
             raise CommandError(f"{p.name}: gateway not active, Webapp HTTP 000")
         self.calls.append(f"restart {p.name}")
@@ -155,7 +155,7 @@ def test_the_person_it_stopped_at_comes_first_even_when_others_changed_their_her
 
 
 def test_nobody_else_is_touched_while_a_restart_keeps_failing(server, monkeypatch):
-    def broken(p):
+    def broken(s, p):
         raise CommandError(f"{p.name}: gateway not active")
     monkeypatch.setattr(people, "_gateway_up", broken)
     assert update.run(S, registry()) == 1

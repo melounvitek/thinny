@@ -19,7 +19,8 @@ class SettingsError(Exception):
 @dataclass(frozen=True)
 class Settings:
     model: str
-    allowed_models: tuple[str, ...]
+    allowed_models: tuple[str, ...] = ()
+    model_lock: bool = False
     model_provider: str = "openai-codex"
     reasoning_effort: str = "high"
     approvals: str = "smart"
@@ -51,6 +52,7 @@ KEYS = {
     ("policy", "model_provider"): "model_provider",
     ("policy", "model"): "model",
     ("policy", "allowed_models"): "allowed_models",
+    ("policy", "model_lock"): "model_lock",
     ("policy", "reasoning_effort"): "reasoning_effort",
     ("policy", "approvals"): "approvals",
     ("policy", "language"): "language",
@@ -98,9 +100,8 @@ def parse(text: str, source: str = "site.toml") -> Settings:
     types = {f.name: f.type for f in fields(Settings)}
     for name, value in values.items():
         values[name] = _convert(name, types[name], value, source)
-    for required in ("model", "allowed_models"):
-        if required not in values:
-            raise SettingsError(f"{source}: policy.{required} is required")
+    if "model" not in values:
+        raise SettingsError(f"{source}: policy.model is required")
     settings = Settings(**values)
     _validate(settings, source)
     return settings
@@ -131,8 +132,8 @@ def _validate(s: Settings, source: str) -> None:
     for model in (s.model, *s.allowed_models):
         if not model or "<" in model:
             fail("set policy.model and policy.allowed_models to real model ids")
-    if s.model not in s.allowed_models:
-        fail("policy.model must be one of policy.allowed_models")
+    if s.model_lock and s.model not in s.allowed_models:
+        fail("with policy.model_lock, policy.model must be one of policy.allowed_models")
     if s.approvals not in ("manual", "smart"):
         fail("policy.approvals must be manual or smart (off runs every command and computer_use unasked)")
     if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", s.update_time):

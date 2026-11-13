@@ -77,8 +77,8 @@ def rollout(s: Settings, reg: Registry, tag: str, commit: str, current: str = ""
         write_file(UNFINISHED, f"{tag} {commit} {p.name}\n", 0o600)
         people.mark_restart([p.name])
         people.ensure_packages(p.name)  # a new Hermes may need packages the list gained since
-        people.install_hermes(s, p.name, commit)
-        people.restart_all([p], reg)  # with the restarts an interrupted run still owes
-    people.restart_all([], reg)
+        people.install_hermes(s, p.name, commit, enable=False)
+        people.restart_all(s, [p], reg)  # with the restarts an interrupted run still owes
+    people.restart_all(s, [], reg)
     host.write_release(tag, commit)
     UNFINISHED.unlink(missing_ok=True)
