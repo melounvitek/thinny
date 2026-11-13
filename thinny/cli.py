@@ -184,7 +184,7 @@ def init_config() -> None:
     try:
         provider = ask("Model provider", "openai-codex")
         model = ask("Model id, e.g. gpt-5.5")
-        language = ask("Webapp language (en, cs, de, ...)", "en")
+        language = ask("Webapp language (en, cs, de, ...)", "en").lower()  # Hermes's codes, e.g. pt-br
         interface = ask("Internet interface, containers go out through it", interface or "eth0")
         print()
         access = ask_access("How will users open the Webapps? (default for new instances)", address, "lan")
@@ -204,9 +204,9 @@ def init_config() -> None:
         where = {"lan": f"office network, https://{lan_address}:<port>/", "tailscale": "Tailscale",
                  "url": "own addresses" + (f", one tunnel at http://127.0.0.1:{port}" if int(port) else ""),
                  "local": "local only, through an SSH tunnel"}[access]
-        pack_note = {"200": f", with the language pack {pack}",
-                     "000": " (Hermes's plugin catalog did not answer; set policy.language_pack if needed)"}
-        print(f"\n  model      {provider} / {model}\n  language   {language}{pack_note.get(found, '')}\n"
+        pack_note = (f", with the language pack {pack}" if pack else "" if found in ("", "404") else
+                     " (could not check Hermes's plugin catalog for a language pack; set policy.language_pack if needed)")
+        print(f"\n  model      {provider} / {model}\n  language   {language}{pack_note}\n"
               f"  interface  {interface}\n  access     {where}\n")
         if input(f"Write {path}? [Y/n] ").strip().lower().startswith("n"):
             raise CommandError("nothing written")

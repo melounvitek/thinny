@@ -43,12 +43,14 @@ def editor(monkeypatch, *texts, code=0):
 @pytest.fixture
 def new_server(server, monkeypatch):
     """A server without site.toml, on a terminal. It reaches the internet through enp1s0 from
-    192.168.1.5, Hermes's catalog has a Czech language pack, and Tailscale is off."""
+    192.168.1.5, Hermes's catalog has a Czech and a Brazilian Portuguese language pack, and Tailscale
+    is off."""
     site, _ = server
     site.unlink()
     monkeypatch.setattr(system, "default_route", lambda: ("enp1s0", "192.168.1.5"))
     monkeypatch.setattr(system, "http_status",
-                        lambda url, timeout: "200" if url.endswith("/hermes-lang-cs.yaml") else "404")
+                        lambda url, timeout: "200" if url.endswith(("/hermes-lang-cs.yaml", "/hermes-lang-pt-br.yaml"))
+                        else "404")
     monkeypatch.setattr(host, "tailscale_status", lambda: None)
     monkeypatch.setattr(cli.sys, "stdin", type("Terminal", (), {"isatty": lambda self: True})())
     return site
@@ -65,13 +67,14 @@ def answering(monkeypatch, *answers):
     monkeypatch.setattr("builtins.input", answer)
 
 
-def test_init_writes_the_answers_into_the_commented_example(new_server, monkeypatch, capsys):
+@pytest.mark.parametrize("typed, language", [("cs", "cs"), ("pt-BR", "pt-br")])
+def test_init_writes_the_answers_into_the_commented_example(new_server, monkeypatch, capsys, typed, language):
     # provider, model (asked again after Enter), language, interface, own addresses, tunnel port, write
-    answering(monkeypatch, "", "", "gpt-5.5", "cs", "", "2", "", "")
+    answering(monkeypatch, "", "", "gpt-5.5", typed, "", "2", "", "")
     assert cli.main(["init"]) == 0
     s = settings.load(new_server)
     assert (s.model_provider, s.model, s.language, s.language_pack, s.network_interface) == \
-        ("openai-codex", "gpt-5.5", "cs", "hermes-lang-cs", "enp1s0")
+        ("openai-codex", "gpt-5.5", language, f"hermes-lang-{language}", "enp1s0")
     assert (s.access_default, s.lan_address, s.tunnel_port) == ("url", "", 8080)
     assert "# default model" in new_server.read_text()
     assert "one tunnel at http://127.0.0.1:8080" in capsys.readouterr().out
@@ -85,6 +88,14 @@ def test_init_offers_the_detected_lan_address(new_server, monkeypatch):
     assert (s.model_provider, s.model, s.language, s.language_pack, s.network_interface) == \
         ("anthropic", "claude", "de", "", "eth1")
     assert (s.access_default, s.lan_address, s.tunnel_port) == ("lan", "192.168.1.5", 0)
+
+
+def test_init_says_when_it_could_not_check_for_a_language_pack(new_server, monkeypatch, capsys):
+    monkeypatch.setattr(system, "http_status", lambda url, timeout: "503")
+    answering(monkeypatch, "", "gpt-5.5", "cs", "", "3", "")
+    assert cli.main(["init"]) == 0
+    assert settings.load(new_server).language_pack == ""
+    assert "could not check Hermes's plugin catalog" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("answers, message", [
