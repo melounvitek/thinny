@@ -1,9 +1,9 @@
 import pytest
 
-from hermes_manager import apply, host, people, system
-from hermes_manager.registry import Person, Registry
-from hermes_manager.settings import Settings
-from hermes_manager.system import CommandError
+from thinny import apply, host, people, system
+from thinny.registry import Person, Registry
+from thinny.settings import Settings
+from thinny.system import CommandError
 
 S = Settings(model="m1", allowed_models=("m1",), access_default="local")
 

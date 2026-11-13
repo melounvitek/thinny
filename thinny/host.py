@@ -15,11 +15,11 @@ from .settings import Settings
 from .system import STATE_DIR, log, run, tailscale_status, write_file
 
 MANAGED = Path("/etc/hermes")
-LIB = Path(__file__).resolve().parent.parent      # this repository, installed to /usr/local/lib/hermes-manager
+LIB = Path(__file__).resolve().parent.parent      # this repository, installed to /usr/local/lib/thinny
 FILES = LIB / "files"
 CADDYFILE = Path("/etc/caddy/Caddyfile")
 FIREWALL_FILE = Path(render.FIREWALL_FILE)
-SYSCTL_FILE = Path("/etc/sysctl.d/90-hermes-manager.conf")
+SYSCTL_FILE = Path("/etc/sysctl.d/90-thinny.conf")
 SYSTEMD = Path("/etc/systemd/system")
 REPO_API = "https://api.github.com/repos/NousResearch/hermes-agent"
 INSTALLER_URL = "https://hermes-agent.nousresearch.com/install.sh"
@@ -28,7 +28,7 @@ RELEASE_FILE = STATE_DIR / "release"   # "<tag> <commit>": the Hermes release ev
 
 def _github(path: str) -> dict:
     req = urllib.request.Request(REPO_API + path, headers={"Accept": "application/vnd.github+json",
-                                                          "User-Agent": "hermes-manager"})
+                                                          "User-Agent": "thinny"})
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.load(r)
 
@@ -104,13 +104,13 @@ def ensure_profile(s: Settings) -> None:
 
 def install_units(s: Settings) -> None:
     changed = [
-        write_file(SYSTEMD / "incus.service.d/hermes-manager.conf", render.INCUS_DROPIN),
-        write_file(SYSTEMD / "hermes-manager-update.service", render.UPDATE_SERVICE),
-        write_file(SYSTEMD / "hermes-manager-update.timer", render.update_timer(s)),
+        write_file(SYSTEMD / "incus.service.d/thinny.conf", render.INCUS_DROPIN),
+        write_file(SYSTEMD / "thinny-update.service", render.UPDATE_SERVICE),
+        write_file(SYSTEMD / "thinny-update.timer", render.update_timer(s)),
     ]
     if any(changed):
         run(["systemctl", "daemon-reload"])
-    run(["systemctl", "enable", "--now", "hermes-manager-update.timer"])
+    run(["systemctl", "enable", "--now", "thinny-update.timer"])
     write_file(SYSCTL_FILE, render.SYSCTL)
     run(["/usr/lib/systemd/systemd-sysctl", str(SYSCTL_FILE)])  # as at boot; sysctl -p ignores "-"
 
@@ -127,7 +127,7 @@ def reconcile_access(s: Settings, reg: Registry) -> None:
     """Caddy sites for LAN people, `tailscale serve` for Tailscale people; nothing else
     published in the Webapp port range."""
     lan = [p.port for p in reg.current() if p.access == "lan"]
-    if lan or CADDYFILE.exists() and "hermes-manager" in CADDYFILE.read_text():
+    if lan or CADDYFILE.exists() and "thinny" in CADDYFILE.read_text():
         if lan and not shutil.which("caddy"):
             log("installing Caddy for office-network access")
             run(["apt-get", "install", "-y", "-q", "caddy"], env={"DEBIAN_FRONTEND": "noninteractive",

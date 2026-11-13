@@ -1,4 +1,4 @@
-"""Isolation and health checks (hermes-manager check).
+"""Isolation and health checks (thinny check).
 
 Every check yields (level, message, fix) results. A check that crashes is reported as a
 failure and the other checks still run.
@@ -17,14 +17,14 @@ from .registry import Person, Registry
 from .settings import Settings
 
 UPDATE_STATUS = system.STATE_DIR / "update-status.json"
-INCUS_DROPIN = host.SYSTEMD / "incus.service.d/hermes-manager.conf"
+INCUS_DROPIN = host.SYSTEMD / "incus.service.d/thinny.conf"
 # Read before the managed scope is resolved, so a person's own value beats the policy.
 BYPASS_VARS = ("HERMES_MANAGED_DIR", "HERMES_BUNDLED_PLUGINS", "HERMES_ENABLE_PROJECT_PLUGINS")
 FORWARD_FIX = """let the containers' traffic through your firewall's forward chain, e.g. in /etc/nftables.conf:
   iifname "hm-*" accept
   oifname "hm-*" ct state established,related accept
 or with ufw: ufw route allow in on hm-+
-(table inet hermes_manager does the filtering; see README, Requirements)"""
+(table inet thinny does the filtering; see README, Requirements)"""
 
 
 def ok(message: str):
@@ -46,7 +46,7 @@ def active(reg: Registry) -> list[Person]:
 # ---------- host checks ----------
 
 def install(s: Settings, reg: Registry):
-    fix = "hermes-manager install"
+    fix = "thinny install"
     for kind, name in (("storage", render.POOL), ("profile", render.PROFILE)):
         found = system.run(["incus", kind, "show", name], check=False).returncode == 0
         yield ok(f"Incus {kind} {name} present") if found else fail(f"Incus {kind} {name} missing", fix)
@@ -54,20 +54,20 @@ def install(s: Settings, reg: Registry):
            else fail(f"{INCUS_DROPIN} missing: containers could start without their firewall", fix))
     forwarding = Path("/proc/sys/net/ipv4/ip_forward").read_text().strip()
     yield (ok("IPv4 forwarding on") if forwarding == "1"
-           else fail("IPv4 forwarding off: containers have no network", "hermes-manager apply"))
+           else fail("IPv4 forwarding off: containers have no network", "thinny apply"))
     userns = Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")  # Ubuntu only
     if userns.exists():
         yield (ok("AppArmor lets people create user namespaces") if userns.read_text().strip() == "0"
                else fail("AppArmor keeps people from creating user namespaces: their browser cannot start",
-                         "hermes-manager apply"))
+                         "thinny apply"))
     yield (ok(f"{host.MANAGED} matches site.toml") if host.managed_scope_current(s)
-           else warn(f"{host.MANAGED} is not as site.toml says", "hermes-manager apply"))
+           else warn(f"{host.MANAGED} is not as site.toml says", "thinny apply"))
     if host.RELEASE_FILE.exists():
         yield ok(f"Hermes release for everyone: {host.RELEASE_FILE.read_text().split()[0]}")
-    state = system.run(["systemctl", "is-enabled", "hermes-manager-update.timer"], check=False).stdout.strip()
-    yield (ok("hermes-manager-update.timer enabled") if state == "enabled"
-           else warn(f"hermes-manager-update.timer is {state or 'missing'}",
-                     "systemctl enable --now hermes-manager-update.timer"))
+    state = system.run(["systemctl", "is-enabled", "thinny-update.timer"], check=False).stdout.strip()
+    yield (ok("thinny-update.timer enabled") if state == "enabled"
+           else warn(f"thinny-update.timer is {state or 'missing'}",
+                     "systemctl enable --now thinny-update.timer"))
     yield update_status(UPDATE_STATUS, dt.datetime.now(dt.UTC))
 
 
@@ -78,12 +78,12 @@ def update_status(path: Path, now: dt.datetime):
     status = json.loads(path.read_text(encoding="utf-8"))
     summary = f"last nightly update {status['time']}: {status['result']} {status.get('detail') or ''}".rstrip()
     if status["result"] == "FAILED":
-        return fail(summary, "journalctl -u hermes-manager-update.service")
+        return fail(summary, "journalctl -u thinny-update.service")
     when = dt.datetime.fromisoformat(status["time"])
     if when.tzinfo is None:
         when = when.astimezone()  # local time
     if now - when > dt.timedelta(hours=48):
-        return warn(f"{summary} (over 48 h ago)", "systemctl status hermes-manager-update.timer")
+        return warn(f"{summary} (over 48 h ago)", "systemctl status thinny-update.timer")
     return ok(summary)
 
 
@@ -102,7 +102,7 @@ def prerequisites(s: Settings, reg: Registry):
            if any("hook input" in line and "policy drop" in line for line in ruleset)
            else warn("no input firewall with policy drop: every listening port is open to the network",
                      "set up an input firewall that drops by default and allows SSH (nftables or ufw)"))
-    # hermes-manager turns IPv4 forwarding on for the containers.
+    # thinny turns IPv4 forwarding on for the containers.
     yield (ok("a forward firewall drops unexpected traffic")
            if any("hook forward" in line and "policy drop" in line for line in ruleset)
            else warn("no forward firewall with policy drop: with forwarding on, the server routes between its "
@@ -127,12 +127,12 @@ def unattended_upgrades(apt_dump: str, update_time: str):
 
 
 def firewall(s: Settings, reg: Registry):
-    listed = system.run(["nft", "list", "table", "inet", "hermes_manager"], check=False).stdout
+    listed = system.run(["nft", "list", "table", "inet", "thinny"], check=False).stdout
     rendered = render.firewall(s.network_interface, list(s.blocked_networks))
-    yield (ok("firewall table inet hermes_manager loaded as site.toml says")
+    yield (ok("firewall table inet thinny loaded as site.toml says")
            if table_parts(listed) == table_parts(rendered)
-           else fail("firewall table inet hermes_manager is missing or not as site.toml says: containers may reach "
-                     "each other, the host or blocked networks", "hermes-manager apply"))
+           else fail("firewall table inet thinny is missing or not as site.toml says: containers may reach "
+                     "each other, the host or blocked networks", "thinny apply"))
 
 
 def table_parts(text: str) -> tuple[dict[str, list[str]], dict[str, str]]:
@@ -184,7 +184,7 @@ def container(p: Person):
 
 def webapp(p: Person):
     url = f"http://127.0.0.1:{p.port}/"
-    fix = f"hermes-manager restart {p.name}"
+    fix = f"thinny restart {p.name}"
     yield (ok(f"{p.name}: gateway active") if system.gateway_active(p.name)
            else fail(f"{p.name}: gateway not active", fix))
     code = system.http_status(url)
@@ -192,7 +192,7 @@ def webapp(p: Person):
            else fail(f"{p.name}: Webapp does not answer at {url} (HTTP {code})", fix))
     public_url = people.webapp_settings(p.name).get("public_url", "")
     yield (ok(f"{p.name}: Webapp address {p.url}") if public_url == p.url
-           else warn(f"{p.name}: Webapp public_url is {public_url or 'not set'}, not {p.url}", "hermes-manager apply"))
+           else warn(f"{p.name}: Webapp public_url is {public_url or 'not set'}, not {p.url}", "thinny apply"))
 
 
 def version(p: Person):

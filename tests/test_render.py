@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from hermes_manager import render
-from hermes_manager.settings import Settings
+from thinny import render
+from thinny.settings import Settings
 
 S = Settings(model="m1", allowed_models=("m1", "m2"), lan_address="192.168.1.10", language_pack="hermes-lang-cs")
 
@@ -69,7 +69,7 @@ def test_caddyfile_without_lan_people_needs_no_address():
 
 def test_firewall_lets_containers_reach_the_internet_only():
     text = render.firewall("eth0", ["203.0.113.0/24", "10.1.0.0/16", "fd00::/8"])
-    assert text.startswith("# ") and "delete table inet hermes_manager" in text
+    assert text.startswith("# ") and "delete table inet thinny" in text
     assert 'iifname "hm-*" oifname != "eth0" drop' in text            # no other container, no tailnet
     assert 'iifname "hm-*" ip daddr @blocked_v4 drop' in text
     assert 'iifname "hm-*" meta nfproto ipv6 drop' in text
@@ -84,7 +84,7 @@ def test_firewall_lets_containers_reach_the_internet_only():
 
 def test_incus_starts_only_behind_the_firewall():
     dropin = render.INCUS_DROPIN
-    assert "ExecStartPre=/usr/sbin/nft -f /etc/hermes-manager/hermes-manager.nft" in dropin
+    assert "ExecStartPre=/usr/sbin/nft -f /etc/thinny/thinny.nft" in dropin
     assert "After=nftables.service" in dropin and "PartOf=nftables.service" in dropin
 
 

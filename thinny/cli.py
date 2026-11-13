@@ -1,4 +1,4 @@
-"""hermes-manager command line."""
+"""thinny command line."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ def parse_access(value: str) -> tuple[str, str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="hermes-manager", description="Shared Hermes Agent server, one isolated container per person.")
+    ap = argparse.ArgumentParser(prog="thinny", description="Shared Hermes Agent server, one isolated container per person.")
     sub = ap.add_subparsers(dest="command", required=True, metavar="command")
     sub.add_parser("install", help="set up Incus and everything around the people, then apply")
     sub.add_parser("apply", help="bring the server in line with site.toml")
@@ -34,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
         sub.add_parser(name, help=text).add_argument("name")
     sub.add_parser("list", help="people, ports, URLs, gateway state")
     sub.add_parser("check", help="isolation and health checks")
-    upd = sub.add_parser("update", help="nightly Hermes update (run by hermes-manager-update.timer)")
+    upd = sub.add_parser("update", help="nightly Hermes update (run by thinny-update.timer)")
     upd.add_argument("--check", action="store_true", help="only report what would happen")
     upd.add_argument("--now", action="store_true",
                      help="update now: ignore the minimum release age and auto_update = false")
@@ -43,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
 
     if os.geteuid() != 0:
-        print("hermes-manager must run as root", file=sys.stderr)
+        print("thinny must run as root", file=sys.stderr)
         return 2
     try:
         s = load()
@@ -78,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
                 people.restart_all([p for p in targets if p.state == "active"], reg)
         return 0
     except (SettingsError, RegistryError, CommandError) as e:
-        print(f"hermes-manager: {e}", file=sys.stderr)
+        print(f"thinny: {e}", file=sys.stderr)
         return 1
 
 

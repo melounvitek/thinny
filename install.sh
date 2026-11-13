@@ -1,12 +1,12 @@
 #!/bin/sh
-# hermes-manager bootstrap: packages, the tool itself, then `hermes-manager install`.
+# thinny bootstrap: packages, the tool itself, then `thinny install`.
 # Safe to rerun: it repairs and never updates Hermes or removes data.
 # incus-base: containers only (no virtual machines). Ubuntu 24.04 has no incus-base, and its
 # incus has no virtual machines either.
 set -eu
 
-LIB=/usr/local/lib/hermes-manager
-SITE=/etc/hermes-manager/site.toml
+LIB=/usr/local/lib/thinny
+SITE=/etc/thinny/site.toml
 SRC=$(cd "$(dirname "$0")" && pwd)
 
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
@@ -24,24 +24,24 @@ apt-cache show incus-base >/dev/null 2>&1 || INCUS=incus
 DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y -q \
 	"$INCUS" btrfs-progs nftables curl python3 >/dev/null
 
-echo "Installing hermes-manager into $LIB"
+echo "Installing thinny into $LIB"
 mkdir -p "$LIB"
-rm -rf "$LIB/hermes_manager"
-cp -r "$SRC/hermes_manager" "$SRC/hermes-manager" "$SRC/site.example.toml" "$LIB/"
+rm -rf "$LIB/thinny"
+cp -r "$SRC/thinny" "$SRC/bin" "$SRC/site.example.toml" "$LIB/"
 # In place: every person's container mounts files/model-guard, and a replaced directory would
 # leave them an empty one. Gateways load a changed model guard at their next restart.
 mkdir -p "$LIB/files"
 cp -r "$SRC/files/." "$LIB/files/"
 find "$LIB" -name __pycache__ -prune -exec rm -rf {} +
-chmod 755 "$LIB/hermes-manager"
-ln -sfn "$LIB/hermes-manager" /usr/local/sbin/hermes-manager
+chmod 755 "$LIB/bin/thinny"
+ln -sfn "$LIB/bin/thinny" /usr/local/sbin/thinny
 
 if [ ! -f "$SITE" ]; then
-	install -d -m 755 /etc/hermes-manager
+	install -d -m 755 /etc/thinny
 	install -m 644 "$SRC/site.example.toml" "$SITE"
 	echo
 	echo "Edit $SITE (model, LAN address, ...), then run this script again."
 	exit 0
 fi
 
-exec /usr/local/sbin/hermes-manager install
+exec /usr/local/sbin/thinny install

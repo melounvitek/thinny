@@ -5,10 +5,10 @@ import re
 
 import pytest
 
-from hermes_manager import host, people, system, update
-from hermes_manager.registry import Person, Registry
-from hermes_manager.settings import Settings
-from hermes_manager.system import CommandError
+from thinny import host, people, system, update
+from thinny.registry import Person, Registry
+from thinny.settings import Settings
+from thinny.system import CommandError
 
 S = Settings(model="m1", allowed_models=("m1",), lan_address="10.0.0.5")
 
@@ -46,7 +46,7 @@ class Server:
 @pytest.fixture
 def server(tmp_path, monkeypatch):
     srv = Server(tmp_path)
-    monkeypatch.setattr(system, "LOG_FILE", tmp_path / "hermes-manager.log")
+    monkeypatch.setattr(system, "LOG_FILE", tmp_path / "thinny.log")
     monkeypatch.setattr(update, "STATUS_FILE", tmp_path / "status.json")
     monkeypatch.setattr(update, "UNFINISHED", tmp_path / "update-unfinished")
     monkeypatch.setattr(update, "REBOOT_REQUIRED", tmp_path / "reboot-required")

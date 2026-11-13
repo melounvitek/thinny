@@ -73,4 +73,4 @@ just the config file: the script replaces the file when it stores a new token.
 ```
 
 `result` is `ok` or `FAILED`; on failure `detail` holds the error. This is the same shape as
-hermes-manager's `/var/lib/hermes-manager/update-status.json`.
+thinny's `/var/lib/thinny/update-status.json`.

@@ -1,4 +1,4 @@
-"""Nightly Hermes update (hermes-manager update): every person's Hermes, one container at a time,
+"""Nightly Hermes update (thinny update): every person's Hermes, one container at a time,
 to exactly the same release."""
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ REBOOT_REQUIRED = Path("/run/reboot-required")
 def run(s: Settings, reg: Registry, *, check: bool = False, now: bool = False) -> int:
     """Update when the latest stable release is old enough. `check` only reports: no changes and
     no status file, so the last nightly result stays visible."""
-    log(f"=== hermes-manager update{' --check' if check else ''}{' --now' if now else ''}")
+    log(f"=== thinny update{' --check' if check else ''}{' --now' if now else ''}")
     try:
         unfinished = UNFINISHED.read_text().split() if UNFINISHED.exists() else []
         if unfinished and not check:  # whatever its age, and without asking GitHub

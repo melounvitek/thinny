@@ -14,7 +14,7 @@ with `BatchMode=yes`).
 
 | Kind | Status file | Healthy results |
 | --- | --- | --- |
-| `hermes-update` | `/var/lib/hermes-manager/update-status.json` | `ok`, `up-to-date`, `waiting`, `available` |
+| `hermes-update` | `/var/lib/thinny/update-status.json` | `ok`, `up-to-date`, `waiting`, `available` |
 | `netcup-snapshot` | `status.json` next to its config (set `file`) | `ok` |
 
 Both files look like `{"time": "<ISO 8601>", "result": "...", "detail": "..."}`. A time without

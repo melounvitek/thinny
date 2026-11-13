@@ -4,10 +4,10 @@ import sys
 
 import pytest
 
-from hermes_manager import host, people, system
-from hermes_manager.registry import Person, Registry
-from hermes_manager.settings import Settings
-from hermes_manager.system import CommandError
+from thinny import host, people, system
+from thinny.registry import Person, Registry
+from thinny.settings import Settings
+from thinny.system import CommandError
 
 
 @pytest.fixture

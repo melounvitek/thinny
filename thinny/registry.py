@@ -1,4 +1,4 @@
-"""People registry (/var/lib/hermes-manager/people.json), the source of truth for who exists.
+"""People registry (/var/lib/thinny/people.json), the source of truth for who exists.
 
 People are never deleted: a removed person stays as `disabled`, so their container, its
 address and their Webapp port are never handed to someone else.
@@ -13,7 +13,7 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-REGISTRY = Path("/var/lib/hermes-manager/people.json")
+REGISTRY = Path("/var/lib/thinny/people.json")
 STATES = ("pending", "active", "disabled")
 SUBNET = ipaddress.ip_network("10.78.0.0/24")   # container addresses
 NAME_RE = re.compile(r"[a-z][a-z0-9-]{0,30}[a-z0-9]")
@@ -67,7 +67,7 @@ class Registry:
         try:
             return self.people[name]
         except KeyError:
-            raise RegistryError(f"no person named {name!r} (see hermes-manager list)") from None
+            raise RegistryError(f"no person named {name!r} (see thinny list)") from None
 
     def add(self, name: str, access: str, port_range: tuple[int, int]) -> Person:
         validate_name(name)

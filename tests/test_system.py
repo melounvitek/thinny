@@ -2,8 +2,8 @@ import sys
 
 import pytest
 
-from hermes_manager import system
-from hermes_manager.system import CommandError
+from thinny import system
+from thinny.system import CommandError
 
 
 def python(code):

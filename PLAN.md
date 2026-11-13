@@ -1,4 +1,4 @@
-# hermes-manager: plan
+# thinny: plan
 
 Status: one Incus container per person, implemented (sections 6-8) and tested on the test server
 from a rebuilt playground (round 7, 2026-11-13). The README is the user documentation; this file
@@ -8,7 +8,7 @@ keeps the design and what we learned.
 
 Turn a Debian 13 or Ubuntu (26.04, 24.04) server into a shared Hermes Agent server for a small organisation
 of non-programmers, with one command, and add people
-with a second command (`hermes-manager`).
+with a second command (`thinny`).
 
 The design below grew out of a hand-built test server (section 4). This project turns
 it into a reproducible, public tool.
@@ -57,7 +57,7 @@ tamper-proof against a person who is root in their container.
 
 - No personal or site data in the repo: no IPs, hostnames, tailnet names, e-mails,
   organisation names, tokens, provider server ids. Site data lives on the server in
-  `/etc/hermes-manager/site.toml`; the repo ships `site.example.toml` with placeholders.
+  `/etc/thinny/site.toml`; the repo ships `site.example.toml` with placeholders.
 - Secrets are generated on the server (Webapp sign-in) or entered by the admin on the
   server (ChatGPT device login). Never logged, never committed, never printed except the
   one-time hand-over of a person's Webapp password.
@@ -361,9 +361,9 @@ Debian 13, kernel 6.12, Incus 6.0.4 (`incus-base`), Hermes v0.23.0 -> v0.23.1. A
 ### 6.1 Repository layout
 
 ```
-install.sh          thin bootstrap: packages, the tool, then `hermes-manager install`
-hermes-manager      admin CLI entry point (Python 3 stdlib only, runs as root)
-hermes_manager/     settings, registry, render (all generated text), system (commands on the
+install.sh          thin bootstrap: packages, the tool, then `thinny install`
+bin/thinny          admin CLI entry point (Python 3 stdlib only, runs as root)
+thinny/             settings, registry, render (all generated text), system (commands on the
                     host and in containers), host (Incus pool and profile, firewall, units,
                     release, access), people, apply, checks, update
 files/model-guard/  mounted read-only into every container
@@ -374,12 +374,12 @@ extras/, tests/     netcup snapshot and nightly watch (run off the server); pyte
 ### 6.2 State on the server
 
 ```
-/etc/hermes-manager/site.toml           admin-edited settings
-/var/lib/hermes-manager/people.json     registry: name, port, container address, access, URL, state
-/var/lib/hermes-manager/release         "<tag> <commit>": the Hermes release everyone runs
+/etc/thinny/site.toml           admin-edited settings
+/var/lib/thinny/people.json     registry: name, port, container address, access, URL, state
+/var/lib/thinny/release         "<tag> <commit>": the Hermes release everyone runs
 /etc/hermes/                            Hermes managed scope, rendered from site.toml
-/etc/hermes-manager/hermes-manager.nft  our nft table for the containers
-/etc/systemd/system/incus.service.d/hermes-manager.conf, /etc/sysctl.d/90-hermes-manager.conf
+/etc/thinny/thinny.nft  our nft table for the containers
+/etc/systemd/system/incus.service.d/thinny.conf, /etc/sysctl.d/90-thinny.conf
 Incus                                   pool `default` (btrfs, sparse file), profile `hm-person`,
                                         one container per person, named after them
 ```
@@ -399,7 +399,7 @@ Incus                                   pool `default` (btrfs, sparse file), pro
 - Everything in a container runs through `incus exec`; the person's commands run as them
   (`runuser`, clean environment), and files in their home are read and written as them.
   Output is bounded in size and time: the person controls every program in their container.
-- `hermes-manager` and the nightly update share one lock.
+- `thinny` and the nightly update share one lock.
 
 ### 6.3 Prerequisites (the admin's)
 
@@ -413,12 +413,12 @@ Tailscale socket are no longer needed: the host has no person accounts.
 
 Idempotent; a rerun repairs and never destroys data or updates Hermes: packages
 (`incus-base`, or `incus` on Ubuntu 24.04, `btrfs-progs`, `nftables`, `curl`, `python3`; Caddy later when LAN access needs
-it), the tool, `site.toml` from the example on the first run, then `hermes-manager install`:
+it), the tool, `site.toml` from the example on the first run, then `thinny install`:
 the storage pool once (80% of the free space under `/var/lib`; no Incus network), then
 `apply`: firewall first, units, sysctl, profile, `/etc/hermes`, Webapp settings, access,
 remembered restarts. No Hermes on the host.
 
-### 6.5 `hermes-manager`
+### 6.5 `thinny`
 
 ```
 add-person <name> [--access ...]  port, address, container, packages, account (uid 1000, sudo,
@@ -476,7 +476,7 @@ private ones and the tailnet are always blocked). `site.example.toml` lists ever
 - Inside the containers, `unattended-upgrades` with Debian's defaults updates the OS.
 - Report when the host needs a reboot (`/run/reboot-required`); never reboot.
 
-## 7. Checks (`hermes-manager check`)
+## 7. Checks (`thinny check`)
 
 - Install: Incus pool `default` and profile `hm-person`, the incus.service drop-in, IPv4
   forwarding (FAIL); `/etc/hermes` matches `site.toml` (WARN); the recorded release; nightly
@@ -523,7 +523,7 @@ Container switch (2026-11-12/13):
    the internet; another container (a real listener), host SSH on every address, Caddy, another
    Webapp port, MagicDNS, a tailnet device, private ranges and IPv6 blocked; only itself in
    /home, passwd and processes. Browser sign-in for every access method (Secure cookies over
-   Tailscale and LAN, distinct cookie names); ChatGPT device login through `hermes-manager login`;
+   Tailscale and LAN, distinct cookie names); ChatGPT device login through `thinny login`;
    a real chat with terminal (`sudo` works) and browser tools. `sudo apt install`, Docker (also
    `--network host`) and Tailscale inside a container. `update --now` to v0.23.1 killed during
    alice's install, resumed (alice redone), killed again after bob's checkout had moved,

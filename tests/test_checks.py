@@ -3,17 +3,17 @@ import json
 
 import pytest
 
-from hermes_manager import checks, render
-from hermes_manager.registry import Registry
-from hermes_manager.settings import Settings
+from thinny import checks, render
+from thinny.registry import Registry
+from thinny.settings import Settings
 
 S = Settings(model="m1", allowed_models=("m1",), lan_address="192.168.1.10")
 NOW = dt.datetime(2026, 11, 12, 9, 0, tzinfo=dt.UTC)
 BINARY = "/home/alice/.hermes/hermes-agent/.hermes/bin/hermes"
 
 
-# `nft list table inet hermes_manager` on Debian 13 after loading render.firewall("eth0", ["203.0.113.0/24"])
-LISTED = """table inet hermes_manager {
+# `nft list table inet thinny` on Debian 13 after loading render.firewall("eth0", ["203.0.113.0/24"])
+LISTED = """table inet thinny {
 	set blocked_v4 {
 		type ipv4_addr
 		flags interval

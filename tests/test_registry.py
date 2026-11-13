@@ -1,6 +1,6 @@
 import pytest
 
-from hermes_manager.registry import Registry, RegistryError, validate_name
+from thinny.registry import Registry, RegistryError, validate_name
 
 
 def test_people_get_the_lowest_free_port_and_survive_a_save(tmp_path):

@@ -19,9 +19,9 @@ SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
 # Built-in job kinds; a job in the config can override any of these keys.
 KINDS = {
     "hermes-update": {
-        "file": "/var/lib/hermes-manager/update-status.json",
+        "file": "/var/lib/thinny/update-status.json",
         "healthy": ["ok", "up-to-date", "waiting", "available"],
-        "hint": "ssh {host} journalctl -u hermes-manager-update -n 40",
+        "hint": "ssh {host} journalctl -u thinny-update -n 40",
     },
     "netcup-snapshot": {  # "file" is required in the job: <data dir>/status.json
         "healthy": ["ok"],

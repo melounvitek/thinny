@@ -12,7 +12,7 @@ from .system import log
 def install(s: Settings) -> None:
     host.init_incus()
     apply(s)
-    print("Ready. Add people with: hermes-manager add-person <name>")
+    print("Ready. Add people with: thinny add-person <name>")
 
 
 def apply(s: Settings) -> None:

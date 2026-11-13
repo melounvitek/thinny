@@ -3,8 +3,8 @@ import subprocess
 
 import pytest
 
-from hermes_manager import host, render, system
-from hermes_manager.settings import Settings
+from thinny import host, render, system
+from thinny.settings import Settings
 
 S = Settings(model="m1", allowed_models=("m1",), access_default="local", network_interface="ens3",
              container_memory_mb=2048)
@@ -21,7 +21,7 @@ def commands(tmp_path, monkeypatch):
             and cmd[1] in missing else 0
         return subprocess.CompletedProcess(cmd, code, "", "")
     monkeypatch.setattr(host, "run", run)
-    monkeypatch.setattr(host, "FIREWALL_FILE", tmp_path / "hermes-manager.nft")
+    monkeypatch.setattr(host, "FIREWALL_FILE", tmp_path / "thinny.nft")
     monkeypatch.setattr(host, "SYSCTL_FILE", tmp_path / "sysctl.conf")
     monkeypatch.setattr(host, "SYSTEMD", tmp_path / "systemd")
     monkeypatch.setattr(system, "LOG_FILE", tmp_path / "log")
@@ -61,8 +61,8 @@ def test_the_firewall_is_checked_then_loaded(commands):
 def test_units_and_forwarding(commands):
     calls, _ = commands
     host.install_units(S)
-    assert (host.SYSTEMD / "incus.service.d/hermes-manager.conf").read_text() == render.INCUS_DROPIN
+    assert (host.SYSTEMD / "incus.service.d/thinny.conf").read_text() == render.INCUS_DROPIN
     assert "net.ipv4.ip_forward = 1" in host.SYSCTL_FILE.read_text()
     assert "-kernel.apparmor_restrict_unprivileged_userns = 0" in host.SYSCTL_FILE.read_text()
-    assert [c for c, _ in calls] == ["systemctl daemon-reload", "systemctl enable --now hermes-manager-update.timer",
+    assert [c for c, _ in calls] == ["systemctl daemon-reload", "systemctl enable --now thinny-update.timer",
                                      f"/usr/lib/systemd/systemd-sysctl {host.SYSCTL_FILE}"]

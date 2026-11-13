@@ -15,9 +15,9 @@ import threading
 import time
 from pathlib import Path
 
-STATE_DIR = Path("/var/lib/hermes-manager")
-LOG_FILE = Path("/var/log/hermes-manager.log")
-LOCK_FILE = Path("/run/hermes-manager.lock")
+STATE_DIR = Path("/var/lib/thinny")
+LOG_FILE = Path("/var/log/thinny.log")
+LOCK_FILE = Path("/run/thinny.lock")
 PERSON_UID = 1000          # every person's account inside their container
 OUTPUT_LIMIT = 4_000_000   # bytes per output stream of one command
 
@@ -159,12 +159,12 @@ def write_user_file(name: str, path: str, content: str) -> None:
 
 @contextlib.contextmanager
 def lock():
-    """One hermes-manager change at a time (commands and the nightly update)."""
+    """One thinny change at a time (commands and the nightly update)."""
     with LOCK_FILE.open("w") as f:
         try:
             fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise CommandError("another hermes-manager run is in progress") from None
+            raise CommandError("another thinny run is in progress") from None
         yield
 
 

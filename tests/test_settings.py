@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from hermes_manager.settings import Settings, SettingsError, parse
+from thinny.settings import Settings, SettingsError, parse
 
 EXAMPLE = Path(__file__).parent.parent / "site.example.toml"
 

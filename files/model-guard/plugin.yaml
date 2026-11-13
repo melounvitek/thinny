@@ -1,6 +1,6 @@
 name: model-guard
 version: 1.1.0
 description: "Server policy: refuse any chat turn whose model is not on the administrator's allowlist."
-author: "hermes-manager"
+author: "thinny"
 provides_hooks:
   - pre_llm_call

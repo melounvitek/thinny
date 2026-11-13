@@ -94,7 +94,7 @@ def ensure_account(name: str) -> None:
     if in_container(name, ["id", "-u", name], check=False).returncode != 0:
         in_container(name, ["useradd", "--create-home", "--shell", "/bin/bash", "--uid", str(PERSON_UID),
                             "--groups", "sudo", name])
-    in_container(name, ["sh", "-c", "cat > /etc/sudoers.d/hermes-manager && chmod 440 /etc/sudoers.d/hermes-manager"],
+    in_container(name, ["sh", "-c", "cat > /etc/sudoers.d/thinny && chmod 440 /etc/sudoers.d/thinny"],
                  input=f"{name} ALL=(ALL) NOPASSWD:ALL\n")
     in_container(name, ["loginctl", "enable-linger", name])
     bus = f"/run/user/{PERSON_UID}/bus"
@@ -275,7 +275,7 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     if name in reg.people:
         p = reg.get(name)
         if p.state == "active":
-            raise CommandError(f"{name} already exists (use: hermes-manager access {name} ...)")
+            raise CommandError(f"{name} already exists (use: thinny access {name} ...)")
         if p.state == "disabled":
             raise CommandError(f"{name} was removed; names are not reused")
         log(f"resuming the unfinished setup of {name}")
@@ -309,10 +309,10 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     reg.save()
 
     print(f"\n{name} is ready.\n  Webapp:   {p.url}\n  Username: {name}")
-    print(f"  Password: {password}   (shown once; reset with: hermes-manager password {name})" if password
-          else "  Password: unchanged (reset with: hermes-manager password " + name + ")")
+    print(f"  Password: {password}   (shown once; reset with: thinny password {name})" if password
+          else "  Password: unchanged (reset with: thinny password " + name + ")")
     _print_access_hint(p)
-    print(f"Next: sign {name} in to {s.model_provider} before handing over: hermes-manager login {name}")
+    print(f"Next: sign {name} in to {s.model_provider} before handing over: thinny login {name}")
 
 
 def _print_access_hint(p: Person) -> None:

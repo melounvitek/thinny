@@ -1,4 +1,4 @@
-"""Site settings from /etc/hermes-manager/site.toml."""
+"""Site settings from /etc/thinny/site.toml."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import tomllib
 from dataclasses import dataclass, fields
 from pathlib import Path
 
-SITE_TOML = Path("/etc/hermes-manager/site.toml")
+SITE_TOML = Path("/etc/thinny/site.toml")
 ACCESS_METHODS = ("lan", "tailscale", "url", "local")
 
 

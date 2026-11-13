@@ -1,4 +1,4 @@
-# hermes-manager
+# thinny
 
 Turns a Debian 13 or Ubuntu server into a shared [Hermes Agent](https://github.com/NousResearch/hermes-agent)
 server for a small organisation, such as an office of a dozen people who are not programmers.
@@ -23,7 +23,7 @@ What you get:
 - **Four ways to open the Webapp**, chosen per person: office network (HTTPS), Tailscale, your
   own address, or an SSH tunnel.
 - **An optional nightly Hermes update** that updates and restarts people one at a time.
-- **`hermes-manager check`**: isolation and health checks, each with a fix.
+- **`thinny check`**: isolation and health checks, each with a fix.
 
 ## What is and is not protected
 
@@ -34,7 +34,7 @@ files, model-provider login, Webapp and agent live in it, and the host keeps con
   processes. A person sees only their own users and processes, not other people's names;
 - the host has no person accounts. Each Webapp is published on the host's loopback by Incus
   and asks for a username and password;
-- a firewall table (`inet hermes_manager`) lets a container reach only the internet: not other
+- a firewall table (`inet thinny`) lets a container reach only the internet: not other
   containers, not the host's services, not private networks or the tailnet, not the networks
   you block, and no IPv6. Only the host itself can open a connection into a container. Incus
   starts only after this table is loaded;
@@ -49,7 +49,7 @@ files, model-provider login, Webapp and agent live in it, and the host keeps con
 - **The policy against a determined person.** A person is root in their own container
   (passwordless `sudo`, and the Webapp has a terminal). The pinned model, approvals and the
   model guard cannot be changed from the Webapp or the person's settings, but the person can
-  get around them inside their container. They are a guardrail. `hermes-manager check`
+  get around them inside their container. They are a guardrail. `thinny check`
   reports the bypasses it can see. The container stays isolated from everyone else.
 - **A person from their own agent.** An agent misled by a web page can do whatever the person
   can do in their container, including `sudo`. It cannot leave the container.
@@ -58,7 +58,7 @@ files, model-provider login, Webapp and agent live in it, and the host keeps con
   keep it on HTTPS too.
 
 Docker and Tailscale are possible inside a container (nesting and `/dev/net/tun` are on), but
-hermes-manager does not install them. A person can install them with `sudo`.
+thinny does not install them. A person can install them with `sudo`.
 
 ## Requirements
 
@@ -70,7 +70,7 @@ hermes-manager does not install them. A person can install them with `sudo`.
 - Internet access from the server for GitHub, the Hermes installer and what it downloads, the
   Debian container image (`images.linuxcontainers.org`), Debian mirrors and the model provider.
   `network.interface` must name the server's internet interface (`eth0` by default).
-- **Your firewall's forward chain must let the containers through.** hermes-manager turns on
+- **Your firewall's forward chain must let the containers through.** thinny turns on
   IPv4 forwarding and filters the containers' traffic in its own table. A drop in any nftables
   chain is final, so if your own table has a forward chain that drops by default, add these
   two lines to it (see the example in [Prerequisites](#prerequisites-your-part)):
@@ -92,7 +92,7 @@ hermes-manager does not install them. A person can install them with `sudo`.
 
 ## Prerequisites (your part)
 
-`hermes-manager check` verifies these (`WARN` when missing) and prints the fix. Set them up
+`thinny check` verifies these (`WARN` when missing) and prints the fix. Set them up
 before you add people.
 
 **Key-only SSH, reachable only from a private network** (office LAN, VPN or Tailscale). Create
@@ -112,7 +112,7 @@ office PCs reach the Webapp ports (`webapp.port_range`, 9120-9199 by default). E
 
 ```
 #!/usr/sbin/nft -f
-# No "flush ruleset": it would also remove Tailscale's, Incus's and hermes-manager's tables.
+# No "flush ruleset": it would also remove Tailscale's, Incus's and thinny's tables.
 table inet filter
 delete table inet filter
 table inet filter {
@@ -127,19 +127,19 @@ table inet filter {
 	}
 	chain forward {
 		type filter hook forward priority filter; policy drop;
-		iifname "hm-*" accept                               # the containers (filtered by hermes-manager)
+		iifname "hm-*" accept                               # the containers (filtered by thinny)
 		oifname "hm-*" ct state established,related accept
 	}
 }
 ```
 
 Load it with `nft -f /etc/nftables.conf`. `check` also warns when no forward chain drops by
-default: hermes-manager turns IPv4 forwarding on, so the server would route between its networks.
+default: thinny turns IPv4 forwarding on, so the server would route between its networks.
 
 > **Never run `systemctl restart nftables` on Debian or Ubuntu while containers run.** Its stop
 > step runs `nft flush ruleset`, which removes every table: Tailscale's, Incus's anti-spoofing
-> rules and hermes-manager's. A config file that starts with `flush ruleset` does the same,
-> and the default file does. If it happens, run `hermes-manager apply` (it reloads the
+> rules and thinny's. A config file that starts with `flush ruleset` does the same,
+> and the default file does. If it happens, run `thinny apply` (it reloads the
 > containers' table) and `systemctl restart tailscaled`, then reboot at a quiet time: Incus
 > sets up its anti-spoofing rules when a container starts.
 
@@ -168,16 +168,16 @@ As root:
 
 ```sh
 apt update
-git clone <repository URL> /root/hermes-manager
-cd /root/hermes-manager
+git clone <repository URL> /root/thinny
+cd /root/thinny
 sh install.sh
 ```
 
 The first run does three things and stops:
 
 1. installs the packages (`incus-base`, `btrfs-progs`, `nftables`, ...);
-2. installs the tool into `/usr/local/lib/hermes-manager`;
-3. creates `/etc/hermes-manager/site.toml` from `site.example.toml`.
+2. installs the tool into `/usr/local/lib/thinny`;
+3. creates `/etc/thinny/site.toml` from `site.example.toml`.
 
 Edit `site.toml` (see [Settings](#settings)). At least set `policy.model`,
 `policy.allowed_models`, `access.lan_address` and `network.interface`. If nobody will use LAN
@@ -203,17 +203,17 @@ Hermes itself is installed into each person's container by `add-person`.
 
 Rerunning `install.sh` is safe. It repairs what is missing, keeps all data and never updates
 Hermes. If the rerun changes `/etc/hermes`, it restarts the gateways one by one, like `apply`.
-A changed model guard reaches the gateways at their next restart (`hermes-manager restart`).
+A changed model guard reaches the gateways at their next restart (`thinny restart`).
 
-To update hermes-manager itself:
+To update thinny itself:
 
 ```sh
-cd /root/hermes-manager && git pull && sh install.sh
+cd /root/thinny && git pull && sh install.sh
 ```
 
 ## Settings
 
-Edit `/etc/hermes-manager/site.toml`. Every key is commented in
+Edit `/etc/thinny/site.toml`. Every key is commented in
 [`site.example.toml`](site.example.toml).
 
 | Section       | Holds |
@@ -228,7 +228,7 @@ Edit `/etc/hermes-manager/site.toml`. Every key is commented in
 After editing, run:
 
 ```sh
-hermes-manager apply
+thinny apply
 ```
 
 `apply` does the following:
@@ -255,7 +255,7 @@ Notes:
 ### Add a person
 
 ```sh
-hermes-manager add-person alice
+thinny add-person alice
 ```
 
 The command asks how the person will open their Webapp (see [Access](#access)):
@@ -301,7 +301,7 @@ It continues where it stopped.
 ### Sign in and hand over
 
 ```sh
-hermes-manager login alice
+thinny login alice
 ```
 
 This command signs the person in to the model provider with a device code (ChatGPT for
@@ -316,10 +316,10 @@ access, their PC also needs the office certificate.
 ### Other commands
 
 ```sh
-hermes-manager list                      # people, state, access, port, gateway, URL
-hermes-manager access alice tailscale    # change the access method (lan | tailscale | url=<URL> | local)
-hermes-manager password alice            # new Webapp password, shown once
-hermes-manager remove-person alice       # disable the person
+thinny list                      # people, state, access, port, gateway, URL
+thinny access alice tailscale    # change the access method (lan | tailscale | url=<URL> | local)
+thinny password alice            # new Webapp password, shown once
+thinny remove-person alice       # disable the person
 ```
 
 - `access` restarts the person's gateway, and the old address stops working.
@@ -359,7 +359,7 @@ tunnel counts as secure, so local access keeps every feature.
 
 ### Office network (`lan`)
 
-hermes-manager installs Caddy the first time someone gets LAN access. Each LAN person gets a
+thinny installs Caddy the first time someone gets LAN access. Each LAN person gets a
 site on `access.lan_address` and their port. The site uses Caddy's own certificate authority
 (`tls internal`) and forwards to the Webapp.
 
@@ -375,7 +375,7 @@ site on `access.lan_address` and their port. The site uses Caddy's own certifica
   appears once Caddy serves its first LAN site.
 - **Open the Webapp ports** to the office network in your input firewall (see
   [Prerequisites](#prerequisites-your-part)).
-- **hermes-manager owns `/etc/caddy/Caddyfile`** once anyone uses LAN access. It rewrites the
+- **thinny owns `/etc/caddy/Caddyfile`** once anyone uses LAN access. It rewrites the
   whole file (with Caddy's admin API off), so do not use this Caddy for other sites.
 
 ### Tailscale (`tailscale`)
@@ -392,11 +392,11 @@ It gets a real certificate, so there is no browser warning.
 For a Cloudflare Tunnel, a reverse proxy, or similar:
 
 ```sh
-hermes-manager add-person alice --access url=https://alice.example.org/
+thinny add-person alice --access url=https://alice.example.org/
 ```
 
 - Run the proxy or tunnel client on this server and point it at `http://127.0.0.1:<port>`.
-  `hermes-manager list` shows the port.
+  `thinny list` shows the port.
 - Keep the address on HTTPS.
 
 ### Local only (`local`)
@@ -410,7 +410,7 @@ ssh -L <port>:127.0.0.1:<port> root@<server>
 
 ## Updates
 
-`hermes-manager-update.timer` runs `hermes-manager update` every night at
+`thinny-update.timer` runs `thinny update` every night at
 `hermes.update_time`. If the server is off at that time, the update waits for the next night.
 
 1. It asks GitHub for the latest stable Hermes release.
@@ -427,10 +427,10 @@ ssh -L <port>:127.0.0.1:<port> root@<server>
       enabled. **It stops at the first failure.** People not yet updated keep running the old
       release.
 
-   When everyone runs the new release, it records it in `/var/lib/hermes-manager/release`.
+   When everyone runs the new release, it records it in `/var/lib/thinny/release`.
    From then on, new people get it.
 5. It writes the result (`up-to-date`, `waiting`, `available`, `ok` or `FAILED`) to
-   `/var/lib/hermes-manager/update-status.json`. If the OS needs a reboot, it adds that to the
+   `/var/lib/thinny/update-status.json`. If the OS needs a reboot, it adds that to the
    status. It never reboots.
 
 ```json
@@ -440,13 +440,13 @@ ssh -L <port>:127.0.0.1:<port> root@<server>
 Run it by hand:
 
 ```sh
-hermes-manager update --check    # report what would happen; changes nothing, writes no status
-hermes-manager update --now      # update now, ignoring the minimum age and auto_update = false
-hermes-manager restart [alice ...] # restart gateways one by one (all, or the named people)
+thinny update --check    # report what would happen; changes nothing, writes no status
+thinny update --now      # update now, ignoring the minimum age and auto_update = false
+thinny restart [alice ...] # restart gateways one by one (all, or the named people)
 ```
 
-- **Log:** `/var/log/hermes-manager.log` (all commands), and for the nightly run also
-  `journalctl -u hermes-manager-update.service`.
+- **Log:** `/var/log/thinny.log` (all commands), and for the nightly run also
+  `journalctl -u thinny-update.service`.
 - **OS updates inside the containers** come from `unattended-upgrades`, installed with
   Debian's defaults. The container's package list follows the official Hermes image's
   Dockerfile and is installed at `add-person` and before each Hermes update.
@@ -459,19 +459,19 @@ hermes-manager restart [alice ...] # restart gateways one by one (all, or the na
   cuts off scheduled jobs and background tasks. Keep people's scheduled jobs away from
   `update_time`.
 - **Interrupted work is finished later.** If an update stops halfway, the next run (or
-  `hermes-manager update --now`) finishes it first, to the same release and without waiting
+  `thinny update --now`) finishes it first, to the same release and without waiting
   for the minimum age. It starts with the person it stopped at, from the beginning, and skips
   the people already done. Gateways that `apply`,
   `update` or `restart` could not restart are remembered and restarted by the next of these
   commands.
-- **One run at a time.** hermes-manager runs one command at a time. During the update, other
+- **One run at a time.** thinny runs one command at a time. During the update, other
   commands that change things refuse to start. If such a command is still running at
   `update_time`, that night's update fails.
 
 ## Checks
 
 ```sh
-hermes-manager check
+thinny check
 ```
 
 `check` prints one line per result (`OK`, `WARN` or `FAIL`), with a `fix:` line where it
@@ -487,7 +487,7 @@ helps. It exits with status 1 when anything fails, so you can use it from monito
   - the last nightly update result: `FAIL` if it failed, `WARN` if it is missing or older
     than 48 h.
 - **Prerequisites:** everything in [Prerequisites](#prerequisites-your-part).
-- **Firewall:** the loaded `inet hermes_manager` table is exactly the one `site.toml` gives,
+- **Firewall:** the loaded `inet thinny` table is exactly the one `site.toml` gives,
   chain by chain and rule by rule (`FAIL` if not).
 - **Office network:** Caddy is running when anyone uses LAN access.
 - **Per person:**
@@ -503,17 +503,17 @@ helps. It exits with status 1 when anything fails, so you can use it from monito
 
 | Path | What |
 | ---- | ---- |
-| `/etc/hermes-manager/site.toml` | your settings |
-| `/etc/hermes-manager/hermes-manager.nft` | the containers' firewall table (generated) |
-| `/etc/systemd/system/incus.service.d/hermes-manager.conf` | loads that table before Incus starts |
-| `/etc/systemd/system/hermes-manager-update.*` | the nightly update service and timer |
-| `/etc/sysctl.d/90-hermes-manager.conf` | IPv4 forwarding for the containers |
-| `/var/lib/hermes-manager/people.json` | the people registry: name, port, access, URL, container address, state |
-| `/var/lib/hermes-manager/release` | the Hermes release everyone runs (tag and commit) |
-| `/var/lib/hermes-manager/update-status.json` | the last nightly update result |
-| `/var/log/hermes-manager.log` | the log |
+| `/etc/thinny/site.toml` | your settings |
+| `/etc/thinny/thinny.nft` | the containers' firewall table (generated) |
+| `/etc/systemd/system/incus.service.d/thinny.conf` | loads that table before Incus starts |
+| `/etc/systemd/system/thinny-update.*` | the nightly update service and timer |
+| `/etc/sysctl.d/90-thinny.conf` | IPv4 forwarding for the containers |
+| `/var/lib/thinny/people.json` | the people registry: name, port, access, URL, container address, state |
+| `/var/lib/thinny/release` | the Hermes release everyone runs (tag and commit) |
+| `/var/lib/thinny/update-status.json` | the last nightly update result |
+| `/var/log/thinny.log` | the log |
 | `/etc/hermes/` | managed scope, mounted read-only into every container: `config.yaml`, `.env` (no secrets), `allowed-models.txt`, `model-guard-message.txt` (generated) |
-| `/usr/local/lib/hermes-manager/`, `/usr/local/sbin/hermes-manager` | the tool; its `files/model-guard` is mounted read-only into every container |
+| `/usr/local/lib/thinny/`, `/usr/local/sbin/thinny` | the tool; its `files/model-guard` is mounted read-only into every container |
 | `/var/lib/incus/` | Incus, with the storage pool `default` (a btrfs file) that holds the containers |
 | `/etc/caddy/Caddyfile` | the LAN sites (generated, when used) |
 | container `<name>`: `/home/<name>/.hermes/` | a person's Hermes: code, chats, settings, Webapp sign-in, provider login |
