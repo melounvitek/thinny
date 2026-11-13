@@ -30,11 +30,48 @@ class OutputTooLarge(CommandError):
     pass
 
 
-def log(message: str) -> None:
+def log(message: str, *, echo: bool = True) -> None:
     line = f"{dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} {message}"
-    print(message, file=sys.stderr, flush=True)
+    if echo:
+        print(message, file=sys.stderr, flush=True)
     with contextlib.suppress(OSError), LOG_FILE.open("a", encoding="utf-8") as f:
         f.write(line + "\n")
+
+
+@contextlib.contextmanager
+def step(message: str):
+    """A long step: a terminal shows `message... 1:23` with the time so far; the log gets its start and
+    duration."""
+    start = time.monotonic()
+    live = sys.stderr.isatty()
+    done = threading.Event()
+
+    def elapsed() -> str:
+        seconds = int(time.monotonic() - start)
+        return f"{seconds // 60}:{seconds % 60:02}"
+
+    def show(end: str = "") -> None:
+        print(f"\r{message}... {elapsed()}", end=end, file=sys.stderr, flush=True)
+
+    def tick() -> None:
+        while not done.wait(1):
+            show()
+
+    log(f"{message}...", echo=not live)
+    ticker = threading.Thread(target=tick, daemon=True)
+    if live:
+        show()
+        ticker.start()
+    result = "failed after"
+    try:
+        yield
+        result = "done in"
+    finally:
+        done.set()
+        if live:
+            ticker.join()
+            show("\n")
+        log(f"{message}: {result} {elapsed()}", echo=not live)
 
 
 def run_bytes(cmd: list[str], *, input: bytes | None = None, timeout: float = 600, env: dict | None = None,

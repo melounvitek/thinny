@@ -17,7 +17,8 @@ from . import host, render
 from .registry import Instance, Registry, RegistryError
 from .settings import ACCESS_METHODS, Settings
 from .system import (INSTANCE_UID, STATE_DIR, CommandError, as_user, as_user_interactive, gateway_active, http_status,
-                     in_container, log, read_user_file, run, tailscale_name, uid_of, write_file, write_user_file)
+                     in_container, log, read_user_file, run, step, tailscale_name, uid_of, write_file,
+                     write_user_file)
 
 AUTH_PREFIX = "HERMES_DASHBOARD_BASIC_AUTH_"
 RESTART_TIMEOUT = 45 * 60  # a restart waits for a running reply (up to 30 min by default)
@@ -143,22 +144,27 @@ def install_hermes(s: Settings, name: str, commit: str, enable: bool) -> None:
     """Hermes at exactly `commit` with the official installer (a first install or an update),
     the Webapp, the Claude Code CLI, the language pack and the built-in plugins. `enable` turns the
     plugins on in the instance's own list."""
-    write_user_file(name, "/tmp/hermes-install.sh", host.installer())
-    as_user(name, ["bash", "/tmp/hermes-install.sh", "--channel", "stable", "--commit", commit, "--non-interactive"],
-            timeout=3600)
-    hermes(name, ["webapp", "--build-only"], timeout=3600)  # the installer does not build it
-    as_user(name, ["bash", "-c", f"set -o pipefail; command -v claude >/dev/null || curl -fsSL {CLAUDE_INSTALLER} | bash"],
-            timeout=900)
-    as_user(name, ["claude", "--version"], timeout=60)
+    with step("  official installer"):
+        write_user_file(name, "/tmp/hermes-install.sh", host.installer())
+        as_user(name, ["bash", "/tmp/hermes-install.sh", "--channel", "stable", "--commit", commit,
+                       "--non-interactive"], timeout=3600)
+    with step("  building the Webapp"):
+        hermes(name, ["webapp", "--build-only"], timeout=3600)  # the installer does not build it
+    with step("  Claude Code"):
+        as_user(name, ["bash", "-c", f"set -o pipefail; command -v claude >/dev/null || curl -fsSL {CLAUDE_INSTALLER} | bash"],
+                timeout=900)
+        as_user(name, ["claude", "--version"], timeout=60)
     # The phone plugin's Python packages, as an extra Hermes keeps through every rebuild of its
     # environment. A plugin's own packages follow the instance's own list of plugins that are on, from
     # which Hermes drops the plugins the model lock turns on whenever it saves its config.
-    hermes(name, ["pm", "install", "--extra", "piper"], timeout=1800)
+    with step("  phone plugin packages"):
+        hermes(name, ["pm", "install", "--extra", "piper"], timeout=1800)
     plugins = ([(s.language_pack,)] if s.language_pack else []) + [args for _, args in render.PLUGINS]
-    for args in plugins:
-        hermes(name, ["plugins", "install", *args, "--force", "--yes-deps", "--enable" if enable else "--no-enable"],
-               timeout=1800)
-    hermes(name, ["pm", "gc"], check=False, timeout=600)
+    with step("  plugins"):
+        for args in plugins:
+            hermes(name, ["plugins", "install", *args, "--force", "--yes-deps", "--enable" if enable else "--no-enable"],
+                   timeout=1800)
+        hermes(name, ["pm", "gc"], check=False, timeout=600)
 
 
 def installed_commit(name: str) -> str:
@@ -339,27 +345,29 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     inst.access, inst.url = access, url if access == "url" else ""
     reg.save()
 
-    log(f"{name}: container {inst.address} (packages take a few minutes)")
-    ensure_container(inst)
-    set_limits(name, cpu, memory_mb, disk_gb)
-    ensure_packages(name)
-    ensure_account(name)
+    with step(f"{name}: container {inst.address}"):
+        ensure_container(inst)
+        set_limits(name, cpu, memory_mb, disk_gb)
+    with step(f"{name}: system packages"):
+        ensure_packages(name)
+        ensure_account(name)
     tag, commit = host.release() or host.first_release()
-    log(f"{name}: Hermes {tag} (takes a few minutes)")
+    log(f"{name}: Hermes {tag}")
     install_hermes(s, name, commit, enable=True)  # a resumed add repeats it: it may have stopped halfway
-    ensure_model_guard(name)
-    inst.url = url_for(s, inst)
-    reg.save()
-    configure_webapp(s, inst)
-    hermes(name, ["config", "set", "display.language", s.language])
-    if not s.model_lock:  # with the lock the policy sets them
-        for key, value in starting_model(s).items():
-            hermes(name, ["config", "set", key, value])
-    password = ensure_sign_in(name)
-    seed_ui(s, name)
-    host.reconcile_access(s, reg)
-    log(f"{name}: gateway")
-    start_or_restart_gateway(s, inst)
+    with step(f"{name}: settings"):
+        ensure_model_guard(name)
+        inst.url = url_for(s, inst)
+        reg.save()
+        configure_webapp(s, inst)
+        hermes(name, ["config", "set", "display.language", s.language])
+        if not s.model_lock:  # with the lock the policy sets them
+            for key, value in starting_model(s).items():
+                hermes(name, ["config", "set", key, value])
+        password = ensure_sign_in(name)
+        seed_ui(s, name)
+    host.reconcile_access(s, reg)  # outside a step: it logs when it installs Caddy
+    with step(f"{name}: gateway"):
+        start_or_restart_gateway(s, inst)
     inst.state, inst.built_ins = "active", render.BUILT_INS
     reg.save()
 
