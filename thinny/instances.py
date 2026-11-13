@@ -66,7 +66,8 @@ def ensure_container(inst: Instance) -> None:
     read-only policy and the Webapp published on the host's loopback (each step repeatable)."""
     if container_state(inst.name) is None:
         run(["incus", "init", IMAGE, inst.name, "--profile", render.PROFILE], timeout=1800)
-    add_device(inst.name, "eth0", "nic", "nictype=routed", f"ipv4.address={inst.address}", f"host_name=hm-{inst.port}")
+    add_device(inst.name, "eth0", "nic", "nictype=routed", f"ipv4.address={inst.address}",
+               f"host_name=thinny-{inst.port}")
     add_device(inst.name, "policy", "disk", f"source={host.MANAGED}", f"path={host.MANAGED}",
                "readonly=true", "shift=true")
     add_device(inst.name, "webapp", "proxy", f"listen=tcp:127.0.0.1:{inst.port}", f"connect=tcp:127.0.0.1:{inst.port}")

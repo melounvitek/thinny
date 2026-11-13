@@ -28,15 +28,15 @@ LISTED = """table inet thinny {
 
 	chain forward {
 		type filter hook forward priority filter - 1; policy accept;
-		iifname "hm-*" oifname != "eth0" drop
-		iifname "hm-*" ip daddr @blocked_v4 drop
-		iifname "hm-*" meta nfproto ipv6 drop
-		oifname "hm-*" ct state != { established, related } drop
+		iifname "thinny-*" oifname != "eth0" drop
+		iifname "thinny-*" ip daddr @blocked_v4 drop
+		iifname "thinny-*" meta nfproto ipv6 drop
+		oifname "thinny-*" ct state != { established, related } drop
 	}
 
 	chain input {
 		type filter hook input priority filter - 1; policy accept;
-		iifname "hm-*" ct state != { established, related } drop
+		iifname "thinny-*" ct state != { established, related } drop
 	}
 
 	chain postrouting {
@@ -47,13 +47,13 @@ LISTED = """table inet thinny {
 """
 
 
-INPUT_DROP = '\t\tiifname "hm-*" ct state != { established, related } drop\n'
+INPUT_DROP = '\t\tiifname "thinny-*" ct state != { established, related } drop\n'
 
 
 @pytest.mark.parametrize("listed, matches", [
     (LISTED, True),
     (LISTED[LISTED.index("\tchain postrouting"):], False),                    # NAT only
-    (LISTED.replace(INPUT_DROP, '\t\tiifname "hm-*" accept\n' + INPUT_DROP), False),  # an early accept
+    (LISTED.replace(INPUT_DROP, '\t\tiifname "thinny-*" accept\n' + INPUT_DROP), False),  # an early accept
     (LISTED.replace(INPUT_DROP, "").replace("\tchain postrouting", "\tchain spare {\n" + INPUT_DROP
                                              + "\t}\n\tchain postrouting"), False),  # the drop moved away
     (LISTED.replace("203.0.113.0/24", "198.51.100.0/24"), False),            # stale blocked networks

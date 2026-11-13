@@ -41,13 +41,13 @@ def test_the_storage_pool_is_created_once(commands):
 def test_the_profile_follows_the_settings(commands):
     calls, missing = commands
     host.ensure_profile(S)
-    assert [c for c, _ in calls] == ["incus profile show hm-person", "incus profile create hm-person",
-                                     "incus profile edit hm-person"]
+    assert [c for c, _ in calls] == ["incus profile show thinny-instance", "incus profile create thinny-instance",
+                                     "incus profile edit thinny-instance"]
     assert json.loads(calls[-1][1])["config"]["limits.memory"] == "2048MiB"
     missing.discard("profile")
     calls.clear()
     host.ensure_profile(S)
-    assert [c for c, _ in calls] == ["incus profile show hm-person", "incus profile edit hm-person"]
+    assert [c for c, _ in calls] == ["incus profile show thinny-instance", "incus profile edit thinny-instance"]
 
 
 def test_the_firewall_is_checked_then_loaded(commands):

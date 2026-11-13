@@ -301,9 +301,9 @@ Debian 13, kernel 6.12, Incus 6.0.4 (`incus-base`), Hermes v0.23.0 -> v0.23.1. A
 - Firewall (the rules in 6.2, eth0 hardcoded then): from inside, the internet works; another
   container, host SSH on every address, Caddy, the monitoring agent, the host's tailnet
   address, MagicDNS and private ranges are blocked. A drop in any base chain is final: the
-  admin's forward chain (`policy drop`) needed `iifname "hm-*" accept` and
-  `oifname "hm-*" ct state established,related accept`.
-- Anti-spoofing: Incus adds `iif "hm-..." fib saddr . iif oif missing drop` per routed NIC
+  admin's forward chain (`policy drop`) needed `iifname "thinny-*" accept` and
+  `oifname "thinny-*" ct state established,related accept`.
+- Anti-spoofing: Incus adds `iif "thinny-..." fib saddr . iif oif missing drop` per routed NIC
   (table `inet incus`) and `rp_filter=2`; a spoofed source address got no reply.
 - An incus.service drop-in `ExecStartPre=/usr/sbin/nft -f <file>`: `systemctl restart incus`
   keeps containers and gateways running (same PID); with the file missing incus.service
@@ -420,22 +420,22 @@ extras/, tests/     netcup snapshot and nightly watch (run off the server); pyte
 /etc/hermes/                            Hermes managed scope, rendered from site.toml
 /etc/thinny/thinny.nft  our nft table for the containers
 /etc/systemd/system/incus.service.d/thinny.conf, /etc/sysctl.d/90-thinny.conf
-Incus                                   pool `default` (btrfs, sparse file), profile `hm-person`,
+Incus                                   pool `default` (btrfs, sparse file), profile `thinny-instance`,
                                         one container per instance, named after it
 ```
 
 - Names, ports and container addresses (`10.78.0.0/24`) are never reused; states `pending`,
   `active`, `disabled`.
-- Profile `hm-person`: root disk with the `disk_gb` quota, `/dev/net/tun`,
+- Profile `thinny-instance`: root disk with the `disk_gb` quota, `/dev/net/tun`,
   `security.idmap.isolated`, `security.nesting`, `limits.cpu`, `limits.memory`,
-  `limits.processes=2000`, `boot.autostart`. Per container: a routed NIC `hm-<port>`,
+  `limits.processes=2000`, `boot.autostart`. Per container: a routed NIC `thinny-<port>`,
   `/etc/hermes` and model-guard as read-only disks (`shift=true`), and a proxy device from
   host `127.0.0.1:<port>` to the same port inside.
-- Our nft table: forward from `hm-*` only out of `network.interface`, not to private, CGNAT
-  (tailnet), link-local, multicast or blocked networks, no IPv6, nothing new into `hm-*`;
-  input: nothing new from `hm-*`; masquerade. Loaded by `config apply` and by the incus.service
+- Our nft table: forward from `thinny-*` only out of `network.interface`, not to private, CGNAT
+  (tailnet), link-local, multicast or blocked networks, no IPv6, nothing new into `thinny-*`;
+  input: nothing new from `thinny-*`; masquerade. Loaded by `config apply` and by the incus.service
   drop-in (`ExecStartPre`, `PartOf=nftables.service`), so incusd never starts without it.
-  The admin's tables stay untouched; their forward chain must accept `hm-*`.
+  The admin's tables stay untouched; their forward chain must accept `thinny-*`.
 - Everything in a container runs through `incus exec`; the instance's commands run as its account
   (`runuser`, clean environment), and files in its home are read and written as that account.
   Output is bounded in size and time: users control every program in their container.
@@ -536,7 +536,7 @@ private ones and the tailnet are always blocked). `site.example.toml` lists ever
 
 ## 7. Checks (`thinny doctor`)
 
-- Install: Incus pool `default` and profile `hm-person`, the incus.service drop-in, IPv4
+- Install: Incus pool `default` and profile `thinny-instance`, the incus.service drop-in, IPv4
   forwarding (FAIL); `/etc/hermes` matches `site.toml` (WARN); the recorded release; nightly
   timer enabled (WARN); last update status (FAIL when failed, WARN when missing or older than
   48 h).
@@ -607,7 +607,7 @@ inside, a reboot.
   users are root in their containers and can create user namespaces anyway, as on Debian.
   `sysctl -p` fails on Debian's missing key despite `-`; `systemd-sysctl` honors it.
 - ufw's default `DEFAULT_FORWARD_POLICY="DROP"` cuts the containers off;
-  `ufw route allow in on hm-+` lets them through, and our table still filters first.
+  `ufw route allow in on thinny-+` lets them through, and our table still filters first.
 
 Model lock and built-ins (2026-11-13): 1 `policy.model_lock`, off by default (the managed
 scope drops model, effort and plugins; new instances get them as their own config); 2 Docker,

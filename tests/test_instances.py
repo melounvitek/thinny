@@ -168,8 +168,8 @@ def test_a_new_instance_gets_its_own_container_with_hermes(incus):
     instances.add(S, reg, "alice", "local")
     assert reg.get("alice").state == "active" and reg.get("alice").url == "http://alice.localhost:9120/"
     assert reg.get("alice").built_ins == render.BUILT_INS
-    assert incus.ran("incus init images:debian/13 alice --profile hm-person")   # nothing from the default profile
-    assert incus.ran("incus config device add alice eth0 nic nictype=routed ipv4.address=10.78.0.1 host_name=hm-9120")
+    assert incus.ran("incus init images:debian/13 alice --profile thinny-instance")   # nothing from the default profile
+    assert incus.ran("incus config device add alice eth0 nic nictype=routed ipv4.address=10.78.0.1 host_name=thinny-9120")
     assert incus.ran("incus config device add alice policy disk source=/etc/hermes path=/etc/hermes readonly=true")
     assert incus.ran("incus config device add alice webapp proxy listen=tcp:127.0.0.1:9120 connect=tcp:127.0.0.1:9120")
     assert incus.ran("useradd --create-home --shell /bin/bash --uid 1000 --groups sudo alice")

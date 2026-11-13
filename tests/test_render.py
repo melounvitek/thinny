@@ -89,12 +89,12 @@ def test_caddyfile_without_lan_instances_needs_no_address():
 def test_firewall_lets_containers_reach_the_internet_only():
     text = render.firewall("eth0", ["203.0.113.0/24", "10.1.0.0/16", "fd00::/8"])
     assert text.startswith("# ") and "delete table inet thinny" in text
-    assert 'iifname "hm-*" oifname != "eth0" drop' in text            # no other container, no tailnet
-    assert 'iifname "hm-*" ip daddr @blocked_v4 drop' in text
-    assert 'iifname "hm-*" meta nfproto ipv6 drop' in text
-    assert 'oifname "hm-*" ct state != { established, related } drop' in text
+    assert 'iifname "thinny-*" oifname != "eth0" drop' in text            # no other container, no tailnet
+    assert 'iifname "thinny-*" ip daddr @blocked_v4 drop' in text
+    assert 'iifname "thinny-*" meta nfproto ipv6 drop' in text
+    assert 'oifname "thinny-*" ct state != { established, related } drop' in text
     assert 'chain input {\n\t\ttype filter hook input priority filter - 1; policy accept;\n' \
-           '\t\tiifname "hm-*" ct state != { established, related } drop' in text
+           '\t\tiifname "thinny-*" ct state != { established, related } drop' in text
     assert 'oifname "eth0" ip saddr 10.78.0.0/24 masquerade' in text
     # private ranges (the tailnet included) and the site's networks, merged where they overlap
     assert ("elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, "

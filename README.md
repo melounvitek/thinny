@@ -85,11 +85,11 @@ install Tailscale with `sudo`.
   two lines to it (see the example in [Prerequisites](#prerequisites-your-part)):
 
   ```
-  iifname "hm-*" accept
-  oifname "hm-*" ct state established,related accept
+  iifname "thinny-*" accept
+  oifname "thinny-*" ct state established,related accept
   ```
 
-  With ufw, which drops forwarded traffic by default, run `ufw route allow in on hm-+`
+  With ufw, which drops forwarded traffic by default, run `ufw route allow in on thinny-+`
   instead. Without this, `instance add` fails at the packages and `doctor` reports that the
   container cannot reach the internet.
 - Hermes from its latest stable release. Tested with Hermes v0.23.
@@ -138,8 +138,8 @@ table inet filter {
 	}
 	chain forward {
 		type filter hook forward priority filter; policy drop;
-		iifname "hm-*" accept                               # the containers (filtered by thinny)
-		oifname "hm-*" ct state established,related accept
+		iifname "thinny-*" accept                           # the containers (filtered by thinny)
+		oifname "thinny-*" ct state established,related accept
 	}
 }
 ```
@@ -208,7 +208,7 @@ The second run:
 3. turns on IPv4 forwarding and installs the nightly update timer. On Ubuntu, it also turns
    off AppArmor's restriction on user namespaces, without which the agent's browser cannot
    start. A user is root in their instance and can create them anyway, as on Debian;
-4. creates the Incus profile `hm-person` with the `[container]` limits;
+4. creates the Incus profile `thinny-instance` with the `[container]` limits;
 5. writes `/etc/hermes`.
 
 Hermes itself is installed into each instance's container by `instance add`.
@@ -307,8 +307,8 @@ system accounts too) or of an existing Incus container.
 `instance add` takes about 7 minutes. It:
 
 1. picks the next free Webapp port and container address (`10.78.0.0/24`);
-2. creates the container `alice` from the Debian 13 image with the `hm-person` profile, a
-   routed network interface (`hm-<port>` on the host), the read-only policy and the Webapp
+2. creates the container `alice` from the Debian 13 image with the `thinny-instance` profile, a
+   routed network interface (`thinny-<port>` on the host), the read-only policy and the Webapp
    proxy, and starts it;
 3. installs the system packages (Chromium's libraries, the Bot Screen desktop, build tools,
    Docker, `sudo`, `unattended-upgrades`);
@@ -549,7 +549,7 @@ with a `fix:` line where it helps, and exit with status 1 when anything fails, s
 them from monitoring.
 
 - **Install:**
-  - the Incus storage pool `default` and profile `hm-person` exist;
+  - the Incus storage pool `default` and profile `thinny-instance` exist;
   - `incus.service` loads the firewall table before it starts;
   - IPv4 forwarding is on;
   - on Ubuntu, AppArmor lets instances create user namespaces (their browser needs them);

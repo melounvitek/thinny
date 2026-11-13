@@ -21,9 +21,9 @@ INCUS_DROPIN = host.SYSTEMD / "incus.service.d/thinny.conf"
 # Read before the managed scope is resolved, so an instance's own value beats the policy.
 BYPASS_VARS = ("HERMES_MANAGED_DIR", "HERMES_BUNDLED_PLUGINS", "HERMES_ENABLE_PROJECT_PLUGINS")
 FORWARD_FIX = """let the containers' traffic through your firewall's forward chain, e.g. in /etc/nftables.conf:
-  iifname "hm-*" accept
-  oifname "hm-*" ct state established,related accept
-or with ufw: ufw route allow in on hm-+
+  iifname "thinny-*" accept
+  oifname "thinny-*" ct state established,related accept
+or with ufw: ufw route allow in on thinny-+
 (table inet thinny does the filtering; see README, Requirements)"""
 
 
