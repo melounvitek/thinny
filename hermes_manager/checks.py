@@ -129,19 +129,27 @@ def firewall(s: Settings, reg: Registry):
                      "each other, the host or blocked networks", "hermes-manager apply"))
 
 
-def table_parts(text: str) -> tuple[dict[str, list[str]], list[str]]:
-    """The chains (name -> statements, in order) and set elements of an nft table, as we render it
-    or as `nft list table` prints it."""
-    chains, chain = {}, None
+def table_parts(text: str) -> tuple[dict[str, list[str]], dict[str, str]]:
+    """The chains (name -> statements, in order) and sets (name -> elements) of an nft table, as we
+    render it (a set on one line) or as `nft list table` prints it (a set over several lines)."""
+    chains, sets, chain, set_name, depth = {}, {}, None, None, 0
     for line in text.splitlines():
         words = line.split()
-        if words[:1] == ["chain"]:
+        if words[:1] == ["set"] and set_name is None:
+            set_name, set_depth, sets[words[1]] = words[1], depth, ""
+        if set_name is not None:
+            sets[set_name] += line
+        elif words[:1] == ["chain"]:
             chain = chains.setdefault(words[1], [])
         elif words == ["}"]:
             chain = None
         elif chain is not None and words:
             chain.append(" ".join(words))
-    return chains, [" ".join(e.split()) for e in re.findall(r"elements = \{[^}]*\}", text)]
+        depth += line.count("{") - line.count("}")
+        if set_name is not None and depth == set_depth:
+            set_name = None
+    return chains, {name: " ".join(" ".join(re.findall(r"elements = \{[^}]*\}", body)).split())
+                    for name, body in sets.items()}
 
 
 def lan_access(s: Settings, reg: Registry):

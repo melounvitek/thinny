@@ -55,6 +55,8 @@ INPUT_DROP = '\t\tiifname "hm-*" ct state != { established, related } drop\n'
     (LISTED.replace(INPUT_DROP, "").replace("\tchain postrouting", "\tchain spare {\n" + INPUT_DROP
                                              + "\t}\n\tchain postrouting"), False),  # the drop moved away
     (LISTED.replace("203.0.113.0/24", "198.51.100.0/24"), False),            # stale blocked networks
+    (LISTED.replace("\tset blocked_v4 {", "\tset blocked_v4 {\n\t\ttype ipv4_addr\n\t}\n\tset spare {"),
+     False),                                                                 # the networks in another set
     ("", False),                                                             # not loaded
 ])
 def test_the_loaded_firewall_must_be_the_rendered_one(listed, matches):
