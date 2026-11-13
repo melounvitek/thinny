@@ -30,14 +30,17 @@ In priority order.
    container with the official installer at the recorded commit, and one config
    (`/etc/hermes`, Hermes "managed scope") mounted read-only into every container. One
    nightly update for everyone, one person at a time.
-3. **Central policy:** pinned model and reasoning effort, model allowlist enforced by a
-   plugin, approvals mode, plugin list, terminal backend. People cannot change it from the
+3. **Central policy:** approvals mode and terminal backend; with the model lock
+   (`policy.model_lock`, off by default) also pinned model and reasoning effort, model
+   allowlist enforced by a plugin and plugin list. People cannot change it from the
    Webapp or their settings. It is a guardrail, not enforcement: a person is root in their
    own container and can get around it. `doctor` reports it when they do.
 4. **Agent tools run in the person's container** (`terminal.backend: local`); no sandbox
    image, no nested Podman. The person has passwordless `sudo`, so they and their agent can
-   `apt install`. Docker and Tailscale are possible inside (nesting, `/dev/net/tun`). No
-   Docker daemon on the host (docker group = root).
+   `apt install`. Docker is installed inside (the phone plugin's Asterisk), Tailscale is
+   possible (nesting, `/dev/net/tun`). No Docker daemon on the host (docker group = root).
+   Built in for everyone: Claude Code with the Claude subscription plugin and the hermes-3310
+   phone plugin.
 5. **Built-in Hermes Webapp per person** on loopback, always behind sign-in. How each person
    reaches it is chosen per person when they are added (section 6.6). The tool assumes
    nothing about the site's network.
@@ -333,6 +336,42 @@ Debian 13, kernel 6.12, Incus 6.0.4 (`incus-base`), Hermes v0.23.0 -> v0.23.1. A
   ~80 MB. ~2.8 GB own disk per person for Hermes (copied from a template, so without the
   system packages).
 
+### Plugins and Claude Code (2026-11-13)
+- `hermes plugins install` without a terminal reads `requires_env` prompts from stdin; with
+  stdin at end of file (our `as_user`) it skips them and goes on. Flags: `--force`, `--ref
+  <40-hex sha>` (the only way to pin a Git install), `--yes-deps`, `--enable`/`--no-enable`.
+  `--no-enable` also skips the plugin's Python packages; `--enable` on an already active plugin
+  leaves the selection alone, on one the person turned off turns it on again **[src]**.
+- The package manager installs packages for the plugins in the person's own `plugins.enabled`;
+  managed lists replace the person's but are not what it reads, and a bulk config save (e.g.
+  `gateway install`, the Webapp's settings) drops managed keys from the person's config. The
+  next `hermes` command then finds the environment out of date and rebuilds it without those
+  plugins' packages. Extras (`hermes pm install --extra <name>`) are kept through every
+  rebuild, so the phone plugin's packages come from Hermes's own `piper` extra **[src]**.
+- Debian 13's `docker.io` only recommends `docker-cli` **[src]**.
+- A `kind: model-provider` plugin (the Claude subscription) loads without `plugins.enabled`;
+  only `plugins.disabled` stops it. A `kind: platform` plugin from outside the bundle
+  (hermes-3310) must be in `plugins.enabled`, and its adapter starts only once its env vars
+  (`PHONE_PIN`, `PHONE_ALLOWED_CALLERS`) are set **[src]**.
+- hermes-3310 is not in the plugin catalog; the Claude subscription plugin is, pinned by sha.
+  Hermes's own plugin auto-update (`plugins.auto_apply`) is opt-in and skips `--ref` installs
+  **[src]**.
+- Managed `model.*` keys: `hermes config set` and `unset` refuse them (exit 1); `/model` and the
+  Webapp picker still switch per session **[src]**. `hermes config get agent.reasoning_effort`
+  calls the key unrecognized, but Hermes reads it **[src]**. Without
+  `hermes.desktop.visible-models` (a diff against `known-models`) the picker shows the
+  provider's featured models **[src]**.
+- Hermes writes a section that the managed-key stripping left empty, below the template's
+  comments, as a bare `{}` line: invalid YAML, after which its package manager cannot read the
+  person's plugin selection. It happened when the lock went on for a person who had
+  `model.provider` and `model.default` of their own (setting the provider drops `base_url`,
+  the section's last other key). `apply` unsets those keys before it writes a locked managed
+  scope; `unset` leaves a valid file **[tested]**.
+- Claude Code: the native installer puts `claude` in `~/.local/bin`, needs no Node and refuses
+  to run under `sudo`. `claude auth login` works without a terminal: it prints a link and reads
+  the code from stdin. The Claude subscription plugin starts `claude` with
+  `DISABLE_AUTOUPDATER=1`, so it never updates itself there **[src, tested locally]**.
+
 ## 5. Rejected options (and why)
 
 - Docker: docker group = root.
@@ -375,7 +414,8 @@ extras/, tests/     netcup snapshot and nightly watch (run off the server); pyte
 
 ```
 /etc/thinny/site.toml           admin-edited settings
-/var/lib/thinny/people.json     registry: name, port, container address, access, URL, state
+/var/lib/thinny/people.json     registry: name, port, container address, access, URL, state,
+                                the built-ins (render.BUILT_INS) their container last got
 /var/lib/thinny/release         "<tag> <commit>": the Hermes release everyone runs
 /etc/hermes/                            Hermes managed scope, rendered from site.toml
 /etc/thinny/thinny.nft  our nft table for the containers
@@ -430,11 +470,13 @@ config edit | apply               visudo-like edit of site.toml, then apply; re-
                                   restart where needed
 instance add <name> [--access ...]
                                   port, address, container, packages, account (uid 1000, sudo,
-                                  linger), Hermes at the recorded release, Webapp build,
-                                  language pack, model-guard, Webapp password, language, look,
-                                  access, gateway
-instance access | login | reset-password <name>
-                                  access method, ChatGPT device login, new Webapp password
+                                  linger, docker), Hermes at the recorded release, Webapp build,
+                                  Claude Code, language pack and built-in plugins (turned on),
+                                  model-guard, Webapp password, language, look, without the
+                                  model lock the starting model, access, gateway
+instance access | login [--claude] | reset-password <name>
+                                  access method, ChatGPT or Claude device login, new Webapp
+                                  password
 instance disable <name>           autostart off, container stopped (forced after 60 s), access
                                   removed; container and data stay
 instance list | restart           people; one-by-one gateway restarts
@@ -458,7 +500,7 @@ through `ssh -L <port>:127.0.0.1:<port> root@<server>`.
 
 ### 6.7 Settings (`site.toml`)
 
-`[hermes]` update timing, `[policy]` provider, models, effort, approvals, language and
+`[hermes]` update timing, `[policy]` provider, models, effort, `model_lock`, approvals, language and
 `language_pack` (a catalog plugin name), `[container]` `cpu`, `memory_mb`, `disk_gb`,
 `[webapp]` port range and the look for new people (`text_scale` 110), `[access]` `default`,
 `lan_address`, `[network]` `interface` (`eth0`) and `blocked_networks` (public networks;
@@ -479,6 +521,14 @@ private ones and the tailnet are always blocked). `site.example.toml` lists ever
   the commit. The recorded release
   moves only when everyone runs it; `instance add` installs it (the latest stable release when
   none is recorded yet).
+- Built-ins: `render.BUILT_INS` is a hash of the container package list and the built-in
+  plugin pins, recorded per person after their checked restart. When it changes (a thinny
+  update), the next run rolls out at the recorded release, also when a newer release still
+  waits, through the same one-by-one rollout; `auto_update = false` only reports it. Plugins are
+  installed with `--enable` only then and at `instance add`, so a Hermes update keeps what
+  people turned off.
+- Every run that is not a dry run also runs `claude update` for everyone, best effort: the
+  Claude subscription plugin starts `claude` with `DISABLE_AUTOUPDATER=1`.
 - No pre-update backup: `/etc/hermes`, model-guard and the language pack can all be
   recreated. The snapshot (off the server, not awaited) is the only way back.
 - Inside the containers, `unattended-upgrades` with Debian's defaults updates the OS.
@@ -495,10 +545,11 @@ private ones and the tailnet are always blocked). `site.example.toml` lists ever
 - Office network: Caddy active when anyone uses LAN access (FAIL).
 - Per person: container running and reaching the internet (FAIL; the fix shows the
   forward-chain lines); gateway active and Webapp answering (FAIL), `public_url` as recorded
-  (WARN); Hermes at the recorded commit (WARN); no bypass (WARN): `HERMES_MANAGED_DIR`,
-  `HERMES_BUNDLED_PLUGINS` or `HERMES_ENABLE_PROJECT_PLUGINS` in `.env` or the gateway unit,
-  their own `model-guard` in `~/.hermes/plugins`, a gateway unit that does not start their
-  own `hermes`.
+  (WARN); Hermes at the recorded commit (WARN); Claude Code and the built-in plugins installed
+  (WARN); no bypass (WARN): `HERMES_MANAGED_DIR`, `HERMES_BUNDLED_PLUGINS` or
+  `HERMES_ENABLE_PROJECT_PLUGINS` in `.env` or the gateway unit, their own `model-guard` in
+  `~/.hermes/plugins` (with the model lock), a gateway unit that does not start their own
+  `hermes`.
 - A check that crashes is reported as FAIL; the others still run.
 
 ## 8. Rounds
@@ -557,13 +608,33 @@ inside, a reboot.
 - ufw's default `DEFAULT_FORWARD_POLICY="DROP"` cuts the containers off;
   `ufw route allow in on hm-+` lets them through, and our table still filters first.
 
+Model lock and built-ins (2026-11-13): 1 `policy.model_lock`, off by default (the managed
+scope drops model, effort and plugins; new people get them as their own config); 2 Docker,
+Claude Code, the Claude subscription and hermes-3310 for everyone, `instance login --claude`,
+the `doctor` check; 3 the per-person built-ins hash, its rollout at the recorded release, the
+nightly `claude update`; 4 README and this file. Server test (2026-11-13, Debian 13, Hermes
+v0.23.1) **[tested]**: alice added by the previous thinny, then the upgrade (lock off by
+default) and `thinny update`: `new built-ins at v0.23.1` in under 5 min, Docker (`docker run`
+works), Claude Code 2.1.323, both plugins on, piper importable, `doctor` all OK; her running
+gateway got the `docker` group only after `incus restart alice`. bob (lock off) added in 9 min
+with the starting model and effort, the `docker` group in his gateway. Lock on: `config apply`
+passed the model-guard checks, carol (locked) added in 11 min. A minute after the lock went on,
+Hermes left bob's config unreadable (section 4); with `apply` unsetting first, all configs
+stayed valid, also after a forced bulk save, and carol's own `plugins.enabled` was gone while
+her environment kept piper through `hermes pm install`. Phone plugin listening with the lock on;
+`install-asterisk.sh` ran as the person and Asterisk sent its REGISTER out masqueraded.
+`instance login --claude` printed the link (a wrong code asks again). Not done: a real Claude
+sign-in and a real call (see section 9).
+
 ## 9. Open questions
 
 - Package drift: `render.PACKAGES` copies the official image's Dockerfile lists (v0.23.1).
   When Hermes adds a system dependency the list must follow; containers get the list at
   `instance add` and before each Hermes update.
-- The hermes-3310 phone plugin needs to be in the managed `plugins.enabled` (it replaces the
-  person's list) and Docker in the person's container; neither is wired up.
+- Phone calls through a container are untested. The test server gets no SIP replies at all,
+  not even to the host itself (`tcpdump` on `eth0`: OPTIONS to Odorik and Linphone leave, nothing
+  comes back; the same OPTIONS from elsewhere get `200 OK`): the server's firewall in netcup's
+  control panel drops them. Open it for SIP before a call test.
 - Per-person SSH and Tailscale are left to the person; SSH needs the host as jump host.
 - Not tested: `systemctl restart nftables` with containers running (do Incus's per-NIC
   anti-spoofing rules come back without restarting the containers?).

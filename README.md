@@ -16,8 +16,14 @@ What you get:
 - **One Hermes release for everyone.** New people get the release everyone runs, and the
   nightly update moves everyone to the next one.
 - **One central policy** in `/etc/hermes` (Hermes "managed scope"), mounted read-only into every
-  container. It sets the provider, the default model, the allowed models, the reasoning effort,
-  approvals and plugins. People cannot change it from the Webapp or their own settings.
+  container. It sets approvals and keeps the agent in the person's container. With the **model
+  lock** (`policy.model_lock`, off by default) it also sets the provider, the model, the allowed
+  models, the reasoning effort and the plugins; without it, people start with the site's model and
+  choose their own. People cannot change the policy from the Webapp or their own settings.
+- **Built in for everyone:** [Claude Code](https://code.claude.com/) with the Claude subscription
+  plugin, so a person can use their own Claude Pro or Max subscription, and the
+  [hermes-3310](https://github.com/melounvitek/hermes-3310) phone plugin with Docker for its
+  Asterisk.
 - **CPU, memory, process and disk limits** per container.
 - **A firewall table** that lets each container reach the internet and nothing else.
 - **Four ways to open the Webapp**, chosen per person: office network (HTTPS), Tailscale, your
@@ -48,9 +54,9 @@ files, model-provider login, Webapp and agent live in it, and the host keeps con
 - **From the server admin.** Root can read everything on the machine that runs the agent.
 - **From the model provider.** Conversations go to the provider you configure.
 - **The policy against a determined person.** A person is root in their own container
-  (passwordless `sudo`, and the Webapp has a terminal). The pinned model, approvals and the
-  model guard cannot be changed from the Webapp or the person's settings, but the person can
-  get around them inside their container. They are a guardrail. `thinny doctor`
+  (passwordless `sudo`, and the Webapp has a terminal). Approvals and, with the model lock, the
+  pinned model and the model guard cannot be changed from the Webapp or the person's settings,
+  but the person can get around them inside their container. They are a guardrail. `thinny doctor`
   reports the bypasses it can see. The container stays isolated from everyone else.
 - **A person from their own agent.** An agent misled by a web page can do whatever the person
   can do in their container, including `sudo`. It cannot leave the container.
@@ -58,8 +64,9 @@ files, model-provider login, Webapp and agent live in it, and the host keeps con
   access use HTTPS, and local access goes through an SSH tunnel. If you use your own address,
   keep it on HTTPS too.
 
-Docker and Tailscale are possible inside a container (nesting and `/dev/net/tun` are on), but
-thinny does not install them. A person can install them with `sudo`.
+Docker and Tailscale work inside a container (nesting and `/dev/net/tun` are on). thinny installs
+Docker for the phone plugin and puts the person in the `docker` group. Tailscale they can install
+with `sudo`.
 
 ## Requirements
 
@@ -69,7 +76,8 @@ thinny does not install them. A person can install them with `sudo`.
   `install.sh` installs. Containers only, no virtual machines, so the server needs no nested
   virtualisation.
 - Internet access from the server for GitHub, the Hermes installer and what it downloads, the
-  Debian container image (`images.linuxcontainers.org`), Debian mirrors and the model provider.
+  Claude Code installer, the Debian container image (`images.linuxcontainers.org`), Debian
+  mirrors and the model provider.
   `network.interface` must name the server's internet interface (`eth0` by default).
 - **Your firewall's forward chain must let the containers through.** thinny turns on
   IPv4 forwarding and filters the containers' traffic in its own table. A drop in any nftables
@@ -87,9 +95,11 @@ thinny does not install them. A person can install them with `sudo`.
 - Hermes from its latest stable release. Tested with Hermes v0.23.
 - Rough sizing, measured on a test server: about 0.4 GB RAM per idle person, plus what their
   agent's browser and tools use, and about 3 GB disk for each person's Hermes plus their
-  container's system packages. Each container is capped at `container.disk_gb`.
+  container's system packages. Docker, Claude Code and the phone plugin add to this (not measured
+  yet). Each container is capped at `container.disk_gb`.
 - One model-provider account per person. The default provider, `openai-codex`, signs in with
-  ChatGPT. Sharing one subscription among several people is against the provider's terms.
+  ChatGPT. A person can also use their own Claude Pro or Max subscription. Sharing one
+  subscription among several people is against the providers' terms.
 
 ## Prerequisites (your part)
 
@@ -180,8 +190,9 @@ The first run does three things and stops:
 2. installs the tool into `/usr/local/lib/thinny`;
 3. creates `/etc/thinny/site.toml` from `site.example.toml`.
 
-Edit `site.toml` (see [Settings](#settings)). At least set `policy.model`,
-`policy.allowed_models`, `access.lan_address` and `network.interface`. If nobody will use LAN
+Edit `site.toml` (see [Settings](#settings)). At least set `policy.model` (with
+`policy.model_lock = true` also `policy.allowed_models`), `access.lan_address` and
+`network.interface`. If nobody will use LAN
 access, set `access.lan_address = ""` and choose another `access.default`. Then run the script
 again:
 
@@ -229,7 +240,7 @@ edit again or discard the changes, so a broken file never takes effect.
 | Section       | Holds |
 | ------------- | ----- |
 | `[hermes]`    | the nightly update: `auto_update`, `update_time`, `min_release_age_hours` |
-| `[policy]`    | `model_provider`, the default `model`, `allowed_models` (enforced by the model-guard plugin), `reasoning_effort`, `approvals` (`manual` or `smart`), the UI `language` and its `language_pack`, `model_guard_message` |
+| `[policy]`    | `model_provider`, the default `model`, `reasoning_effort`, `model_lock` (pins those three and the plugins, and allows only `allowed_models`, enforced by the model-guard plugin), `approvals` (`manual` or `smart`), the UI `language` and its `language_pack`, `model_guard_message` |
 | `[container]` | each container's limits: `cpu`, `memory_mb`, `disk_gb` (processes are capped at 2000) |
 | `[webapp]`    | `port_range`, and the Webapp look for new people (`theme`, `text_scale` (110 %), `interface`, `known_models`) |
 | `[access]`    | the `default` access method, `lan_address` |
@@ -252,10 +263,16 @@ Applying does the following:
 
 Notes:
 
-- Unknown keys, placeholder values, and a `model` that is not in `allowed_models` are errors.
+- Unknown keys, placeholder values, and, with `model_lock`, a `model` that is not in
+  `allowed_models` are errors.
 - Some values apply only to people added afterwards: `policy.language`, the `[webapp]` look,
   the models shown in the model picker, and `port_range`. Existing people keep theirs.
   However, a model removed from `allowed_models` is blocked for everyone at once.
+- Without `model_lock`, `model_provider`, `model` and `reasoning_effort` are only where new
+  people start. People choose their own in the Webapp and turn plugins on and off in its
+  Settings → Plugins. Turning the lock on removes the model people chose for themselves. If you
+  turn it off when people already exist, they get their signed-in provider's first model until
+  they choose one.
 - `language_pack` is a plugin name from the Hermes plugin catalog, e.g. `hermes-lang-cs`. Each
   person's Hermes installs it at the commit its catalog pins, at `instance add` and with every
   update. A new `language_pack` reaches existing people with the next Hermes update.
@@ -294,13 +311,16 @@ system accounts too) or of an existing Incus container.
    routed network interface (`hm-<port>` on the host), the read-only policy and the Webapp
    proxy, and starts it;
 3. installs the system packages (Chromium's libraries, the Bot Screen desktop, build tools,
-   `sudo`, `unattended-upgrades`);
-4. creates the account `alice` in the container, with passwordless `sudo`;
+   Docker, `sudo`, `unattended-upgrades`);
+4. creates the account `alice` in the container, with passwordless `sudo` and in the `docker`
+   group;
 5. installs Hermes with the official installer at the release everyone runs, builds the
-   Webapp and installs the language pack;
+   Webapp, installs Claude Code, and installs and turns on the language pack and the built-in
+   plugins;
 6. mounts the model-guard plugin read-only into the person's Hermes;
 7. configures the Webapp on `127.0.0.1:<port>` in the container with its public address and
-   a generated password, and sets the UI language and look;
+   a generated password, and sets the UI language and look (and, without the model lock, the
+   provider, model and reasoning effort the person starts with);
 8. publishes the Webapp;
 9. starts the gateway and checks that it answers.
 
@@ -322,6 +342,27 @@ own* account and enters the code within about 15 minutes. The tokens stay in the
 Run `instance login` before the hand-over. Without it, the Webapp's first screen invites the
 person to connect other providers. Then give the person the address, username and password. With LAN
 access, their PC also needs the office certificate.
+
+A person who uses their own Claude Pro or Max subscription signs in with:
+
+```sh
+thinny instance login alice --claude
+```
+
+It prints a link. The person opens it, signs in to *their own* Claude account and gives you the
+code they get, which you paste. The login stays in their container (`~/.claude`). Then they choose
+*Claude Subscription DirectSDK (Experimental)* in the Webapp's model picker, which the model
+lock allows only when `model_provider = "claude-subscription-directsdk-experimental"`. Every turn
+counts against their subscription.
+
+### Phone (hermes-3310)
+
+Every person has the [hermes-3310](https://github.com/melounvitek/hermes-3310) plugin and Docker,
+so they can call their Hermes over a phone line. It stays idle until it is set up with the person's
+own SIP account: the PIN, the allowed callers and the SIP account on the Webapp's Messaging →
+Hermes 3310 card, then `~/.hermes/plugins/hermes-3310/install-asterisk.sh` in the Webapp terminal
+and a gateway restart. The plugin's README has the details. Calls through a container are not
+tested yet: Asterisk reaches the SIP provider through the server's NAT and thinny's firewall.
 
 ### Other commands
 
@@ -429,14 +470,16 @@ ssh -L <port>:127.0.0.1:<port> root@<server>
    younger than `min_release_age_hours` (`waiting`).
 3. With `auto_update = false`, it only reports the release (`available`).
 4. Otherwise it updates the people one container at a time. For each person, it:
-   1. installs the container's system packages (a new Hermes may need some the list gained);
+   1. installs the container's system packages (a new Hermes may need some the list gained)
+      and the groups the built-ins need;
    2. runs the official installer with `--commit <release commit>` as the person, which
       moves their Hermes to exactly that release while their gateway keeps running;
-   3. rebuilds the Webapp, reinstalls the language pack and removes old Python environments
-      (`hermes pm gc`, which keeps the previous one);
-   4. restarts the gateway and checks that it is active, the Webapp answers and model-guard is
-      enabled. **It stops at the first failure.** People not yet updated keep running the old
-      release.
+   3. rebuilds the Webapp, installs Claude Code if it is missing, reinstalls the language pack
+      and the built-in plugins and removes old Python environments (`hermes pm gc`, which keeps
+      the previous one);
+   4. restarts the gateway and checks that it is active, the Webapp answers and, with the model
+      lock, model-guard is enabled. **It stops at the first failure.** People not yet updated
+      keep running the old release.
 
    When everyone runs the new release, it records it in `/var/lib/thinny/release`.
    From then on, new people get it.
@@ -458,6 +501,16 @@ thinny update --scheduled --dry-run  # the same for the nightly run
 
 - **Log:** `/var/log/thinny.log` (all commands), and for the nightly run also
   `journalctl -u thinny-update.service`.
+- **New built-ins** come with thinny updates: a new pin of the phone plugin, another built-in
+  plugin or a changed container package list. The next run gives them to everyone at the
+  release they run, even without a new Hermes release (`ok`, `new built-ins at <tag>`), one
+  person at a time as above, and turns the plugins on again. With `auto_update = false` it only
+  reports them (`available`). A plain Hermes update leaves the plugins people turned off alone.
+  People added before Docker was built in can use it from their Webapp terminal once their
+  container restarts.
+- **Claude Code** is updated for everyone on every run (`claude update`), whatever happens to
+  Hermes: the Claude subscription plugin turns its own updates off, and newer Claude models need
+  newer versions. A failure is only logged.
 - **OS updates inside the containers** come from `unattended-upgrades`, installed with
   Debian's defaults. The container's package list follows the official Hermes image's
   Dockerfile and is installed at `instance add` and before each Hermes update.
@@ -513,9 +566,12 @@ them from monitoring.
     forward-chain lines from [Requirements](#requirements);
   - the gateway is active, the Webapp answers and the public address is as expected;
   - Hermes is at the release everyone runs (`WARN`);
+  - Claude Code and the built-in plugins are installed (`WARN`). Whether a plugin is on is the
+    person's choice without the model lock;
   - no bypass of the policy in the person's files: `HERMES_MANAGED_DIR`,
     `HERMES_BUNDLED_PLUGINS` or `HERMES_ENABLE_PROJECT_PLUGINS` in `.env` or the gateway unit,
-    their own `model-guard` plugin, or a gateway unit that starts something else.
+    their own `model-guard` plugin (with the model lock), or a gateway unit that starts
+    something else.
 
 ## Files on the server
 
@@ -526,7 +582,7 @@ them from monitoring.
 | `/etc/systemd/system/incus.service.d/thinny.conf` | loads that table before Incus starts |
 | `/etc/systemd/system/thinny-update.*` | the nightly update service and timer |
 | `/etc/sysctl.d/90-thinny.conf` | IPv4 forwarding for the containers |
-| `/var/lib/thinny/people.json` | the people registry: name, port, access, URL, container address, state |
+| `/var/lib/thinny/people.json` | the people registry: name, port, access, URL, container address, state, built-ins |
 | `/var/lib/thinny/release` | the Hermes release everyone runs (tag and commit) |
 | `/var/lib/thinny/update-status.json` | the last nightly update result |
 | `/var/log/thinny.log` | the log |
@@ -534,7 +590,8 @@ them from monitoring.
 | `/usr/local/lib/thinny/`, `/usr/local/sbin/thinny` | the tool; its `files/model-guard` is mounted read-only into every container |
 | `/var/lib/incus/` | Incus, with the storage pool `default` (a btrfs file) that holds the containers |
 | `/etc/caddy/Caddyfile` | the LAN sites (generated, when used) |
-| container `<name>`: `/home/<name>/.hermes/` | a person's Hermes: code, chats, settings, Webapp sign-in, provider login |
+| container `<name>`: `/home/<name>/.hermes/` | a person's Hermes: code, chats, settings, Webapp sign-in, provider login, plugins |
+| container `<name>`: `/home/<name>/.local/bin/claude`, `~/.claude/` | a person's Claude Code and Claude login |
 
 Generated files are rewritten by `config apply`, so do not edit them by hand.
 
