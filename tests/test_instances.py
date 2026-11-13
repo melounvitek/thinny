@@ -210,6 +210,25 @@ def test_a_new_instance_gets_its_own_container_with_hermes(incus):
         < incus.index("incus config device add alice model-guard")
 
 
+@pytest.mark.parametrize("url", ["office.example.org", "https://office.example.org/a/b/",
+                                 "https://office.example.org/?a=1"])
+def test_an_address_is_a_host_or_a_host_and_one_path(incus, url):
+    with pytest.raises(CommandError, match="https://office.example.org/accounting/"):
+        instances.add(S, Registry(), "alice", "url", url)
+    assert not incus.calls
+
+
+def test_a_host_has_one_instance_on_its_root_or_one_per_path(incus):
+    reg = Registry()
+    instances.add(S, reg, "accounting", "url", "https://office.example.org/accounting/")
+    instances.add(S, reg, "lawyers", "url", "https://office.example.org/lawyers")
+    for url in ("https://office.example.org/", "https://office.example.org/accounting"):
+        with pytest.raises(CommandError, match="accounting already uses https://office.example.org/accounting/"):
+            instances.add(S, reg, "alice", "url", url)
+    instances.change_access(S, reg, "accounting", "url", "https://office.example.org/accounting")
+    assert reg.get("accounting").url == "https://office.example.org/accounting"
+
+
 def test_an_instance_can_get_its_own_limits_instead_of_the_sites(incus):
     reg = Registry()
     instances.add(S, reg, "alice", "local", cpu=4, memory_mb=8192, disk_gb=50)

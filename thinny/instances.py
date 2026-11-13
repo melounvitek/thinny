@@ -7,9 +7,11 @@ import base64
 import hashlib
 import json
 import math
+import re
 import secrets
 import time
 from pathlib import PurePosixPath
+from urllib.parse import urlsplit
 
 from . import host, render
 from .registry import Instance, Registry, RegistryError
@@ -21,6 +23,7 @@ AUTH_PREFIX = "HERMES_DASHBOARD_BASIC_AUTH_"
 RESTART_TIMEOUT = 45 * 60  # a restart waits for a running reply (up to 30 min by default)
 RESTART_PENDING = STATE_DIR / "restart-pending"
 IMAGE = "images:debian/13"
+URL_RE = re.compile(r"https?://[a-z0-9.-]+(:\d+)?(/[a-z0-9-]+)?/?")
 CLAUDE_INSTALLER = "https://claude.ai/install.sh"
 
 
@@ -314,8 +317,8 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     access = access or s.access_default
     if access not in ACCESS_METHODS:
         raise CommandError(f"access must be one of {', '.join(ACCESS_METHODS)}")
-    if access == "url" and not url.startswith(("https://", "http://")):
-        raise CommandError("url access needs the address, e.g. url=https://alice.example.org/")
+    if access == "url":
+        check_url(reg, name, url)
     if access == "lan" and not s.lan_address:
         raise CommandError("set access.lan_address in site.toml first")
     if name in reg.instances:
@@ -361,7 +364,7 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     print(f"\n{name} is ready.\n  Webapp:   {inst.url}\n  Username: {name}")
     print(f"  Password: {password}   (shown once; reset with: thinny instance reset-password {name})" if password
           else "  Password: unchanged (reset with: thinny instance reset-password " + name + ")")
-    _print_access_hint(inst)
+    _print_access_hint(s, inst)
     print(f"Next: sign {name} in to {s.model_provider} before handing over: thinny instance login {name}")
 
 
@@ -370,8 +373,27 @@ def starting_model(s: Settings) -> dict[str, str]:
     return {"model.provider": s.model_provider, "model.default": s.model, "agent.reasoning_effort": s.reasoning_effort}
 
 
-def _print_access_hint(inst: Instance) -> None:
-    if inst.access == "url":
+def check_url(reg: Registry, name: str, url: str) -> None:
+    """An address no other instance uses: a host for one instance, or a host and one path each for
+    several (with a tunnel port, Caddy routes by both)."""
+    if not URL_RE.fullmatch(url):
+        raise CommandError("url access needs an address like https://alice.example.org/ or "
+                           "https://office.example.org/accounting/")
+    parts = urlsplit(url)
+    path = parts.path.strip("/")
+    for other in reg.current():
+        other_parts = urlsplit(other.url)
+        other_path = other_parts.path.strip("/")
+        if other.name != name and other.access == "url" and other_parts.hostname == parts.hostname \
+                and (not path or not other_path or path == other_path):
+            raise CommandError(f"{other.name} already uses {other.url}; a host has one instance on its root "
+                               "or one on each path")
+
+
+def _print_access_hint(s: Settings, inst: Instance) -> None:
+    if inst.access == "url" and s.tunnel_port:
+        print(f"  Caddy serves it to your tunnel at http://127.0.0.1:{s.tunnel_port} (see README, Access).")
+    elif inst.access == "url":
         print(f"  Point your proxy or tunnel at http://127.0.0.1:{inst.port} (see README, Access).")
     elif inst.access == "local":
         print(f"  Open with: ssh -L {inst.port}:127.0.0.1:{inst.port} root@<server>, then browse to {inst.url}")
@@ -383,8 +405,8 @@ def change_access(s: Settings, reg: Registry, name: str, access: str, url: str =
     inst = _active(reg, name)
     if access not in ACCESS_METHODS:
         raise CommandError(f"access must be one of {', '.join(ACCESS_METHODS)}")
-    if access == "url" and not url.startswith(("https://", "http://")):
-        raise CommandError("url access needs the address, e.g. url=https://alice.example.org/")
+    if access == "url":
+        check_url(reg, name, url)
     inst.access, inst.url = access, url if access == "url" else ""
     inst.url = url_for(s, inst)
     reg.save()
@@ -392,7 +414,7 @@ def change_access(s: Settings, reg: Registry, name: str, access: str, url: str =
     host.reconcile_access(s, reg)
     start_or_restart_gateway(s, inst)
     print(f"{name}: {inst.url}")
-    _print_access_hint(inst)
+    _print_access_hint(s, inst)
 
 
 def limits(reg: Registry, name: str, cpu: int | None, memory_mb: int | None, disk_gb: int | None) -> None:

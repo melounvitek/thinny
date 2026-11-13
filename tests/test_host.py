@@ -1,9 +1,11 @@
+import dataclasses
 import json
 import subprocess
 
 import pytest
 
 from thinny import host, render, system
+from thinny.registry import Instance, Registry
 from thinny.settings import Settings
 
 S = Settings(model="m1", allowed_models=("m1",), access_default="local", network_interface="ens3",
@@ -56,6 +58,19 @@ def test_the_firewall_is_checked_then_loaded(commands):
     path = host.FIREWALL_FILE
     assert 'oifname "ens3" ip saddr 10.78.0.0/24 masquerade' in path.read_text()
     assert [c for c, _ in calls] == [f"nft -c -f {path}", f"nft -f {path}"]
+
+
+def test_url_instances_reach_caddy_only_with_the_tunnel_port(commands, tmp_path, monkeypatch):
+    calls, _ = commands
+    monkeypatch.setattr(host, "CADDYFILE", tmp_path / "Caddyfile")
+    monkeypatch.setattr(host, "tailscale_status", lambda: None)
+    monkeypatch.setattr(host.shutil, "which", lambda name: f"/usr/bin/{name}")
+    reg = Registry({"jirka": Instance("jirka", 9121, "url", url="https://jirka.example.org/", state="active")})
+    host.reconcile_access(S, reg)
+    assert not host.CADDYFILE.exists()
+    host.reconcile_access(dataclasses.replace(S, tunnel_port=8080), reg)
+    assert "http://jirka.example.org:8080 {" in host.CADDYFILE.read_text()
+    assert "systemctl restart caddy" in [c for c, _ in calls]
 
 
 def test_units_and_forwarding(commands):

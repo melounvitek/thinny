@@ -124,15 +124,16 @@ def firewall(s: Settings) -> None:
 
 
 def reconcile_access(s: Settings, reg: Registry) -> None:
-    """Caddy sites for LAN instances, `tailscale serve` for Tailscale instances; nothing else
-    published in the Webapp port range."""
+    """Caddy sites for LAN instances and, with a tunnel port, url instances; `tailscale serve` for
+    Tailscale instances; nothing else published in the Webapp port range."""
     lan = [inst.port for inst in reg.current() if inst.access == "lan"]
-    if lan or CADDYFILE.exists() and "thinny" in CADDYFILE.read_text():
-        if lan and not shutil.which("caddy"):
-            log("installing Caddy for office-network access")
+    tunnel = [(inst.url, inst.port) for inst in reg.current() if inst.access == "url"] if s.tunnel_port else []
+    if lan or tunnel or CADDYFILE.exists() and "thinny" in CADDYFILE.read_text():
+        if (lan or tunnel) and not shutil.which("caddy"):
+            log("installing Caddy")
             run(["apt-get", "install", "-y", "-q", "caddy"], env={"DEBIAN_FRONTEND": "noninteractive",
                                                                 "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}, timeout=900)
-        if write_file(CADDYFILE, render.caddyfile(s, lan)):
+        if write_file(CADDYFILE, render.caddyfile(s, lan, tunnel)):
             run(["caddy", "validate", "--config", str(CADDYFILE), "--adapter", "caddyfile"], check=False)
             run(["systemctl", "restart", "caddy"])  # no admin API, so no reload
 
