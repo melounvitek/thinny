@@ -11,7 +11,8 @@ VALID = '[policy]\nmodel = "m1"\nallowed_models = ["m1"]\n\n[access]\nlan_addres
 
 @pytest.fixture
 def server(tmp_path, monkeypatch):
-    """A root run against site.toml in tmp_path; records the applies and updates it starts."""
+    """A root run against site.toml in tmp_path; records the applies and updates it starts. thinny
+    itself has nothing new."""
     site = tmp_path / "site.toml"
     site.write_text(VALID)
     monkeypatch.setattr(settings, "SITE_TOML", site)
@@ -22,6 +23,7 @@ def server(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(apply, "apply", lambda s: calls.append(("apply", s.model)))
     monkeypatch.setattr(update, "run", lambda s, reg, **kw: calls.append(("update", kw)) or 0)
+    monkeypatch.setattr(update, "update_thinny", lambda: calls.append("thinny") or False)
     return site, calls
 
 
@@ -38,14 +40,43 @@ def editor(monkeypatch, *texts, code=0):
     return started
 
 
-@pytest.mark.parametrize("args, kw", [([], {"dry_run": False, "now": True}),
-                                      (["--dry-run"], {"dry_run": True, "now": True}),
-                                      (["--scheduled"], {"dry_run": False, "now": False})])
-def test_a_manual_update_runs_now_and_only_the_timer_waits(server, args, kw):
-    _, calls = server
+@pytest.mark.parametrize("args, auto_update, kw, thinny", [
+    ([], "false", {"dry_run": False, "now": True}, True),
+    (["--dry-run"], "true", {"dry_run": True, "now": True}, False),
+    (["--scheduled"], "true", {"dry_run": False, "now": False}, True),
+    (["--scheduled"], "false", {"dry_run": False, "now": False}, False),
+])
+def test_a_manual_update_runs_now_and_only_the_timer_waits(server, args, auto_update, kw, thinny):
+    site, calls = server
+    site.write_text(VALID + f"\n[hermes]\nauto_update = {auto_update}\n")
     assert cli.main(["update", *args]) == 0
-    assert calls == [("update", kw)]
+    assert calls == ["thinny"] * thinny + [("update", kw)]
     assert "thinny update --scheduled\n" in render.UPDATE_SERVICE
+
+
+@pytest.mark.parametrize("args", [[], ["--scheduled"]])
+def test_after_installing_a_new_thinny_the_update_goes_on_with_it(server, monkeypatch, args):
+    _, calls = server
+    monkeypatch.setattr(update, "update_thinny", lambda: True)
+
+    def execv(path, argv):
+        calls.append(("exec", path, argv))
+        raise SystemExit(0)
+    monkeypatch.setattr(cli.os, "execv", execv)
+    with pytest.raises(SystemExit):
+        cli.main(["update", *args])
+    assert calls == [("exec", "/usr/local/sbin/thinny", ["/usr/local/sbin/thinny", "update", *args])]
+
+
+def test_a_failed_thinny_update_stops_the_update(server, monkeypatch, capsys):
+    _, calls = server
+
+    def broken():
+        raise system.CommandError("git pull -> exit 1")
+    monkeypatch.setattr(update, "update_thinny", broken)
+    assert cli.main(["update"]) == 1
+    assert calls == []
+    assert "git pull -> exit 1" in capsys.readouterr().err
 
 
 def test_instance_add_takes_the_limits_of_the_new_instance(server, monkeypatch):

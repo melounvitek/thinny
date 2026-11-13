@@ -220,7 +220,7 @@ net.ipv4.ip_forward = 1
 
 UPDATE_SERVICE = f"""# {HEADER}
 [Unit]
-Description=thinny nightly Hermes update
+Description=thinny nightly update
 Wants=network-online.target
 After=network-online.target
 
@@ -235,7 +235,7 @@ Nice=10
 def update_timer(s: Settings) -> str:
     return f"""# {HEADER}
 [Unit]
-Description=thinny nightly Hermes update
+Description=thinny nightly update
 
 [Timer]
 OnCalendar=*-*-* {s.update_time}:00

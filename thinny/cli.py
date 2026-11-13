@@ -16,6 +16,8 @@ from .registry import Registry, RegistryError
 from .settings import SettingsError, load
 from .system import CommandError, lock, write_file
 
+THINNY = "/usr/local/sbin/thinny"
+
 
 def parse_access(value: str) -> tuple[str, str]:
     method, _, url = value.partition("=")
@@ -34,10 +36,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("setup", help="set up the server, then apply site.toml")
     sub.add_parser("status", help="quick look: release, last update, containers, gateways")
     sub.add_parser("doctor", help="every isolation and health check, with fixes")
-    upd = sub.add_parser("update", help="update every instance's Hermes now")
+    upd = sub.add_parser("update", help="update thinny, then every instance's Hermes, now")
     upd.add_argument("--dry-run", action="store_true", help="only report what would happen")
     upd.add_argument("--scheduled", action="store_true",
-                     help="as the nightly timer: wait for min_release_age_hours, respect auto_update")
+                     help="as the nightly timer: respect auto_update, wait for min_release_age_hours")
     cfg = sub.add_parser("config", help="the site settings, /etc/thinny/site.toml")
     cfg = cfg.add_subparsers(dest="action", required=True, metavar="action")
     cfg.add_parser("edit", help="edit site.toml in $VISUAL or $EDITOR, check it, then apply it")
@@ -87,6 +89,9 @@ def main(argv: list[str] | None = None) -> int:
         if command == "instance list":
             instances.list_instances(Registry.load())
             return 0
+        # Before the lock: the install.sh of a new thinny runs `thinny setup`.
+        if command == "update" and not a.dry_run and (s.auto_update or not a.scheduled) and update.update_thinny():
+            os.execv(THINNY, [THINNY, "update", *(["--scheduled"] if a.scheduled else [])])  # on with the new code
         with lock():
             reg = Registry.load()
             if command == "setup":

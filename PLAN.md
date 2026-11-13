@@ -452,8 +452,9 @@ Tailscale socket are no longer needed: the host has no instance accounts.
 ### 6.4 `install.sh`
 
 Idempotent; a rerun repairs and never destroys data or updates Hermes: packages
-(`incus-base`, or `incus` on Ubuntu 24.04, `btrfs-progs`, `nftables`, `curl`, `python3`;
-Caddy later when LAN access needs it), the tool, `site.toml` from the example on the first run, then `thinny setup`:
+(`incus-base`, or `incus` on Ubuntu 24.04, `btrfs-progs`, `nftables`, `curl`, `git`, `python3`;
+Caddy later when LAN access needs it), the tool and the path of the clone it ran from,
+`site.toml` from the example on the first run, then `thinny setup` and the commit it set up:
 the storage pool once (80% of the free space under `/var/lib`; no Incus network), then
 `config apply`: firewall first, units, sysctl, profile, `/etc/hermes`, Webapp settings, access,
 remembered restarts. No Hermes on the host.
@@ -508,6 +509,11 @@ private ones and the tailnet are always blocked). `site.example.toml` lists ever
 
 ### 6.8 Nightly update
 
+- thinny first: `git pull --ff-only` in the clone `install.sh` ran from, never prompting for a
+  password. When its commit is not the one `install.sh` last set up, `install.sh` runs (outside
+  the lock: it runs `thinny setup`), then the run starts over in the new code. A failure ends the
+  run as FAILED; a commit pulled but not set up is set up by the next run. `auto_update = false`
+  leaves thinny as it is, `--dry-run` does not touch it.
 - The latest stable release once it is `min_release_age_hours` old; `auto_update = false`
   only reports it.
 - Exact target: the tag's commit from the GitHub API. `hermes update` cannot pin one, so for

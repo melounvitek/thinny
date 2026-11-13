@@ -10,6 +10,8 @@ SITE=/etc/thinny/site.toml
 SRC=$(cd "$(dirname "$0")" && pwd)
 
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
+# thinny update pulls the clone and runs it as root, and git refuses a clone of another user.
+[ "$(stat -c %u "$SRC")" = 0 ] || { echo "$SRC must belong to root" >&2; exit 1; }
 . /etc/os-release
 case "${ID:-} ${VERSION_ID:-}" in
 "debian 13" | "ubuntu 24.04" | "ubuntu 26.04") ;;
@@ -22,7 +24,7 @@ INCUS=incus-base
 apt-cache show incus-base >/dev/null 2>&1 || INCUS=incus
 # NEEDRESTART_SUSPEND: Ubuntu's needrestart would list the services to restart after the install.
 DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y -q \
-	"$INCUS" btrfs-progs nftables curl python3 >/dev/null
+	"$INCUS" btrfs-progs nftables curl git python3 >/dev/null
 
 echo "Installing thinny into $LIB"
 mkdir -p "$LIB"
@@ -35,13 +37,16 @@ cp -r "$SRC/files/." "$LIB/files/"
 find "$LIB" -name __pycache__ -prune -exec rm -rf {} +
 chmod 755 "$LIB/bin/thinny"
 ln -sfn "$LIB/bin/thinny" /usr/local/sbin/thinny
+echo "$SRC" >"$LIB/source" # thinny update pulls this clone
 
 if [ ! -f "$SITE" ]; then
 	install -d -m 755 /etc/thinny
 	install -m 644 "$SRC/site.example.toml" "$SITE"
 	echo
-	echo "Edit $SITE (model, LAN address, ...), then run this script again."
+	echo "Edit $SITE (model, LAN address, ...), then run: sh $SRC/install.sh"
 	exit 0
 fi
 
-exec /usr/local/sbin/thinny setup
+/usr/local/sbin/thinny setup
+# The commit set up: thinny update installs only a newer one.
+git -C "$SRC" rev-parse HEAD >"$LIB/commit"

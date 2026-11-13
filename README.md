@@ -120,7 +120,7 @@ at least `policy.model` (with the model lock also `policy.allowed_models`), `net
 and `access.lan_address` (or `""` and another `access.default` without LAN access). Then run `sh install.sh` again to set
 up Incus, the firewall and the update timer.
 
-Rerunning `install.sh` is safe. To update thinny: `cd /root/thinny && git pull && sh install.sh`.
+Rerunning `install.sh` is safe. `thinny update` updates thinny itself too (see [Updates](#updates)).
 A changed model guard loads at each gateway's next restart (`thinny instance restart`).
 
 ## Settings
@@ -189,14 +189,20 @@ scp root@<server>:/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.c
 
 ## Updates
 
-Every night at `hermes.update_time`, thinny installs the latest stable Hermes release once it
-is `min_release_age_hours` old (with `auto_update = false` it only reports it). It updates one
-instance at a time and stops at the first failure; the next run finishes the job. The result is
+Every night at `hermes.update_time`, thinny first updates itself: it pulls the clone it was
+installed from (`git pull --ff-only`) and, on a new commit, runs its `install.sh`, which also
+applies `site.toml`. If that fails, the run stops there. A private clone needs read access
+without a password, such as a deploy key.
+
+Then it installs the latest stable Hermes release once it is `min_release_age_hours` old. It
+updates one instance at a time and stops at the first failure; the next run finishes the job.
+With `auto_update = false` the nightly run leaves thinny as it is and only reports a new Hermes
+release. The result is
 in `/var/lib/thinny/update-status.json`, the log in `/var/log/thinny.log`. Nightly runs
-also deliver new built-ins unless `auto_update = false`. Every non-dry run updates Claude Code.
+also deliver new built-ins unless `auto_update = false`. Every non-dry run that gets past the thinny update updates Claude Code.
 
 ```sh
-thinny update             # update now, ignoring the minimum age and auto_update
+thinny update             # thinny and Hermes now, ignoring the minimum age and auto_update
 thinny update --dry-run   # only report what it would do
 ```
 

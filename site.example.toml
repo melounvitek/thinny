@@ -2,7 +2,7 @@
 # Edit with: thinny config edit (or edit it directly, then run: thinny config apply)
 
 [hermes]
-auto_update = true              # false: the nightly job only checks and reports a new release
+auto_update = true              # false: the nightly job leaves thinny as it is and only reports a new release
 update_time = "03:00"           # nightly update (schedule the OS reboot window after it)
 min_release_age_hours = 48      # install a stable release only once it is this old
 
