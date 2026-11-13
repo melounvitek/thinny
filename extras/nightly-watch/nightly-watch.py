@@ -21,7 +21,7 @@ KINDS = {
     "hermes-update": {
         "file": "/var/lib/thinny/update-status.json",
         "healthy": ["ok", "up-to-date", "waiting", "available"],
-        "hint": "ssh {host} journalctl -u thinny-update -n 40",
+        "hint": "ssh {host} tail -40 /var/log/thinny.log",
     },
     "netcup-snapshot": {  # "file" is required in the job: <data dir>/status.json
         "healthy": ["ok"],
