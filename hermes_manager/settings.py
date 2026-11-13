@@ -134,7 +134,7 @@ def _validate(s: Settings, source: str) -> None:
     if s.model not in s.allowed_models:
         fail("policy.model must be one of policy.allowed_models")
     if s.approvals not in ("manual", "smart"):
-        fail("policy.approvals must be manual or smart (off runs computer_use on the host)")
+        fail("policy.approvals must be manual or smart (off runs every command and computer_use unasked)")
     if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", s.update_time):
         fail("hermes.update_time must be HH:MM")
     if len(s.port_range) != 2 or not 1024 <= s.port_range[0] < s.port_range[1] <= 65535:

@@ -113,10 +113,6 @@ def install_hermes(s: Settings, name: str, commit: str) -> None:
     hermes(name, ["pm", "gc"], check=False, timeout=600)
 
 
-def hermes_installed(name: str) -> bool:
-    return as_user(name, ["test", "-d", str(home(name) / "hermes-agent/.git")], check=False).returncode == 0
-
-
 def installed_commit(name: str) -> str:
     """The commit of the person's Hermes, as their container reports it."""
     return as_user(name, ["git", "-C", str(home(name) / "hermes-agent"), "rev-parse", "HEAD"],
@@ -291,10 +287,9 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     ensure_container(p)
     ensure_packages(name)
     ensure_account(name)
-    if not hermes_installed(name):
-        tag, commit = host.release()
-        log(f"{name}: Hermes {tag} (takes a few minutes)")
-        install_hermes(s, name, commit)
+    tag, commit = host.release() or host.first_release()
+    log(f"{name}: Hermes {tag} (takes a few minutes)")
+    install_hermes(s, name, commit)  # a resumed add repeats it: it may have stopped halfway
     ensure_model_guard(name)
     p.url = url_for(s, p)
     reg.save()

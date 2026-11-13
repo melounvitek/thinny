@@ -43,14 +43,20 @@ def commit_of(tag: str) -> str:
     return _github(f"/commits/{tag}")["sha"]
 
 
-def release() -> tuple[str, str]:
-    """(tag, commit) of the Hermes release everyone runs and new people get. The updates record it;
-    before the first person it becomes the latest stable release."""
+def release() -> tuple[str, str] | None:
+    """(tag, commit) of the Hermes release everyone runs and new people get; None before the first
+    person."""
     if not RELEASE_FILE.exists():
-        tag, _ = latest_release()
-        write_release(tag, commit_of(tag))
+        return None
     tag, commit = RELEASE_FILE.read_text().split()
     return tag, commit
+
+
+def first_release() -> tuple[str, str]:
+    """The latest stable release becomes the one everyone runs."""
+    tag, _ = latest_release()
+    write_release(tag, commit_of(tag))
+    return release()
 
 
 def write_release(tag: str, commit: str) -> None:

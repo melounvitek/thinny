@@ -55,6 +55,7 @@ def server(tmp_path, monkeypatch):
     monkeypatch.setattr(host, "write_release", lambda tag, commit: setattr(srv, "release", (tag, commit)))
     monkeypatch.setattr(people, "installed_commit", lambda name: srv.commits[name])
     monkeypatch.setattr(people, "install_hermes", srv.install_hermes)
+    monkeypatch.setattr(people, "ensure_packages", lambda name: srv.calls.append(f"packages {name}"))
     monkeypatch.setattr(people, "_gateway_up", srv.restart)
     return srv
 
@@ -92,9 +93,16 @@ def test_everyone_moves_to_the_exact_release_one_at_a_time(server):
     assert update.run(S, registry()) == 0
     assert server.status()["detail"] == "updated to v2; the OS needs a reboot"
     # each person is restarted before the next one is touched; pending people are left alone
-    assert server.calls == ["install alice c2", "restart alice", "install bob c2", "restart bob"]
+    assert server.calls == ["packages alice", "install alice c2", "restart alice",
+                            "packages bob", "install bob c2", "restart bob"]
     assert server.release == ("v2", "c2")
     assert not (server.tmp / "update-unfinished").exists()
+
+
+def test_nothing_to_update_before_the_first_person(server):
+    server.release = None
+    assert update.run(S, Registry()) == 0
+    assert server.status()["detail"] == "nobody has Hermes yet"
 
 
 def test_an_interrupted_update_is_finished_without_github(server, monkeypatch):
@@ -111,7 +119,7 @@ def test_an_interrupted_update_is_finished_without_github(server, monkeypatch):
     server.calls.clear()
     assert update.run(dataclasses.replace(S, auto_update=False), registry()) == 0
     assert server.status()["detail"] == "finished the interrupted update to v2"
-    assert server.calls == ["install bob c2", "restart bob"]   # alice is done already
+    assert server.calls == ["packages bob", "install bob c2", "restart bob"]   # alice is done already
     assert server.release == ("v2", "c2")
 
 
@@ -124,4 +132,5 @@ def test_a_failed_restart_is_owed_to_the_next_run(server, monkeypatch):
 
     monkeypatch.setattr(people, "_gateway_up", server.restart)
     assert update.run(S, registry()) == 0
-    assert server.calls == ["install alice c2", "install bob c2", "restart alice", "restart bob"]
+    assert [c for c in server.calls if not c.startswith("packages")] == [
+        "install alice c2", "install bob c2", "restart alice", "restart bob"]

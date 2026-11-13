@@ -50,9 +50,11 @@ def run(s: Settings, reg: Registry, *, check: bool = False, now: bool = False) -
 def due(s: Settings, *, check: bool, now: bool) -> tuple[str, str, str]:
     """(result, detail, tag) for the latest stable release: up-to-date, waiting, available or due."""
     tag, published = host.latest_release()
-    running, _ = host.release()
+    running = (host.release() or ("nothing",))[0]
     age = (dt.datetime.now(dt.UTC) - published).total_seconds() / 3600
     log(f"running: {running}; latest stable: {tag}, out {age:.0f} h")
+    if running == "nothing":
+        return "up-to-date", "nobody has Hermes yet", tag
     if tag == running:
         return "up-to-date", tag, tag
     if age < s.min_release_age_hours and not now:
@@ -71,6 +73,7 @@ def rollout(s: Settings, reg: Registry, tag: str, commit: str) -> None:
             continue
         log(f"{p.name}: Hermes {tag}")
         people.mark_restart([p.name])  # first: a failure on the way still owes the restart
+        people.ensure_packages(p.name)  # a new Hermes may need packages the list gained since
         people.install_hermes(s, p.name, commit)
         people.restart_all([p], reg)  # with the restarts an interrupted run still owes
     people.restart_all([], reg)

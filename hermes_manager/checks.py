@@ -91,11 +91,16 @@ def prerequisites(s: Settings, reg: Registry):
                else warn("SSH accepts passwords", "set PasswordAuthentication no and KbdInteractiveAuthentication no "
                          "in /etc/ssh/sshd_config.d/, then systemctl reload ssh"))
 
-    ruleset = system.run(["nft", "list", "ruleset"], check=False).stdout
+    ruleset = system.run(["nft", "list", "ruleset"], check=False).stdout.splitlines()
     yield (ok("an input firewall drops unexpected connections")
-           if any("hook input" in line and "policy drop" in line for line in ruleset.splitlines())
+           if any("hook input" in line and "policy drop" in line for line in ruleset)
            else warn("no input firewall with policy drop: every listening port is open to the network",
                      "set up an input firewall that drops by default and allows SSH (nftables or ufw)"))
+    # hermes-manager turns IPv4 forwarding on for the containers.
+    yield (ok("a forward firewall drops unexpected traffic")
+           if any("hook forward" in line and "policy drop" in line for line in ruleset)
+           else warn("no forward firewall with policy drop: with forwarding on, the server routes between its "
+                     "networks", "set up a forward chain that drops by default; " + FORWARD_FIX))
 
     yield from unattended_upgrades(system.run(["apt-config", "dump"], check=False).stdout, s.update_time)
 
@@ -117,7 +122,8 @@ def unattended_upgrades(apt_dump: str, update_time: str):
 
 def firewall(s: Settings, reg: Registry):
     fix = "hermes-manager apply"
-    if system.run(["nft", "list", "table", "inet", "hermes_manager"], check=False).returncode != 0:
+    table = system.run(["nft", "list", "table", "inet", "hermes_manager"], check=False)
+    if table.returncode != 0 or f'oifname "{s.network_interface}" ip saddr' not in table.stdout:
         yield fail("firewall table inet hermes_manager not loaded: containers can reach each other and the host", fix)
         return
     yield ok("firewall table inet hermes_manager loaded")
@@ -164,9 +170,10 @@ def webapp(p: Person):
 
 
 def version(p: Person):
-    tag, commit = host.release()
+    tag, commit = host.release() or ("none", "")
     yield (ok(f"{p.name}: Hermes {tag}") if people.installed_commit(p.name) == commit
-           else warn(f"{p.name}: Hermes is not at {tag}, the release everyone runs", "hermes-manager update --now"))
+           else warn(f"{p.name}: Hermes is not at {tag}, the release everyone runs (changed by them, or an "
+                     "update is unfinished); the next update puts it back"))
 
 
 def bypass(p: Person):
@@ -188,7 +195,7 @@ def bypasses(name: str, env_text: str, unit_text: str, own_guard: bool, gateway_
         found.append(warn(f"{name}: ~/.hermes/.env sets {', '.join(names)}", f"remove them, as {name}"))
     if own_guard:
         found.append(warn(f"{name}: ~/.hermes/plugins/model-guard replaces the server's model guard",
-                          f"runuser -l {name} -c 'rm -r ~/.hermes/plugins/model-guard'"))
+                          f"incus exec {name} -- rm -r /home/{name}/.hermes/plugins/model-guard"))
     names = [v for v in BYPASS_VARS if v in unit_text]
     if names:
         found.append(warn(f"{name}: their hermes-gateway.service sets {', '.join(names)}"))

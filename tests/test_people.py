@@ -181,7 +181,7 @@ def test_a_new_person_gets_their_own_container_with_hermes(incus):
         incus.calls[incus.index("incus config device add alice model-guard")]
 
 
-def test_an_interrupted_add_resumes_without_redoing_anything(incus):
+def test_an_interrupted_add_resumes_where_it_stopped(incus):
     reg = Registry()
     reg.add("alice", "local", (9120, 9199))
     incus.containers["alice"] = {"state": "STOPPED", "devices": {"eth0", "policy", "webapp", "model-guard"},
@@ -189,8 +189,9 @@ def test_an_interrupted_add_resumes_without_redoing_anything(incus):
     people.add(S, reg, "alice", "local")
     assert reg.get("alice").state == "active"
     assert not any(c.startswith(("incus init", "incus config device add")) for c in incus.calls)
-    assert not incus.ran("useradd") and not incus.ran("hermes-install.sh")
+    assert not incus.ran("useradd")
     assert incus.ran("incus start alice")
+    assert incus.ran("hermes webapp --build-only")   # the install may have stopped before it
 
 
 def test_an_unknown_container_with_the_name_is_left_alone(incus):
