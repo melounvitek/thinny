@@ -396,7 +396,7 @@ def _print_access_hint(s: Settings, inst: Instance) -> None:
     elif inst.access == "url":
         print(f"  Point your proxy or tunnel at http://127.0.0.1:{inst.port} (see README, Access).")
     elif inst.access == "local":
-        print(f"  Open with: ssh -L {inst.port}:127.0.0.1:{inst.port} root@<server>, then browse to {inst.url}")
+        print(f"  Open with: ssh -L {inst.port}:127.0.0.1:{inst.port} <you>@<server>, then browse to {inst.url}")
     elif inst.access == "lan":
         print(f"  Office PCs should trust Caddy's certificate: {host.OFFICE_CA} (see README).")
 

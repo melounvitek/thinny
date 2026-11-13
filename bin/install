@@ -1,5 +1,5 @@
 #!/bin/sh
-# One-line install, as root:
+# One-line install, as root (with sudo, end it with `| sudo bash`):
 #   bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/melounvitek/thinny/main/bin/install | bash'
 # Git, a clone of thinny in /usr/local/src/thinny (kept when there is one), then its install.sh.
 set -eu

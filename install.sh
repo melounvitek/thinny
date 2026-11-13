@@ -45,11 +45,11 @@ if [ ! -f "$SITE" ]; then
 	echo
 	# The one-line install pipes this script into bash, so the questions read the terminal itself.
 	if (exec </dev/tty) 2>/dev/null; then
-		/usr/local/sbin/thinny init </dev/tty || { echo "To try again: sh $SRC/install.sh" >&2; exit 1; }
+		/usr/local/sbin/thinny init </dev/tty || { echo "To try again: ${SUDO_USER:+sudo }sh $SRC/install.sh" >&2; exit 1; }
 		echo
 	else
 		install -m 644 "$SRC/site.example.toml" "$SITE"
-		echo "Edit $SITE (model, LAN address, ...), then run: sh $SRC/install.sh"
+		echo "Edit $SITE (model, LAN address, ...), then run: ${SUDO_USER:+sudo }sh $SRC/install.sh"
 		exit 0
 	fi
 fi
