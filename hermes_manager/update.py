@@ -12,7 +12,7 @@ from pathlib import Path
 from . import host, people
 from .registry import Registry
 from .settings import Settings
-from .system import STATE_DIR, CommandError, as_user, hermes_root, log, write_file
+from .system import STATE_DIR, CommandError, hermes_root, log, write_file
 
 STATUS_FILE = STATE_DIR / "update-status.json"
 # "<phase> <tag>" while an update runs: "code" until the shared install is at the tag, then
@@ -105,8 +105,6 @@ def rollout(s: Settings, reg: Registry) -> None:
         log(f"{p.name}: Hermes environment (hermes pm install --extra all)")
         people.hermes(p.name, ["pm", "install", "--extra", "all"], timeout=1800)
     people.restart_all(active, reg)
-    for p in active:
-        refresh_sandboxes(s, p.name)
     UNFINISHED.unlink(missing_ok=True)
 
 
@@ -121,39 +119,3 @@ def backup(s: Settings) -> Path:
     for old in sorted(BACKUP_DIR.glob("*.tgz"))[:-BACKUPS_KEPT]:
         old.unlink()
     return path
-
-
-def refresh_sandboxes(s: Settings, name: str) -> None:
-    """Pull the sandbox image (Hermes pulls only a missing one, so a floating tag never moves).
-    A new image replaces the person's sandboxes; otherwise running ones must still reach the
-    internet. Hermes recreates a removed sandbox on next use."""
-    def podman(*args: str) -> str:
-        return as_user(name, ["podman", *args], check=False, timeout=120).stdout.strip()
-
-    def sandboxes(*flags: str) -> list[str]:
-        return [n for n in podman("ps", *flags, "--format", "{{.Names}}").split() if n.startswith("hermes-")]
-
-    before = podman("image", "inspect", "--format", "{{.Id}}", s.sandbox_image)
-    log(f"{name}: pulling the sandbox image")
-    try:
-        as_user(name, ["podman", "pull", s.sandbox_image], timeout=1800)
-    except CommandError as e:
-        log(f"  ! {name}: sandbox image pull failed: {e}")
-    if podman("image", "inspect", "--format", "{{.Id}}", s.sandbox_image) != before:
-        remove = sandboxes("-a")
-        log(f"{name}: new sandbox image, removing {len(remove)} sandbox(es)")
-    else:
-        remove = []
-        for c in sandboxes():
-            code = podman("exec", c, "curl", "-s", "-o", "/dev/null", "-m", "8", "-w", "%{http_code}",
-                          "https://example.com/")
-            if code.startswith(("2", "3")):
-                log(f"  sandbox {name}/{c}: network ok")
-            else:
-                log(f"  ! sandbox {name}/{c}: no network (HTTP {code or '-'}), removing it")
-                remove.append(c)
-    for c in remove:
-        podman("rm", "-f", c)
-        # A container whose conmon died lands in "Exited (-1)" after the first rm; the second removes it.
-        podman("rm", "-f", "--ignore", c)
-    podman("image", "prune", "-f")  # the replaced image (~4 GB per person)

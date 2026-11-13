@@ -16,24 +16,23 @@ language = "en"                 # Hermes UI language (display.language) for new 
 language_pack = ""              # catalog plugin for that language, e.g. "hermes-lang-cs"
 model_guard_message = "Model {model} is not allowed on this server. Allowed: {allowed}."
 
-[sandbox]
-image = "docker.io/nousresearch/hermes-sandbox:desktop"
+[container]                     # limits of each person's container
 cpu = 2
 memory_mb = 4096
-disk_mb = 20480
+disk_gb = 30
 
 [webapp]
 port_range = [9120, 9199]       # one local port per person
 theme = "light"                 # light | dark, for new people
-text_scale = 100
+text_scale = 110                # chat text size in %
 interface = "simple"
 known_models = []               # other model ids the model picker should not announce as new
 
 [access]
 default = "lan"                 # lan | tailscale | url | local (asked per person)
 lan_address = "<server LAN IP>" # the address office PCs use (required for lan)
-proxy_users = []                # extra Linux accounts your own proxy runs as (url access)
 
 [network]
-blocked_networks = []           # networks people's agents may not reach, e.g. ["192.168.1.0/24"]
-                                # (the tailnet is blocked automatically when Tailscale is installed)
+interface = "eth0"              # the server's internet interface; containers go out through it
+blocked_networks = []           # public networks people's containers may not reach, e.g. ["203.0.113.0/24"]
+                                # (private networks and the tailnet are always out of reach)

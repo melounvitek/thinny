@@ -13,17 +13,15 @@ def test_managed_config_pins_the_policy():
     config = yaml.safe_load(render.managed_config(S))
     assert config["model"] == {"provider": "openai-codex", "default": "m1"}
     assert config["plugins"] == {"enabled": ["model-guard", "hermes-lang-cs"], "disabled": []}
-    assert config["terminal"]["backend"] == "docker"
-    assert config["terminal"]["docker_volumes"] == []
-    assert config["terminal"]["docker_shared_container_key"] == ""
+    assert config["terminal"] == {"backend": "local"}   # the person's container is the sandbox
     assert config["bot_desktop"] == {"placement": "terminal"}
     assert config["approvals"] == {"mode": "smart"}
 
 
-def test_managed_env_pins_the_sandbox_runtime():
+def test_managed_env_keeps_the_agent_in_the_container():
     env = render.managed_env()
-    assert "TERMINAL_ENV=docker\n" in env
-    assert "HERMES_DOCKER_BINARY=/usr/local/bin/hermes-podman\n" in env
+    assert "TERMINAL_ENV=local\n" in env
+    assert "DOCKER" not in env
 
 
 def test_allowed_models_one_per_line():
@@ -69,39 +67,43 @@ def test_caddyfile_without_lan_people_needs_no_address():
     assert "https://" not in render.caddyfile(s, [])
 
 
-def test_firewall_protects_people_whose_slice_exists():
-    text = render.firewall(people=[(1001, 9120), (1002, 9121)], slice_uids=[1000, 1001], proxy_uids=[987],
-                           blocked_networks=["192.168.1.0/24"], tailscale=False)
-    assert 'socket cgroupv2 level 2 "user.slice/user-1001.slice" meta mark != { 0, 987, 1001 } reject' in text
-    assert "user-1002.slice" not in text   # no slice yet: nft would refuse the path
-    assert "user-1000.slice" not in text   # not a person
-    assert "set people { type uid; elements = { 1001, 1002 }; }" in text
-    assert "elements = { 192.168.1.0/24 }" in text
-    assert "100.64.0.0/10" not in text
+def test_firewall_lets_containers_reach_the_internet_only():
+    text = render.firewall("eth0", ["203.0.113.0/24", "10.1.0.0/16", "fd00::/8"])
     assert text.startswith("# ") and "delete table inet hermes_manager" in text
+    assert 'iifname "hm-*" oifname != "eth0" drop' in text            # no other container, no tailnet
+    assert 'iifname "hm-*" ip daddr @blocked_v4 drop' in text
+    assert 'iifname "hm-*" meta nfproto ipv6 drop' in text
+    assert 'oifname "hm-*" ct state != { established, related } drop' in text
+    assert 'chain input {\n\t\ttype filter hook input priority filter - 1; policy accept;\n' \
+           '\t\tiifname "hm-*" ct state != { established, related } drop' in text
+    assert 'oifname "eth0" ip saddr 10.78.0.0/24 masquerade' in text
+    # private ranges (the tailnet included) and the site's networks, merged where they overlap
+    assert ("elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, "
+            "172.16.0.0/12, 192.168.0.0/16, 203.0.113.0/24, 224.0.0.0/3 }") in text
 
 
-def test_webapp_ports_only_reach_their_owner():
-    text = render.firewall(people=[(1001, 9120), (1002, 9121)], slice_uids=[1001], proxy_uids=[],
-                           blocked_networks=[], tailscale=False)
-    assert ('iif "lo" tcp dport 9120 ct state new socket cgroupv2 level 2 != "user.slice/user-1001.slice" '
-            "reject with tcp reset") in text
-    # Without the owner's slice nobody may serve the port.
-    assert 'iif "lo" tcp dport 9121 ct state new reject with tcp reset' in text
+def test_incus_starts_only_behind_the_firewall():
+    dropin = render.INCUS_DROPIN
+    assert "ExecStartPre=/usr/sbin/nft -f /etc/hermes-manager/hermes-manager.nft" in dropin
+    assert "After=nftables.service" in dropin and "PartOf=nftables.service" in dropin
 
 
-def test_firewall_blocks_the_tailnet_except_magicdns_when_tailscale_runs():
-    text = render.firewall(people=[], slice_uids=[], proxy_uids=[], blocked_networks=[], tailscale=True)
-    assert "elements = { 100.64.0.0/10 }" in text
-    assert "elements = { fd7a:115c:a1e0::/48 }" in text
-    assert text.index("100.100.100.100") < text.index("@blocked_v4 reject")
-    assert "set people { type uid; }" in text
+def test_container_profile_limits_and_isolation():
+    profile = json.loads(render.profile(Settings(model="m1", allowed_models=("m1",), lan_address="10.0.0.5",
+                                                 container_cpu=3, container_memory_mb=6144, container_disk_gb=40)))
+    assert profile["config"] == {
+        "boot.autostart": "true", "limits.cpu": "3", "limits.memory": "6144MiB", "limits.processes": "2000",
+        "security.idmap.isolated": "true", "security.nesting": "true", "security.privileged": "false"}
+    assert profile["devices"] == {
+        "root": {"type": "disk", "path": "/", "pool": "default", "size": "40GiB"},
+        "tun": {"type": "unix-char", "source": "/dev/net/tun", "path": "/dev/net/tun"}}
 
 
-def test_firewall_merges_overlapping_networks():
-    text = render.firewall(people=[], slice_uids=[], proxy_uids=[], blocked_networks=["fd00::/8"],
-                           tailscale=True)
-    assert "elements = { fd00::/8 }" in text
+def test_container_network_is_static():
+    text = render.network_file("10.78.0.7")
+    assert "Address=10.78.0.7/32\n" in text
+    assert "Gateway=169.254.0.1\nGatewayOnLink=yes\n" in text
+    assert "DNS=1.1.1.1\n" in text
 
 
 def test_update_timer_uses_the_update_time():

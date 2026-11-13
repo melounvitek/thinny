@@ -12,7 +12,7 @@ from hermes_manager.registry import Person, Registry
 from hermes_manager.settings import Settings
 from hermes_manager.system import CommandError
 
-S = Settings(model="m1", allowed_models=("m1",), lan_address="10.0.0.5", sandbox_image="img")
+S = Settings(model="m1", allowed_models=("m1",), lan_address="10.0.0.5")
 UPDATE = "hermes update --yes --no-gateway-restart"
 
 
@@ -68,7 +68,6 @@ def server(tmp_path, monkeypatch):
     monkeypatch.setattr(people, "hermes", lambda name, args, **kw: srv.calls.append(f"{name}: hermes {' '.join(args)}"))
     monkeypatch.setattr(people, "restart_all",
                         lambda ps, reg: srv.calls.append("restart " + " ".join(p.name for p in ps)))
-    monkeypatch.setattr(update, "as_user", srv.as_user)
     return srv
 
 
@@ -110,10 +109,8 @@ def test_full_update(server):
     # gateways restart; the sandboxes are refreshed last. Pending people are left alone.
     assert calls.index("backup") < calls.index(UPDATE) < calls.index("build_webapp")
     assert calls.index("build_webapp") < calls.index("alice: hermes pm install --extra all") < calls.index(
-        "restart alice bob") < calls.index("alice: podman pull img")
+        "restart alice bob")
     assert not any(c.startswith("carol") for c in calls)
-    assert "alice: podman rm -f hermes-1" in calls       # new image: the old sandbox goes
-    assert "bob: podman rm -f hermes-1" in calls         # same image but no network: it goes too
     assert not (server.tmp / "update-unfinished").exists()
 
 

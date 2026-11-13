@@ -51,10 +51,21 @@ def test_example_parses_once_filled_in():
     ({"policy__model": "m3"}, "one of policy.allowed_models"),
     ({"access__lan_address": None}, "lan_address is required"),
     ({"access__lan_address": "server.lan"}, "must be an IP address"),
+    ({"access__proxy_users": ["www-data"]}, "unknown setting access.proxy_users"),
+    ({"sandbox__image": "img"}, "unknown setting sandbox.image"),
+    ({"container__cpu": 0}, "container.cpu must be at least 1"),
+    ({"container__disk_gb": 1.5}, "container_disk_gb must be int"),
+    ({"network__interface": "eth0; drop"}, "network.interface must be an interface name"),
 ])
 def test_invalid_settings_are_refused(changes, message):
     with pytest.raises(SettingsError, match=message):
         parse(site(**changes))
+
+
+def test_container_limits_and_webapp_look():
+    s = parse(site(container__cpu=4, container__memory_mb=8192, container__disk_gb=50))
+    assert (s.container_cpu, s.container_memory_mb, s.container_disk_gb) == (4, 8192, 50)
+    assert parse(site()).text_scale == 110
 
 
 def test_lan_address_is_optional_without_lan_default():

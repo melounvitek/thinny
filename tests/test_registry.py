@@ -25,6 +25,16 @@ def test_ports_of_disabled_people_are_never_reused():
         reg.add("carol", "lan", (9120, 9121))
 
 
+def test_container_addresses_are_never_reused(tmp_path):
+    reg = Registry()
+    reg.add("alice", "lan", (9120, 9199)).state = "disabled"
+    reg.add("bob", "lan", (9120, 9199))
+    reg.save(tmp_path / "people.json")
+    loaded = Registry.load(tmp_path / "people.json")
+    assert [p.address for p in loaded.people.values()] == ["10.78.0.1", "10.78.0.2"]
+    assert loaded.add("carol", "lan", (9120, 9199)).address == "10.78.0.3"
+
+
 def test_names_must_be_unique_and_valid():
     reg = Registry()
     reg.add("alice", "lan", (9120, 9199))

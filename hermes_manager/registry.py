@@ -1,11 +1,12 @@
 """People registry (/var/lib/hermes-manager/people.json), the source of truth for who exists.
 
-People are never deleted: a removed person stays as `disabled`, so their Linux account
-(and uid) and their Webapp port are never handed to someone else.
+People are never deleted: a removed person stays as `disabled`, so their container, its
+address and their Webapp port are never handed to someone else.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
@@ -14,6 +15,7 @@ from pathlib import Path
 
 REGISTRY = Path("/var/lib/hermes-manager/people.json")
 STATES = ("pending", "active", "disabled")
+SUBNET = ipaddress.ip_network("10.78.0.0/24")   # container addresses
 NAME_RE = re.compile(r"[a-z][a-z0-9-]{0,30}[a-z0-9]")
 
 
@@ -27,7 +29,7 @@ class Person:
     port: int
     access: str
     url: str = ""
-    uid: int | None = None
+    address: str = ""
     state: str = "pending"
 
 
@@ -71,7 +73,7 @@ class Registry:
         validate_name(name)
         if name in self.people:
             raise RegistryError(f"{name!r} already exists")
-        person = Person(name=name, port=self.next_port(port_range), access=access)
+        person = Person(name=name, port=self.next_port(port_range), access=access, address=self.next_address())
         self.people[name] = person
         return person
 
@@ -81,6 +83,13 @@ class Registry:
             if port not in used:
                 return port
         raise RegistryError(f"no free Webapp port left in {port_range[0]}-{port_range[1]}")
+
+    def next_address(self) -> str:
+        used = {p.address for p in self.people.values()}
+        for address in map(str, SUBNET.hosts()):
+            if address not in used:
+                return address
+        raise RegistryError(f"no free container address left in {SUBNET}")
 
     def current(self) -> list[Person]:
         """People who are not disabled, in port order."""
