@@ -108,22 +108,17 @@ Unattended-Upgrade::Automatic-Reboot-Time "05:00";
 
 ## Install
 
-As root, with `curl`:
+As root or as a user with sudo, with `curl`:
 
 ```sh
 bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/melounvitek/thinny/main/bin/install | bash'
 ```
 
-Or with sudo:
-
-```sh
-bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/melounvitek/thinny/main/bin/install | sudo bash'
-```
-
 <details>
 <summary>What it does</summary>
 
-1. Downloads and runs thinny's installer from the `main` branch.
+1. Downloads and runs thinny's installer from the `main` branch. Without root, it runs the next
+   steps with sudo.
 2. Installs Git with apt if it is missing.
 3. Clones thinny to `/usr/local/src/thinny`. If a clone is already there, it uses it as it is.
 4. Runs its `install.sh`, which installs the packages (Incus, btrfs-progs, nftables, curl, Git,

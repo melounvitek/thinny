@@ -466,8 +466,10 @@ the storage pool once (80% of the free space under `/var/lib`; no Incus network)
 `config apply`: firewall first, units, sysctl, profile, `/etc/hermes`, Webapp settings, access,
 remembered restarts. No Hermes on the host.
 
-`bin/install` is the one-line install (`curl ... | bash`): Git, a clone in
-`/usr/local/src/thinny` (an existing one is kept), then its `install.sh`.
+`bin/install` is the one-line install (`curl ... | bash`, as root or through sudo): Git, a clone in
+`/usr/local/src/thinny` (an existing one is kept), then its `install.sh`. It gives sudo the
+terminal, not its pipe: with a pipe, Ubuntu 26.04's sudo-rs runs the installer in the
+background, where the first question stops it.
 
 ### 6.5 `thinny`
 
