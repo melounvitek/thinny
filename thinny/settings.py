@@ -40,6 +40,7 @@ class Settings:
     known_models: tuple[str, ...] = ()
     access_default: str = "lan"
     lan_address: str = ""
+    tunnel_port: int = 0
     network_interface: str = "eth0"
     blocked_networks: tuple[str, ...] = ()
 
@@ -68,6 +69,7 @@ KEYS = {
     ("webapp", "known_models"): "known_models",
     ("access", "default"): "access_default",
     ("access", "lan_address"): "lan_address",
+    ("access", "tunnel_port"): "tunnel_port",
     ("network", "interface"): "network_interface",
     ("network", "blocked_networks"): "blocked_networks",
 }
@@ -157,6 +159,8 @@ def _validate(s: Settings, source: str) -> None:
             fail("access.lan_address must be an IP address")
     elif s.access_default == "lan":
         fail("access.lan_address is required when access.default is lan")
+    if s.tunnel_port and not (1024 <= s.tunnel_port <= 65535) or s.port_range[0] <= s.tunnel_port <= s.port_range[1]:
+        fail("access.tunnel_port must be 0 (off) or a port between 1024 and 65535 outside webapp.port_range")
     for network in s.blocked_networks:
         try:
             ipaddress.ip_network(network)

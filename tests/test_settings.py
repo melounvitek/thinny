@@ -61,6 +61,8 @@ def test_model_lock_is_off_by_default_and_then_needs_no_allowed_models():
     ({"access__lan_address": None}, "lan_address is required"),
     ({"access__lan_address": "server.lan"}, "must be an IP address"),
     ({"access__proxy_users": ["www-data"]}, "unknown setting access.proxy_users"),
+    ({"access__tunnel_port": 80}, "access.tunnel_port"),
+    ({"access__tunnel_port": 9150}, "access.tunnel_port"),   # a Webapp port
     ({"sandbox__image": "img"}, "unknown setting sandbox.image"),
     ({"container__cpu": 0}, "container.cpu must be at least 1"),
     ({"container__disk_gb": 1.5}, "container_disk_gb must be int"),
@@ -79,3 +81,8 @@ def test_container_limits_and_webapp_look():
 
 def test_lan_address_is_optional_without_lan_default():
     assert parse(site(access__lan_address=None, access__default="tailscale")).lan_address == ""
+
+
+def test_the_tunnel_port_is_off_by_default():
+    assert parse(site()).tunnel_port == 0
+    assert parse(site(access__tunnel_port=8080)).tunnel_port == 8080

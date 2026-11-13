@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+from urllib.parse import urlsplit
 
 from .registry import SUBNET
 from .settings import Settings
@@ -127,13 +128,40 @@ def instance_url(s: Settings, name: str, access: str, port: int, *, url: str = "
     return url
 
 
-def caddyfile(s: Settings, lan_ports: list[int]) -> str:
+def caddyfile(s: Settings, lan_ports: list[int], tunnel_routes: list[tuple[str, int]] = ()) -> str:
+    """LAN sites, then the sites a tunnel on this host reaches at 127.0.0.1:<tunnel_port>: one per
+    host of the (url, port) routes, an instance on its root or one per path."""
     sites = "".join(
         f"\nhttps://{host_for_url(s.lan_address)}:{port} {{\n\tbind {s.lan_address}\n\ttls internal\n"
         f"\treverse_proxy 127.0.0.1:{port}\n}}\n"
         for port in lan_ports)
+    hosts: dict[str, list[tuple[str, int]]] = {}
+    for url, port in tunnel_routes:
+        parts = urlsplit(url)
+        hosts.setdefault(parts.hostname, []).append((parts.path.strip("/"), port))
+    for hostname, routes in hosts.items():
+        sites += f"\nhttp://{hostname}:{s.tunnel_port} {{\n\tbind 127.0.0.1\n"
+        for path, port in routes:
+            if path:
+                sites += f"\tredir /{path} /{path}/\n\thandle_path /{path}/* {{\n{_tunnel_proxy(port, path, 2)}\t}}\n"
+            else:
+                sites += _tunnel_proxy(port, path, 1)
+        if routes[0][0]:
+            sites += "\thandle {\n\t\trespond 404\n\t}\n"
+        sites += "}\n"
+    if hosts:
+        sites += f"\nhttp://:{s.tunnel_port} {{\n\tbind 127.0.0.1\n\trespond 404\n}}\n"
     # No admin API: on localhost it would let any account rewrite the proxy.
     return f"# {HEADER}\n{{\n\tadmin off\n\tskip_install_trust\n}}\n{sites}"
+
+
+def _tunnel_proxy(port: int, path: str, depth: int) -> str:
+    # The tunnel (cloudflared on this host) passes on the client's address and https: Hermes limits
+    # sign-in attempts per client and sets Secure cookies over https only. Hermes builds its links
+    # under X-Forwarded-Prefix, so a client must not choose one.
+    prefix = f"header_up X-Forwarded-Prefix /{path}" if path else "header_up -X-Forwarded-Prefix"
+    lines = [f"reverse_proxy 127.0.0.1:{port} {{", "\ttrusted_proxies 127.0.0.1/32 ::1/128", f"\t{prefix}", "}"]
+    return "".join("\t" * depth + line + "\n" for line in lines)
 
 
 def firewall(interface: str, blocked_networks: list[str]) -> str:

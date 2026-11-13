@@ -86,6 +86,52 @@ def test_caddyfile_without_lan_instances_needs_no_address():
     assert "https://" not in render.caddyfile(s, [])
 
 
+TUNNEL_SITES = """
+http://jirka.example.org:8080 {
+	bind 127.0.0.1
+	reverse_proxy 127.0.0.1:9121 {
+		trusted_proxies 127.0.0.1/32 ::1/128
+		header_up -X-Forwarded-Prefix
+	}
+}
+
+http://office.example.org:8080 {
+	bind 127.0.0.1
+	redir /accounting /accounting/
+	handle_path /accounting/* {
+		reverse_proxy 127.0.0.1:9122 {
+			trusted_proxies 127.0.0.1/32 ::1/128
+			header_up X-Forwarded-Prefix /accounting
+		}
+	}
+	redir /lawyers /lawyers/
+	handle_path /lawyers/* {
+		reverse_proxy 127.0.0.1:9123 {
+			trusted_proxies 127.0.0.1/32 ::1/128
+			header_up X-Forwarded-Prefix /lawyers
+		}
+	}
+	handle {
+		respond 404
+	}
+}
+
+http://:8080 {
+	bind 127.0.0.1
+	respond 404
+}
+"""
+
+
+def test_caddyfile_routes_url_instances_by_host_and_path_for_the_tunnel():
+    s = dataclasses.replace(S, tunnel_port=8080)
+    text = render.caddyfile(s, [9120], [("https://jirka.example.org/", 9121),
+                                        ("https://office.example.org/accounting/", 9122),
+                                        ("https://office.example.org/lawyers", 9123)])
+    assert text.endswith(TUNNEL_SITES)
+    assert "https://192.168.1.10:9120 {" in text
+
+
 def test_firewall_lets_containers_reach_the_internet_only():
     text = render.firewall("eth0", ["203.0.113.0/24", "10.1.0.0/16", "fd00::/8"])
     assert text.startswith("# ") and "delete table inet thinny" in text

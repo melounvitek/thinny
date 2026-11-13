@@ -33,6 +33,8 @@ known_models = []               # with model_lock: other model ids the model pic
 [access]
 default = "lan"                 # lan | tailscale | url | local (asked per instance)
 lan_address = "<server LAN IP>" # the address office PCs use (required for lan)
+tunnel_port = 0                 # e.g. 8080: Caddy serves every url instance at http://127.0.0.1:<port>, by host
+                                # and path, for one tunnel on this server (cloudflared); 0 = off
 
 [network]
 interface = "eth0"              # the server's internet interface; containers go out through it
