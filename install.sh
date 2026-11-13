@@ -40,11 +40,17 @@ ln -sfn "$LIB/bin/thinny" /usr/local/sbin/thinny
 echo "$SRC" >"$LIB/source" # thinny update pulls this clone
 
 if [ ! -f "$SITE" ]; then
-	install -d -m 755 /etc/thinny
-	install -m 644 "$SRC/site.example.toml" "$SITE"
 	echo
-	echo "Edit $SITE (model, LAN address, ...), then run: sh $SRC/install.sh"
-	exit 0
+	# The one-line install pipes this script into bash, so the questions read the terminal itself.
+	if (exec </dev/tty) 2>/dev/null; then
+		/usr/local/sbin/thinny init </dev/tty || { echo "To try again: sh $SRC/install.sh" >&2; exit 1; }
+		echo
+	else
+		install -d -m 755 /etc/thinny
+		install -m 644 "$SRC/site.example.toml" "$SITE"
+		echo "Edit $SITE (model, LAN address, ...), then run: sh $SRC/install.sh"
+		exit 0
+	fi
 fi
 
 /usr/local/sbin/thinny setup

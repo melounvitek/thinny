@@ -121,7 +121,9 @@ bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/melounvitek/th
 4. Runs its `install.sh`, which installs the packages (Incus, btrfs-progs, nftables, curl, Git,
    Python 3), copies thinny to `/usr/local/lib/thinny` and links the `thinny` command to
    `/usr/local/sbin/thinny`.
-5. On the first run, it creates `/etc/thinny/site.toml` from the example and stops.
+5. On the first run, `thinny init` asks for the settings below and writes them into
+   `/etc/thinny/site.toml`, a copy of the commented example. Without a terminal, it copies the
+   example and stops.
 6. Once `site.toml` exists, it runs `thinny setup`: the Incus storage pool, the firewall, the
    update timer and the shared policy.
 
@@ -129,10 +131,15 @@ It does not add any instances.
 
 </details>
 
-After the first run, edit `/etc/thinny/site.toml`: set
-at least `policy.model` (with the model lock also `policy.allowed_models`), `network.interface`
-and `access.lan_address` (or `""` and another `access.default` without LAN access). Then run
-`sh /usr/local/src/thinny/install.sh` to set up Incus, the firewall and the update timer.
+On the first run, the installer asks for the model provider and model, the Webapp language, the
+internet interface and how users will open the Webapps. It suggests the interface and LAN address
+it detects and the language pack it finds in Hermes's catalog, shows a summary, and sets up the
+server once you confirm. Everything else keeps the example's defaults: change them with
+`thinny config edit`.
+
+Without a terminal, it stops after copying the example. Edit `/etc/thinny/site.toml` (at least
+`policy.model`, `network.interface` and `access.lan_address`, or `""` and another
+`access.default`), then run `sh /usr/local/src/thinny/install.sh`.
 
 Rerunning `install.sh` is safe. `thinny update` updates thinny itself too (see [Updates](#updates)).
 A changed model guard loads at each gateway's next restart (`thinny instance restart`).
