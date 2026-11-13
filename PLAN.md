@@ -1,9 +1,8 @@
 # hermes-manager: plan
 
-Status: the shared-install design (rounds 0-5) was implemented and tested on the test server
-(2026-11-12). The switch to one Incus container per person (section 8) is implemented in
-code, rounds 0-5, but not yet tested on the server as a whole. The README is the user
-documentation; this file keeps the design and what we learned.
+Status: one Incus container per person, implemented (sections 6-8) and tested on the test server
+from a rebuilt playground (round 7, 2026-11-13). The README is the user documentation; this file
+keeps the design and what we learned.
 
 ## 1. Goal
 
@@ -515,10 +514,23 @@ Container switch (2026-11-12/13):
 4. Versions: the recorded release, the per-person rollout, resume (done).
 5. Checks for containers; shared install, hermes-podman and sandboxes removed (done).
 6. README and this file (done).
-7. Server test from a rebuilt playground (pending): install twice, 2-3 people with every
-   access method, isolation from inside a container, browser sign-in, device login, an
-   update with one person a release behind, interrupt and resume, `apt` packages surviving
-   restart and update, Docker and Tailscale in one container, reboot, `check`, remove.
+7. Server test from a rebuilt playground (done, 2026-11-13) **[tested]**: everything of the
+   shared-install design and of the spikes removed (Tailscale kept); `install.sh` twice; `check`
+   all OK. With the forward-chain lines removed, add-person hung in apt for over 15 minutes
+   (apt neither fails nor gives up without a network): now a DNS probe fails it in 40 s with
+   the fix, and the resumed add finished. alice (local), bob (tailscale), carol (lan): 486, 438
+   and 487 s each, pinned to v0.23.0. From inside a container, as the person and as root: only
+   the internet; another container (a real listener), host SSH on every address, Caddy, another
+   Webapp port, MagicDNS, a tailnet device, private ranges and IPv6 blocked; only itself in
+   /home, passwd and processes. Browser sign-in for every access method (Secure cookies over
+   Tailscale and LAN, distinct cookie names); ChatGPT device login through `hermes-manager login`;
+   a real chat with terminal (`sudo` works) and browser tools. `sudo apt install`, Docker (also
+   `--network host`) and Tailscale inside a container. `update --now` to v0.23.1 killed during
+   alice's install, resumed (alice redone), killed again after bob's checkout had moved,
+   resumed (bob redone first, then carol): release recorded, apt packages, Docker images,
+   the login and the plugins kept, `check` all OK. Reboot: all 36 checks OK, Webapps answer.
+   `password`, `access` (local to tailscale) and `remove-person` (stopped, no autostart, port
+   closed, access removed).
 
 ## 9. Open questions
 
