@@ -33,7 +33,7 @@ In priority order.
 3. **Central policy:** pinned model and reasoning effort, model allowlist enforced by a
    plugin, approvals mode, plugin list, terminal backend. People cannot change it from the
    Webapp or their settings. It is a guardrail, not enforcement: a person is root in their
-   own container and can get around it. `check` reports it when they do.
+   own container and can get around it. `doctor` reports it when they do.
 4. **Agent tools run in the person's container** (`terminal.backend: local`); no sandbox
    image, no nested Podman. The person has passwordless `sudo`, so they and their agent can
    `apt install`. Docker and Tailscale are possible inside (nesting, `/dev/net/tun`). No
@@ -50,7 +50,7 @@ In priority order.
 
 Non-goals: hiding data from the server admin (impossible while the admin is root on the
 machine that runs the agent), multi-server fleets, a web UI for the admin, hardening the
-base server (a documented prerequisite that `check` verifies), making the policy
+base server (a documented prerequisite that `doctor` verifies), making the policy
 tamper-proof against a person who is root in their container.
 
 ## 3. Public from day one
@@ -137,7 +137,7 @@ accounts on a separate v0.23.0 install, updated it to v0.23.1 and rebooted the s
   `HERMES_BUNDLED_PLUGINS` in their own `.env` (read before the managed dir is resolved),
   `--safe-mode` (skips all plugins, model-guard included), `/yolo`, `/model` and
   `/reasoning` per session, a same-named plugin in `~/.hermes/plugins`, editing their own
-  gateway unit. `check` looks for these.
+  gateway unit. `doctor` looks for these.
 - `approvals.mode` must not be `off`: with approvals off, computer_use runs "unrestricted"
   and looks for `cua-driver` on the host instead of in the sandbox, which breaks the Bot
   Screen **[proto, src]**. Pin `bot_desktop.placement: terminal` so the browser and
@@ -361,7 +361,7 @@ Debian 13, kernel 6.12, Incus 6.0.4 (`incus-base`), Hermes v0.23.0 -> v0.23.1. A
 ### 6.1 Repository layout
 
 ```
-install.sh          thin bootstrap: packages, the tool, then `thinny install`
+install.sh          thin bootstrap: packages, the tool, then `thinny setup`
 bin/thinny          admin CLI entry point (Python 3 stdlib only, runs as root)
 thinny/             settings, registry, render (all generated text), system (commands on the
                     host and in containers), host (Incus pool and profile, firewall, units,
@@ -393,7 +393,7 @@ Incus                                   pool `default` (btrfs, sparse file), pro
   host `127.0.0.1:<port>` to the same port inside.
 - Our nft table: forward from `hm-*` only out of `network.interface`, not to private, CGNAT
   (tailnet), link-local, multicast or blocked networks, no IPv6, nothing new into `hm-*`;
-  input: nothing new from `hm-*`; masquerade. Loaded by `apply` and by the incus.service
+  input: nothing new from `hm-*`; masquerade. Loaded by `config apply` and by the incus.service
   drop-in (`ExecStartPre`, `PartOf=nftables.service`), so incusd never starts without it.
   The admin's tables stay untouched; their forward chain must accept `hm-*`.
 - Everything in a container runs through `incus exec`; the person's commands run as them
@@ -403,44 +403,52 @@ Incus                                   pool `default` (btrfs, sparse file), pro
 
 ### 6.3 Prerequisites (the admin's)
 
-In the README, verified by `check` with the exact fix, all warnings: SSH key-only and on a
+In the README, verified by `doctor` with the exact fix, all warnings: SSH key-only and on a
 private network, an input firewall with policy drop, unattended upgrades with a reboot window
 after the update window. The forward chain is a requirement: without it containers have no
-internet, and `check` fails per person with the two lines to add. hidepid and a root-only
+internet, and `doctor` fails per person with the two lines to add. hidepid and a root-only
 Tailscale socket are no longer needed: the host has no person accounts.
 
 ### 6.4 `install.sh`
 
 Idempotent; a rerun repairs and never destroys data or updates Hermes: packages
-(`incus-base`, or `incus` on Ubuntu 24.04, `btrfs-progs`, `nftables`, `curl`, `python3`; Caddy later when LAN access needs
-it), the tool, `site.toml` from the example on the first run, then `thinny install`:
+(`incus-base`, or `incus` on Ubuntu 24.04, `btrfs-progs`, `nftables`, `curl`, `python3`;
+Caddy later when LAN access needs it), the tool, `site.toml` from the example on the first run, then `thinny setup`:
 the storage pool once (80% of the free space under `/var/lib`; no Incus network), then
-`apply`: firewall first, units, sysctl, profile, `/etc/hermes`, Webapp settings, access,
+`config apply`: firewall first, units, sysctl, profile, `/etc/hermes`, Webapp settings, access,
 remembered restarts. No Hermes on the host.
 
 ### 6.5 `thinny`
 
 ```
-add-person <name> [--access ...]  port, address, container, packages, account (uid 1000, sudo,
+setup                             Incus storage pool, then config apply
+status | doctor                   quick look (release, last update, containers, gateways);
+                                  every check (section 7)
+update [--dry-run] [--scheduled]  update now (6.8); the timer runs --scheduled, which waits
+                                  for the minimum age and respects auto_update
+config edit | apply               visudo-like edit of site.toml, then apply; re-render and
+                                  restart where needed
+instance add <name> [--access ...]
+                                  port, address, container, packages, account (uid 1000, sudo,
                                   linger), Hermes at the recorded release, Webapp build,
                                   language pack, model-guard, Webapp password, language, look,
                                   access, gateway
-access | login | password <name>  access method, ChatGPT device login, new Webapp password
-remove-person <name>              autostart off, container stopped (forced after 60 s), access
+instance access | login | reset-password <name>
+                                  access method, ChatGPT device login, new Webapp password
+instance disable <name>           autostart off, container stopped (forced after 60 s), access
                                   removed; container and data stay
-list | check | apply              people; checks (section 7); re-render and restart where needed
-update | restart                  nightly update (6.8); one-by-one gateway restarts
+instance list | restart           people; one-by-one gateway restarts
 ```
 
 - Names: lowercase ASCII (Linux account and URL safe), not an account on the host (the
   container has Debian's system accounts too) and not an existing container.
-- `add-person` records `pending` first and can be rerun to finish after a failure.
+- `instance add` records `pending` first and can be rerun to finish after a failure.
 - Gateway restarts happen only where unavoidable, and are announced.
 - The admin's shell in a container: `incus exec <name> -- runuser -l <name>`.
 
 ### 6.6 Access per person
 
-`add-person` asks for one method per person (`--access`, default from `site.toml`), since a
+`instance add` asks for one method per person (`--access`, default from `site.toml`), since a
 Webapp accepts only its own `public_url`. The Webapp listens on `127.0.0.1:<port>` inside the
 container; the proxy device publishes it on the same host loopback port, and every method
 points there: **LAN** a Caddy site with its local CA (`tls internal`); **Tailscale**
@@ -476,7 +484,7 @@ private ones and the tailnet are always blocked). `site.example.toml` lists ever
 - Inside the containers, `unattended-upgrades` with Debian's defaults updates the OS.
 - Report when the host needs a reboot (`/run/reboot-required`); never reboot.
 
-## 7. Checks (`thinny check`)
+## 7. Checks (`thinny doctor`)
 
 - Install: Incus pool `default` and profile `hm-person`, the incus.service drop-in, IPv4
   forwarding (FAIL); `/etc/hermes` matches `site.toml` (WARN); the recorded release; nightly
@@ -515,7 +523,7 @@ Container switch (2026-11-12/13):
 5. Checks for containers; shared install, hermes-podman and sandboxes removed (done).
 6. README and this file (done).
 7. Server test from a rebuilt playground (done, 2026-11-13) **[tested]**: everything of the
-   shared-install design and of the spikes removed (Tailscale kept); `install.sh` twice; `check`
+   shared-install design and of the spikes removed (Tailscale kept); `install.sh` twice; `doctor`
    all OK. With the forward-chain lines removed, add-person hung in apt for over 15 minutes
    (apt neither fails nor gives up without a network): now a DNS probe fails it in 40 s with
    the fix, and the resumed add finished. alice (local), bob (tailscale), carol (lan): 486, 438
@@ -523,18 +531,18 @@ Container switch (2026-11-12/13):
    the internet; another container (a real listener), host SSH on every address, Caddy, another
    Webapp port, MagicDNS, a tailnet device, private ranges and IPv6 blocked; only itself in
    /home, passwd and processes. Browser sign-in for every access method (Secure cookies over
-   Tailscale and LAN, distinct cookie names); ChatGPT device login through `thinny login`;
+   Tailscale and LAN, distinct cookie names); ChatGPT device login through `thinny instance login`;
    a real chat with terminal (`sudo` works) and browser tools. `sudo apt install`, Docker (also
-   `--network host`) and Tailscale inside a container. `update --now` to v0.23.1 killed during
+   `--network host`) and Tailscale inside a container. `update` to v0.23.1 killed during
    alice's install, resumed (alice redone), killed again after bob's checkout had moved,
    resumed (bob redone first, then carol): release recorded, apt packages, Docker images,
-   the login and the plugins kept, `check` all OK. Reboot: all 36 checks OK, Webapps answer.
-   `password`, `access` (local to tailscale) and `remove-person` (stopped, no autostart, port
-   closed, access removed).
+   the login and the plugins kept, `doctor` all OK. Reboot: all 36 checks OK, Webapps answer.
+   `instance reset-password`, `instance access` (local to tailscale) and `instance disable`
+   (stopped, no autostart, port closed, access removed).
 
 Ubuntu support (2026-11-13), in local Multipass VMs **[tested]**: 26.04.1 (kernel 7.0, Incus
 6.0.5, Caddy 2.6.2) and 24.04.5 (kernel 6.8, Incus 6.0.0, Caddy 2.6.2). `install.sh` twice,
-alice (local) and bob (lan): `check` all OK, Webapps answer, isolation as on Debian, Docker
+alice (local) and bob (lan): `doctor` all OK, Webapps answer, isolation as on Debian, Docker
 inside, a reboot.
 
 - 24.04 has no `incus-base`; its `incus` has no virtual machines either.

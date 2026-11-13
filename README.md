@@ -23,7 +23,8 @@ What you get:
 - **Four ways to open the Webapp**, chosen per person: office network (HTTPS), Tailscale, your
   own address, or an SSH tunnel.
 - **An optional nightly Hermes update** that updates and restarts people one at a time.
-- **`thinny check`**: isolation and health checks, each with a fix.
+- **`thinny status`** for a quick look and **`thinny doctor`** for every isolation and health
+  check, each with a fix.
 
 ## What is and is not protected
 
@@ -49,7 +50,7 @@ files, model-provider login, Webapp and agent live in it, and the host keeps con
 - **The policy against a determined person.** A person is root in their own container
   (passwordless `sudo`, and the Webapp has a terminal). The pinned model, approvals and the
   model guard cannot be changed from the Webapp or the person's settings, but the person can
-  get around them inside their container. They are a guardrail. `thinny check`
+  get around them inside their container. They are a guardrail. `thinny doctor`
   reports the bypasses it can see. The container stays isolated from everyone else.
 - **A person from their own agent.** An agent misled by a web page can do whatever the person
   can do in their container, including `sudo`. It cannot leave the container.
@@ -81,7 +82,7 @@ thinny does not install them. A person can install them with `sudo`.
   ```
 
   With ufw, which drops forwarded traffic by default, run `ufw route allow in on hm-+`
-  instead. Without this, `add-person` fails at the packages and `check` reports that the
+  instead. Without this, `instance add` fails at the packages and `doctor` reports that the
   container cannot reach the internet.
 - Hermes from its latest stable release. Tested with Hermes v0.23.
 - Rough sizing, measured on a test server: about 0.4 GB RAM per idle person, plus what their
@@ -92,7 +93,7 @@ thinny does not install them. A person can install them with `sudo`.
 
 ## Prerequisites (your part)
 
-`thinny check` verifies these (`WARN` when missing) and prints the fix. Set them up
+`thinny doctor` verifies these (`WARN` when missing) and prints the fix. Set them up
 before you add people.
 
 **Key-only SSH, reachable only from a private network** (office LAN, VPN or Tailscale). Create
@@ -103,7 +104,7 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 ```
 
-Then run `systemctl reload ssh`. `check` verifies only that SSH is key-only. Limiting where
+Then run `systemctl reload ssh`. `doctor` verifies only that SSH is key-only. Limiting where
 SSH can be reached from is the job of your input firewall.
 
 **An input firewall that drops by default** (nftables or ufw). With LAN access, it must let
@@ -133,13 +134,13 @@ table inet filter {
 }
 ```
 
-Load it with `nft -f /etc/nftables.conf`. `check` also warns when no forward chain drops by
+Load it with `nft -f /etc/nftables.conf`. `doctor` also warns when no forward chain drops by
 default: thinny turns IPv4 forwarding on, so the server would route between its networks.
 
 > **Never run `systemctl restart nftables` on Debian or Ubuntu while containers run.** Its stop
 > step runs `nft flush ruleset`, which removes every table: Tailscale's, Incus's anti-spoofing
 > rules and thinny's. A config file that starts with `flush ruleset` does the same,
-> and the default file does. If it happens, run `thinny apply` (it reloads the
+> and the default file does. If it happens, run `thinny config apply` (it reloads the
 > containers' table) and `systemctl restart tailscaled`, then reboot at a quiet time: Incus
 > sets up its anti-spoofing rules when a container starts.
 
@@ -199,11 +200,11 @@ The second run:
 4. creates the Incus profile `hm-person` with the `[container]` limits;
 5. writes `/etc/hermes`.
 
-Hermes itself is installed into each person's container by `add-person`.
+Hermes itself is installed into each person's container by `instance add`.
 
 Rerunning `install.sh` is safe. It repairs what is missing, keeps all data and never updates
-Hermes. If the rerun changes `/etc/hermes`, it restarts the gateways one by one, like `apply`.
-A changed model guard reaches the gateways at their next restart (`thinny restart`).
+Hermes. If the rerun changes `/etc/hermes`, it restarts the gateways one by one, like
+`config apply`. A changed model guard reaches the gateways at their next restart (`thinny instance restart`).
 
 To update thinny itself:
 
@@ -213,8 +214,17 @@ cd /root/thinny && git pull && sh install.sh
 
 ## Settings
 
-Edit `/etc/thinny/site.toml`. Every key is commented in
-[`site.example.toml`](site.example.toml).
+The settings live in `/etc/thinny/site.toml`. Every key is commented in
+[`site.example.toml`](site.example.toml). To change them:
+
+```sh
+thinny config edit
+```
+
+This opens a copy of the file in `$VISUAL`, `$EDITOR` or the system's default editor
+(`editor`, usually nano). When you save and close it, thinny checks the copy. If it is valid,
+thinny replaces `site.toml` with it and applies it. If not, it shows the error and lets you
+edit again or discard the changes, so a broken file never takes effect.
 
 | Section       | Holds |
 | ------------- | ----- |
@@ -225,13 +235,13 @@ Edit `/etc/thinny/site.toml`. Every key is commented in
 | `[access]`    | the `default` access method, `lan_address` |
 | `[network]`   | `interface`: the server's internet interface; `blocked_networks`: public networks containers may not reach (private networks and the tailnet are always blocked) |
 
-After editing, run:
+If you edit `site.toml` another way, apply it with:
 
 ```sh
-thinny apply
+thinny config apply
 ```
 
-`apply` does the following:
+Applying does the following:
 
 - rewrites `/etc/hermes`, the firewall table, the units and the container profile. New
   limits apply to running containers too;
@@ -247,7 +257,7 @@ Notes:
   the models shown in the model picker, and `port_range`. Existing people keep theirs.
   However, a model removed from `allowed_models` is blocked for everyone at once.
 - `language_pack` is a plugin name from the Hermes plugin catalog, e.g. `hermes-lang-cs`. Each
-  person's Hermes installs it at the commit its catalog pins, at `add-person` and with every
+  person's Hermes installs it at the commit its catalog pins, at `instance add` and with every
   update. A new `language_pack` reaches existing people with the next Hermes update.
 
 ## People
@@ -255,7 +265,7 @@ Notes:
 ### Add a person
 
 ```sh
-thinny add-person alice
+thinny instance add alice
 ```
 
 The command asks how the person will open their Webapp (see [Access](#access)):
@@ -277,7 +287,7 @@ Names are 2-32 characters long and use lowercase letters, digits and `-`. They s
 letter, and must not be the name of an account on the host (the container has Debian's
 system accounts too) or of an existing Incus container.
 
-`add-person` takes about 7 minutes. It:
+`instance add` takes about 7 minutes. It:
 
 1. picks the next free Webapp port and container address (`10.78.0.0/24`);
 2. creates the container `alice` from the Debian 13 image with the `hm-person` profile, a
@@ -301,7 +311,7 @@ It continues where it stopped.
 ### Sign in and hand over
 
 ```sh
-thinny login alice
+thinny instance login alice
 ```
 
 This command signs the person in to the model provider with a device code (ChatGPT for
@@ -309,24 +319,25 @@ This command signs the person in to the model provider with a device code (ChatG
 own* account and enters the code within about 15 minutes. The tokens stay in their container
 (`~/.hermes/auth.json`). Never copy that file between people.
 
-Run `login` before the hand-over. Without it, the Webapp's first screen invites the person to
-connect other providers. Then give the person the address, username and password. With LAN
+Run `instance login` before the hand-over. Without it, the Webapp's first screen invites the
+person to connect other providers. Then give the person the address, username and password. With LAN
 access, their PC also needs the office certificate.
 
 ### Other commands
 
 ```sh
-thinny list                      # people, state, access, port, gateway, URL
-thinny access alice tailscale    # change the access method (lan | tailscale | url=<URL> | local)
-thinny password alice            # new Webapp password, shown once
-thinny remove-person alice       # disable the person
+thinny instance list                      # people, state, access, port, gateway, URL
+thinny instance access alice tailscale    # change the access method (lan | tailscale | url=<URL> | local)
+thinny instance reset-password alice      # new Webapp password, shown once
+thinny instance disable alice             # stop the container for good, keep the data
+thinny instance restart [alice ...]       # restart gateways one by one (all, or the named people)
 ```
 
-- `access` restarts the person's gateway, and the old address stops working.
-- `password` restarts the person's gateway, and open browsers must sign in again.
-- `remove-person` turns off the container's autostart, stops the container (forced after
+- `instance access` restarts the person's gateway, and the old address stops working.
+- `instance reset-password` restarts the person's gateway, and open browsers must sign in again.
+- `instance disable` turns off the container's autostart, stops the container (forced after
   60 s) and removes the person's Caddy site or `tailscale serve` entry. The container and the
-  person's data stay. Names, ports and container addresses are never reused, and a removed
+  person's data stay. Names, ports and container addresses are never reused, and a disabled
   person cannot be re-enabled.
 
 To get a shell in a person's container:
@@ -392,11 +403,11 @@ It gets a real certificate, so there is no browser warning.
 For a Cloudflare Tunnel, a reverse proxy, or similar:
 
 ```sh
-thinny add-person alice --access url=https://alice.example.org/
+thinny instance add alice --access url=https://alice.example.org/
 ```
 
 - Run the proxy or tunnel client on this server and point it at `http://127.0.0.1:<port>`.
-  `thinny list` shows the port.
+  `thinny instance list` shows the port.
 - Keep the address on HTTPS.
 
 ### Local only (`local`)
@@ -410,7 +421,7 @@ ssh -L <port>:127.0.0.1:<port> root@<server>
 
 ## Updates
 
-`thinny-update.timer` runs `thinny update` every night at
+`thinny-update.timer` runs `thinny update --scheduled` every night at
 `hermes.update_time`. If the server is off at that time, the update waits for the next night.
 
 1. It asks GitHub for the latest stable Hermes release.
@@ -437,20 +448,20 @@ ssh -L <port>:127.0.0.1:<port> root@<server>
 {"time": "2026-01-31T03:04:12", "result": "ok", "detail": "updated to <tag>"}
 ```
 
-Run it by hand:
+By hand:
 
 ```sh
-thinny update --check    # report what would happen; changes nothing, writes no status
-thinny update --now      # update now, ignoring the minimum age and auto_update = false
-thinny restart [alice ...] # restart gateways one by one (all, or the named people)
+thinny update                        # update now, ignoring the minimum age and auto_update = false
+thinny update --dry-run              # report what `thinny update` would do; changes nothing, writes no status
+thinny update --scheduled --dry-run  # the same for the nightly run
 ```
 
 - **Log:** `/var/log/thinny.log` (all commands), and for the nightly run also
   `journalctl -u thinny-update.service`.
 - **OS updates inside the containers** come from `unattended-upgrades`, installed with
   Debian's defaults. The container's package list follows the official Hermes image's
-  Dockerfile and is installed at `add-person` and before each Hermes update.
-- **People can change their own Hermes**, since they are root in their container. `check`
+  Dockerfile and is installed at `instance add` and before each Hermes update.
+- **People can change their own Hermes**, since they are root in their container. `doctor`
   warns when someone does not run the release everyone runs.
 - **There is no rollback.** Hermes databases cannot be downgraded. The only way back is your
   own snapshot of the whole server, taken before `update_time` (see
@@ -459,23 +470,30 @@ thinny restart [alice ...] # restart gateways one by one (all, or the named peop
   cuts off scheduled jobs and background tasks. Keep people's scheduled jobs away from
   `update_time`.
 - **Interrupted work is finished later.** If an update stops halfway, the next run (or
-  `thinny update --now`) finishes it first, to the same release and without waiting
+  `thinny update`) finishes it first, to the same release and without waiting
   for the minimum age. It starts with the person it stopped at, from the beginning, and skips
-  the people already done. Gateways that `apply`,
-  `update` or `restart` could not restart are remembered and restarted by the next of these
-  commands.
+  the people already done. Gateways that `config apply`, `update` or `instance restart` could
+  not restart are remembered and restarted by the next of these commands.
 - **One run at a time.** thinny runs one command at a time. During the update, other
   commands that change things refuse to start. If such a command is still running at
   `update_time`, that night's update fails.
 
-## Checks
+## Status and checks
 
 ```sh
-thinny check
+thinny status
 ```
 
-`check` prints one line per result (`OK`, `WARN` or `FAIL`), with a `fix:` line where it
-helps. It exits with status 1 when anything fails, so you can use it from monitoring.
+`status` is the quick look: the Hermes release everyone runs, the last nightly update, and
+whether each person's container and gateway run.
+
+```sh
+thinny doctor
+```
+
+`doctor` runs every check below. Both print one line per result (`OK`, `WARN` or `FAIL`),
+with a `fix:` line where it helps, and exit with status 1 when anything fails, so you can use
+them from monitoring.
 
 - **Install:**
   - the Incus storage pool `default` and profile `hm-person` exist;
@@ -518,7 +536,7 @@ helps. It exits with status 1 when anything fails, so you can use it from monito
 | `/etc/caddy/Caddyfile` | the LAN sites (generated, when used) |
 | container `<name>`: `/home/<name>/.hermes/` | a person's Hermes: code, chats, settings, Webapp sign-in, provider login |
 
-Generated files are rewritten by `apply`, so do not edit them by hand.
+Generated files are rewritten by `config apply`, so do not edit them by hand.
 
 ## Extras
 
