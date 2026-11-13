@@ -195,6 +195,9 @@ ExecStartPre=/usr/sbin/nft -f {FIREWALL_FILE}
 SYSCTL = f"""# {HEADER}
 # Person containers have routed addresses.
 net.ipv4.ip_forward = 1
+# Ubuntu's AppArmor keeps people from creating user namespaces, which their browser's sandbox
+# needs; root in their container can anyway. "-": Debian has no such setting.
+-kernel.apparmor_restrict_unprivileged_userns = 0
 """
 
 UPDATE_SERVICE = f"""# {HEADER}

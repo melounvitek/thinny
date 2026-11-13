@@ -1,7 +1,8 @@
 #!/bin/sh
 # hermes-manager bootstrap: packages, the tool itself, then `hermes-manager install`.
 # Safe to rerun: it repairs and never updates Hermes or removes data.
-# incus-base: containers only (no virtual machines).
+# incus-base: containers only (no virtual machines). Ubuntu 24.04 has no incus-base, and its
+# incus has no virtual machines either.
 set -eu
 
 LIB=/usr/local/lib/hermes-manager
@@ -10,12 +11,18 @@ SRC=$(cd "$(dirname "$0")" && pwd)
 
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
 . /etc/os-release
-[ "${ID:-}" = debian ] && [ "${VERSION_ID:-}" = 13 ] || echo "warning: tested on Debian 13 only" >&2
+case "${ID:-} ${VERSION_ID:-}" in
+"debian 13" | "ubuntu 24.04" | "ubuntu 26.04") ;;
+*) echo "warning: tested on Debian 13 and Ubuntu 24.04 and 26.04 only" >&2 ;;
+esac
 
 echo "Installing packages"
 apt-get update -q >/dev/null
-DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
-	incus-base btrfs-progs nftables curl python3 >/dev/null
+INCUS=incus-base
+apt-cache show incus-base >/dev/null 2>&1 || INCUS=incus
+# NEEDRESTART_SUSPEND: Ubuntu's needrestart would list the services to restart after the install.
+DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y -q \
+	"$INCUS" btrfs-progs nftables curl python3 >/dev/null
 
 echo "Installing hermes-manager into $LIB"
 mkdir -p "$LIB"

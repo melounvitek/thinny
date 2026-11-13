@@ -1,6 +1,6 @@
 # hermes-manager
 
-Turns a Debian 13 server into a shared [Hermes Agent](https://github.com/NousResearch/hermes-agent)
+Turns a Debian 13 or Ubuntu server into a shared [Hermes Agent](https://github.com/NousResearch/hermes-agent)
 server for a small organisation, such as an office of a dozen people who are not programmers.
 The server gets one central policy and one Hermes release for everyone. Each person gets their
 own [Incus](https://linuxcontainers.org/incus/) system container with their own Hermes and a
@@ -62,9 +62,11 @@ hermes-manager does not install them. A person can install them with `sudo`.
 
 ## Requirements
 
-- Debian 13 (`install.sh` warns on anything else) and root access over SSH with a key.
-- Incus from Debian's `incus-base` package, which `install.sh` installs. Containers only, no
-  virtual machines, so the server needs no nested virtualisation.
+- Debian 13, Ubuntu 26.04 or Ubuntu 24.04 (`install.sh` warns on anything else) and root
+  access over SSH with a key.
+- Incus from the distribution's `incus-base` package (`incus` on Ubuntu 24.04), which
+  `install.sh` installs. Containers only, no virtual machines, so the server needs no nested
+  virtualisation.
 - Internet access from the server for GitHub, the Hermes installer and what it downloads, the
   Debian container image (`images.linuxcontainers.org`), Debian mirrors and the model provider.
   `network.interface` must name the server's internet interface (`eth0` by default).
@@ -78,8 +80,9 @@ hermes-manager does not install them. A person can install them with `sudo`.
   oifname "hm-*" ct state established,related accept
   ```
 
-  Without them, `add-person` fails at the packages and `check` reports that the container
-  cannot reach the internet.
+  With ufw, which drops forwarded traffic by default, run `ufw route allow in on hm-+`
+  instead. Without this, `add-person` fails at the packages and `check` reports that the
+  container cannot reach the internet.
 - Hermes from its latest stable release. Tested with Hermes v0.23.
 - Rough sizing, measured on a test server: about 0.4 GB RAM per idle person, plus what their
   agent's browser and tools use, and about 3 GB disk for each person's Hermes plus their
@@ -133,10 +136,10 @@ table inet filter {
 Load it with `nft -f /etc/nftables.conf`. `check` also warns when no forward chain drops by
 default: hermes-manager turns IPv4 forwarding on, so the server would route between its networks.
 
-> **Never run `systemctl restart nftables` on Debian while containers run.** Its stop step
-> runs `nft flush ruleset`, which removes every table: Tailscale's, Incus's anti-spoofing
+> **Never run `systemctl restart nftables` on Debian or Ubuntu while containers run.** Its stop
+> step runs `nft flush ruleset`, which removes every table: Tailscale's, Incus's anti-spoofing
 > rules and hermes-manager's. A config file that starts with `flush ruleset` does the same,
-> and Debian's default file does. If it happens, run `hermes-manager apply` (it reloads the
+> and the default file does. If it happens, run `hermes-manager apply` (it reloads the
 > containers' table) and `systemctl restart tailscaled`, then reboot at a quiet time: Incus
 > sets up its anti-spoofing rules when a container starts.
 
@@ -190,7 +193,9 @@ The second run:
 1. creates the Incus storage pool `default`: btrfs in a sparse file, sized once to 80% of
    the free space under `/var/lib`. It takes space only as people use it;
 2. loads the firewall table and makes `incus.service` load it before it starts;
-3. turns on IPv4 forwarding and installs the nightly update timer;
+3. turns on IPv4 forwarding and installs the nightly update timer. On Ubuntu, it also turns
+   off AppArmor's restriction on user namespaces, without which the agent's browser cannot
+   start. A person is root in their container and can create them anyway, as on Debian;
 4. creates the Incus profile `hm-person` with the `[container]` limits;
 5. writes `/etc/hermes`.
 
@@ -476,6 +481,7 @@ helps. It exits with status 1 when anything fails, so you can use it from monito
   - the Incus storage pool `default` and profile `hm-person` exist;
   - `incus.service` loads the firewall table before it starts;
   - IPv4 forwarding is on;
+  - on Ubuntu, AppArmor lets people create user namespaces (their browser needs them);
   - `/etc/hermes` matches `site.toml`;
   - the release everyone runs, and the update timer is enabled;
   - the last nightly update result: `FAIL` if it failed, `WARN` if it is missing or older

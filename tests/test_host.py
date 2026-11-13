@@ -63,5 +63,6 @@ def test_units_and_forwarding(commands):
     host.install_units(S)
     assert (host.SYSTEMD / "incus.service.d/hermes-manager.conf").read_text() == render.INCUS_DROPIN
     assert "net.ipv4.ip_forward = 1" in host.SYSCTL_FILE.read_text()
+    assert "-kernel.apparmor_restrict_unprivileged_userns = 0" in host.SYSCTL_FILE.read_text()
     assert [c for c, _ in calls] == ["systemctl daemon-reload", "systemctl enable --now hermes-manager-update.timer",
-                                     f"sysctl -q -p {host.SYSCTL_FILE}"]
+                                     f"/usr/lib/systemd/systemd-sysctl {host.SYSCTL_FILE}"]

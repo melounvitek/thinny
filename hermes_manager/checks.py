@@ -23,6 +23,7 @@ BYPASS_VARS = ("HERMES_MANAGED_DIR", "HERMES_BUNDLED_PLUGINS", "HERMES_ENABLE_PR
 FORWARD_FIX = """let the containers' traffic through your firewall's forward chain, e.g. in /etc/nftables.conf:
   iifname "hm-*" accept
   oifname "hm-*" ct state established,related accept
+or with ufw: ufw route allow in on hm-+
 (table inet hermes_manager does the filtering; see README, Requirements)"""
 
 
@@ -54,6 +55,11 @@ def install(s: Settings, reg: Registry):
     forwarding = Path("/proc/sys/net/ipv4/ip_forward").read_text().strip()
     yield (ok("IPv4 forwarding on") if forwarding == "1"
            else fail("IPv4 forwarding off: containers have no network", "hermes-manager apply"))
+    userns = Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")  # Ubuntu only
+    if userns.exists():
+        yield (ok("AppArmor lets people create user namespaces") if userns.read_text().strip() == "0"
+               else fail("AppArmor keeps people from creating user namespaces: their browser cannot start",
+                         "hermes-manager apply"))
     yield (ok(f"{host.MANAGED} matches site.toml") if host.managed_scope_current(s)
            else warn(f"{host.MANAGED} is not as site.toml says", "hermes-manager apply"))
     if host.RELEASE_FILE.exists():

@@ -112,7 +112,7 @@ def install_units(s: Settings) -> None:
         run(["systemctl", "daemon-reload"])
     run(["systemctl", "enable", "--now", "hermes-manager-update.timer"])
     write_file(SYSCTL_FILE, render.SYSCTL)
-    run(["sysctl", "-q", "-p", str(SYSCTL_FILE)])
+    run(["/usr/lib/systemd/systemd-sysctl", str(SYSCTL_FILE)])  # as at boot; sysctl -p ignores "-"
 
 
 def firewall(s: Settings) -> None:

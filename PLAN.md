@@ -6,7 +6,7 @@ keeps the design and what we learned.
 
 ## 1. Goal
 
-Turn a Debian 13 server into a shared Hermes Agent server for a small organisation
+Turn a Debian 13 or Ubuntu (26.04, 24.04) server into a shared Hermes Agent server for a small organisation
 of non-programmers, with one command, and add people
 with a second command (`hermes-manager`).
 
@@ -412,7 +412,7 @@ Tailscale socket are no longer needed: the host has no person accounts.
 ### 6.4 `install.sh`
 
 Idempotent; a rerun repairs and never destroys data or updates Hermes: packages
-(`incus-base`, `btrfs-progs`, `nftables`, `curl`, `python3`; Caddy later when LAN access needs
+(`incus-base`, or `incus` on Ubuntu 24.04, `btrfs-progs`, `nftables`, `curl`, `python3`; Caddy later when LAN access needs
 it), the tool, `site.toml` from the example on the first run, then `hermes-manager install`:
 the storage pool once (80% of the free space under `/var/lib`; no Incus network), then
 `apply`: firewall first, units, sysctl, profile, `/etc/hermes`, Webapp settings, access,
@@ -531,6 +531,23 @@ Container switch (2026-11-12/13):
    the login and the plugins kept, `check` all OK. Reboot: all 36 checks OK, Webapps answer.
    `password`, `access` (local to tailscale) and `remove-person` (stopped, no autostart, port
    closed, access removed).
+
+Ubuntu support (2026-11-13), in local Multipass VMs **[tested]**: 26.04.1 (kernel 7.0, Incus
+6.0.5, Caddy 2.6.2) and 24.04.5 (kernel 6.8, Incus 6.0.0, Caddy 2.6.2). `install.sh` twice,
+alice (local) and bob (lan): `check` all OK, Webapps answer, isolation as on Debian, Docker
+inside, a reboot.
+
+- 24.04 has no `incus-base`; its `incus` has no virtual machines either.
+- Ubuntu's `kernel.apparmor_restrict_unprivileged_userns = 1` keeps the person (not root in
+  the container) from creating user namespaces, so Hermes's Chromium dies ("No usable
+  sandbox"). Incus stacks the host's `unconfined` onto every container label, so the
+  restriction applies there. A profile with `userns,` inside the container did not attach to
+  Chromium; an `incusd` host profile with `userns,` broke container start (LXC wrote
+  "incusd (unconfined)" as the label). Setting it to 0 works, and costs nothing that matters:
+  people are root in their containers and can create user namespaces anyway, as on Debian.
+  `sysctl -p` fails on Debian's missing key despite `-`; `systemd-sysctl` honors it.
+- ufw's default `DEFAULT_FORWARD_POLICY="DROP"` cuts the containers off;
+  `ufw route allow in on hm-+` lets them through, and our table still filters first.
 
 ## 9. Open questions
 
