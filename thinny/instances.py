@@ -86,7 +86,7 @@ def ensure_packages(name: str) -> None:
         time.sleep(3)
     else:
         raise CommandError(f"{name}'s container cannot reach the internet. Does your firewall's forward chain "
-                           "let it through? See README, Requirements.")
+                           "let it through? See README, Prerequisites.")
     in_container(name, ["sh", "-c", 'export DEBIAN_FRONTEND=noninteractive && apt-get update -q --error-on=any && '
                         'apt-get install -y -q --no-install-recommends "$@" && apt-get clean',
                         "sh", *render.PACKAGES], timeout=3600)

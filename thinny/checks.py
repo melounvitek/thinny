@@ -24,7 +24,7 @@ FORWARD_FIX = """let the containers' traffic through your firewall's forward cha
   iifname "thinny-*" accept
   oifname "thinny-*" ct state established,related accept
 or with ufw: ufw route allow in on thinny-+
-(table inet thinny does the filtering; see README, Requirements)"""
+(table inet thinny does the filtering; see README, Prerequisites)"""
 
 
 def ok(message: str):
