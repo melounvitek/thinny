@@ -31,6 +31,7 @@ class Person:
     url: str = ""
     address: str = ""
     state: str = "pending"
+    built_ins: str = ""   # render.BUILT_INS their container last got in full
 
 
 def validate_name(name: str) -> None:

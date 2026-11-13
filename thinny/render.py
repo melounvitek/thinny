@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 
@@ -38,6 +39,8 @@ PLUGINS = (
     # Calls over a phone line. Not in the catalog, so pinned here.
     ("hermes-3310", ("https://github.com/melounvitek/hermes-3310", "--ref", "17bfb3f8e670c03a7e647cd1162d48a2570b7dc0")),
 )
+# Changes with PACKAGES and PLUGINS; the next update gives them to everyone who has an older set.
+BUILT_INS = hashlib.sha256(repr((PACKAGES, PLUGINS)).encode()).hexdigest()[:12]
 
 
 def to_yaml(value, indent: int = 0) -> str:

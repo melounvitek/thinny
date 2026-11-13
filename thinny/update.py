@@ -7,10 +7,10 @@ import datetime as dt
 import json
 from pathlib import Path
 
-from . import host, people
+from . import host, people, render
 from .registry import Registry
 from .settings import Settings
-from .system import STATE_DIR, log, write_file
+from .system import STATE_DIR, CommandError, as_user, log, write_file
 
 STATUS_FILE = STATE_DIR / "update-status.json"
 # "<tag> <commit> [<person being updated>]" while an update runs; a later run finishes the job.
@@ -36,10 +36,21 @@ def run(s: Settings, reg: Registry, *, dry_run: bool = False, now: bool = False)
                 write_file(UNFINISHED, f"{tag} {commit}\n", 0o600)
                 rollout(s, reg, tag, commit)
                 result, detail = "ok", f"updated to {tag}"
+            elif result in ("up-to-date", "waiting") and \
+                    any(p.built_ins != render.BUILT_INS for p in reg.current() if p.state == "active"):
+                if dry_run or not (s.auto_update or now):
+                    result, detail = "available", "new built-ins" + ("" if s.auto_update else "; automatic updates are off")
+                else:  # at the release everyone runs
+                    tag, commit = host.release()
+                    write_file(UNFINISHED, f"{tag} {commit}\n", 0o600)
+                    rollout(s, reg, tag, commit)
+                    result, detail = "ok", f"new built-ins at {tag}"
         if result == "ok" and REBOOT_REQUIRED.exists():
             detail += "; the OS needs a reboot"
     except Exception as e:  # noqa: BLE001 - any failure must end as FAILED
         result, detail = "FAILED", str(e) or type(e).__name__
+    if not dry_run:
+        update_claude(reg)
     log(f"{result}: {detail}")
     if not dry_run:
         status = {"time": dt.datetime.now().isoformat(timespec="seconds"), "result": result, "detail": detail}
@@ -65,20 +76,35 @@ def due(s: Settings, *, dry_run: bool, now: bool) -> tuple[str, str, str]:
 
 
 def rollout(s: Settings, reg: Registry, tag: str, commit: str, current: str = "") -> None:
-    """Every active person to `commit`, one at a time, each followed by a checked restart. Stops
-    at the first failure. A repeat starts with the person it stopped at (their checkout may be at
-    the commit while the rest of their update is not), then skips the people already done. New
-    people get the release once everyone runs it."""
+    """Every active person to `commit` and the current built-ins, one at a time, each followed by a
+    checked restart. Stops at the first failure. A repeat starts with the person it stopped at
+    (their checkout may be at the commit while the rest of their update is not), then skips the
+    people already done. New people get the release once everyone runs it."""
     active = [p for p in reg.current() if p.state == "active"]
     for p in sorted(active, key=lambda p: p.name != current):  # the person it stopped at first
-        if p.name != current and people.installed_commit(p.name) == commit:
+        if p.name != current and p.built_ins == render.BUILT_INS and people.installed_commit(p.name) == commit:
             continue
         log(f"{p.name}: Hermes {tag}")
         write_file(UNFINISHED, f"{tag} {commit} {p.name}\n", 0o600)
         people.mark_restart([p.name])
         people.ensure_packages(p.name)  # a new Hermes may need packages the list gained since
-        people.install_hermes(s, p.name, commit, enable=False)
+        people.ensure_account(p.name)   # and the groups new built-ins need
+        # Plugins are turned on only when the built-ins change, so a Hermes update keeps what people turned off.
+        people.install_hermes(s, p.name, commit, enable=p.built_ins != render.BUILT_INS)
         people.restart_all(s, [p], reg)  # with the restarts an interrupted run still owes
+        p.built_ins = render.BUILT_INS
+        reg.save()
     people.restart_all(s, [], reg)
     host.write_release(tag, commit)
     UNFINISHED.unlink(missing_ok=True)
+
+
+def update_claude(reg: Registry) -> None:
+    """Claude Code for everyone, whatever happened to Hermes: the Claude subscription plugin turns its
+    self-update off. A failure is only logged."""
+    for p in reg.current():
+        if p.state == "active":
+            try:
+                as_user(p.name, ["claude", "update"], timeout=600)
+            except CommandError as e:
+                log(f"{p.name}: Claude Code not updated: {e}")

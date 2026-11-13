@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from thinny import host, people, system
+from thinny import host, people, render, system
 from thinny.registry import Person, Registry
 from thinny.settings import Settings
 from thinny.system import CommandError
@@ -167,6 +167,7 @@ def test_a_new_person_gets_their_own_container_with_hermes(incus):
     reg = Registry()
     people.add(S, reg, "alice", "local")
     assert reg.get("alice").state == "active" and reg.get("alice").url == "http://alice.localhost:9120/"
+    assert reg.get("alice").built_ins == render.BUILT_INS
     assert incus.ran("incus init images:debian/13 alice --profile hm-person")   # nothing from the default profile
     assert incus.ran("incus config device add alice eth0 nic nictype=routed ipv4.address=10.78.0.1 host_name=hm-9120")
     assert incus.ran("incus config device add alice policy disk source=/etc/hermes path=/etc/hermes readonly=true")

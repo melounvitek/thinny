@@ -328,7 +328,7 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     host.reconcile_access(s, reg)
     log(f"{name}: gateway")
     start_or_restart_gateway(s, p)
-    p.state = "active"
+    p.state, p.built_ins = "active", render.BUILT_INS
     reg.save()
 
     print(f"\n{name} is ready.\n  Webapp:   {p.url}\n  Username: {name}")
