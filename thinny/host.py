@@ -18,6 +18,7 @@ MANAGED = Path("/etc/hermes")
 LIB = Path(__file__).resolve().parent.parent      # this repository, installed to /usr/local/lib/thinny
 FILES = LIB / "files"
 CADDYFILE = Path("/etc/caddy/Caddyfile")
+OFFICE_CA = Path("/etc/thinny/office-root.crt")   # Caddy's root certificate, readable by any account
 FIREWALL_FILE = Path(render.FIREWALL_FILE)
 SYSCTL_FILE = Path("/etc/sysctl.d/90-thinny.conf")
 SYSTEMD = Path("/etc/systemd/system")
@@ -137,6 +138,10 @@ def reconcile_access(s: Settings, reg: Registry) -> None:
         if write_file(CADDYFILE, render.caddyfile(s, lan, tunnel)):
             run(["caddy", "validate", "--config", str(CADDYFILE), "--adapter", "caddyfile"], check=False)
             run(["systemctl", "restart", "caddy"])  # no admin API, so no reload
+    # Only caddy can read its own copy. A certificate authority Caddy has not created yet is copied
+    # by a later run; doctor warns until then.
+    if lan and caddy_root_ca().exists():
+        write_file(OFFICE_CA, caddy_root_ca().read_text())
 
     status = tailscale_status()
     if status is None:

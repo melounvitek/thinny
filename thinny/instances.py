@@ -398,7 +398,7 @@ def _print_access_hint(s: Settings, inst: Instance) -> None:
     elif inst.access == "local":
         print(f"  Open with: ssh -L {inst.port}:127.0.0.1:{inst.port} root@<server>, then browse to {inst.url}")
     elif inst.access == "lan":
-        print(f"  Office PCs should trust Caddy's certificate: {host.caddy_root_ca()} (see README).")
+        print(f"  Office PCs should trust Caddy's certificate: {host.OFFICE_CA} (see README).")
 
 
 def change_access(s: Settings, reg: Registry, name: str, access: str, url: str = "") -> None:

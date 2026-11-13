@@ -171,8 +171,11 @@ def caddy(s: Settings, reg: Registry):
         url = f"http://127.0.0.1:{s.tunnel_port}/"
         yield (ok(f"Caddy answers the tunnel at {url}") if system.http_status(url) != "000"
                else fail(f"nothing answers the tunnel at {url}", "thinny config apply"))
-    if lan and host.caddy_root_ca().exists():
-        yield ok(f"Caddy root certificate for office PCs: {host.caddy_root_ca()}")
+    if lan:
+        ca = host.caddy_root_ca()
+        yield (ok(f"Caddy root certificate for office PCs: {host.OFFICE_CA}")
+               if ca.exists() and host.OFFICE_CA.exists() and host.OFFICE_CA.read_text() == ca.read_text()
+               else warn(f"{host.OFFICE_CA} is missing or not Caddy's root certificate", "thinny config apply"))
 
 
 # ---------- per-instance checks ----------

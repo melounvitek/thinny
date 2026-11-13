@@ -81,3 +81,22 @@ def test_units_and_forwarding(commands):
     assert "-kernel.apparmor_restrict_unprivileged_userns = 0" in host.SYSCTL_FILE.read_text()
     assert [c for c, _ in calls] == ["systemctl daemon-reload", "systemctl enable --now thinny-update.timer",
                                      f"/usr/lib/systemd/systemd-sysctl {host.SYSCTL_FILE}"]
+
+
+def test_lan_access_copies_caddys_root_certificate_for_any_account(commands, tmp_path, monkeypatch):
+    monkeypatch.setattr(host, "CADDYFILE", tmp_path / "Caddyfile")
+    monkeypatch.setattr(host, "OFFICE_CA", tmp_path / "thinny" / "office-root.crt")
+    ca = tmp_path / "caddy" / "root.crt"
+    monkeypatch.setattr(host, "caddy_root_ca", lambda: ca)
+    monkeypatch.setattr(host, "tailscale_status", lambda: None)
+    monkeypatch.setattr(host.shutil, "which", lambda name: f"/usr/bin/{name}")
+    reg = Registry({"bob": Instance("bob", 9121, "lan", state="active")})
+    lan = dataclasses.replace(S, lan_address="192.168.1.10")
+    host.reconcile_access(lan, reg)                 # Caddy has not created its certificate authority yet
+    assert not host.OFFICE_CA.exists()
+    for cert in ("-----BEGIN CERTIFICATE-----\nfirst\n", "-----BEGIN CERTIFICATE-----\nsecond\n"):
+        ca.parent.mkdir(exist_ok=True)
+        ca.write_text(cert)
+        host.reconcile_access(lan, reg)
+        assert host.OFFICE_CA.read_text() == cert
+        assert oct(host.OFFICE_CA.stat().st_mode & 0o777) == "0o644"

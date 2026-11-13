@@ -38,6 +38,8 @@ find "$LIB" -name __pycache__ -prune -exec rm -rf {} +
 chmod 755 "$LIB/bin/thinny"
 ln -sfn "$LIB/bin/thinny" /usr/local/sbin/thinny
 echo "$SRC" >"$LIB/source" # thinny update pulls this clone
+# 755 whatever the umask: any account may fetch the office certificate in it.
+install -d -m 755 /etc/thinny
 
 if [ ! -f "$SITE" ]; then
 	echo
@@ -46,7 +48,6 @@ if [ ! -f "$SITE" ]; then
 		/usr/local/sbin/thinny init </dev/tty || { echo "To try again: sh $SRC/install.sh" >&2; exit 1; }
 		echo
 	else
-		install -d -m 755 /etc/thinny
 		install -m 644 "$SRC/site.example.toml" "$SITE"
 		echo "Edit $SITE (model, LAN address, ...), then run: sh $SRC/install.sh"
 		exit 0

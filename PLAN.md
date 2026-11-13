@@ -565,7 +565,8 @@ private ones and the tailnet are always blocked). `site.example.toml` lists ever
 - Prerequisites (section 6.3), all WARN.
 - Firewall: the loaded table is exactly what `site.toml` renders, chain by chain (FAIL).
 - Caddy active when any instance uses LAN access, or own addresses with a tunnel port (FAIL);
-  then something answers at the tunnel port (FAIL).
+  then something answers at the tunnel port (FAIL), and with LAN access `/etc/thinny/office-root.crt`
+  is Caddy's root certificate (WARN).
 - Per instance: container running and reaching the internet (FAIL; the fix shows the
   forward-chain lines); gateway active and Webapp answering (FAIL), `public_url` as recorded
   (WARN); Hermes at the recorded commit (WARN); Claude Code and the built-in plugins installed

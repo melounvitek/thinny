@@ -195,3 +195,18 @@ def test_status_is_the_quick_look(tmp_path, monkeypatch, capsys):
                                        "OK   alice: running, gateway active\n"
                                        "FAIL bob: container is STOPPED\n"
                                        "     fix: incus start bob\n")
+
+
+def test_doctor_points_office_pcs_at_the_copy_of_caddys_root_certificate(tmp_path, monkeypatch):
+    monkeypatch.setattr(system, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "active\n", ""))
+    ca, copy = tmp_path / "root.crt", tmp_path / "office-root.crt"
+    monkeypatch.setattr(host, "caddy_root_ca", lambda: ca)
+    monkeypatch.setattr(host, "OFFICE_CA", copy)
+    reg = Registry({"bob": Instance("bob", 9121, "lan", state="active")})
+    ca.write_text("new")
+    for text, level in ((None, "WARN"), ("old", "WARN"), ("new", "OK")):
+        if text:
+            copy.write_text(text)
+        result = list(checks.caddy(S, reg))[-1]
+        assert result[0] == level and str(copy) in result[1]
+        assert result[2] == ("" if level == "OK" else "thinny config apply")

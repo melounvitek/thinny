@@ -201,11 +201,12 @@ Use HTTPS for network addresses: on plain HTTP, browsers turn off the Webapp's c
 microphone, notifications and the Bot Screen. `<name>.localhost` through SSH keeps them.
 
 **LAN certificate:** thinny runs Caddy with its own certificate authority and owns
-`/etc/caddy/Caddyfile`. Install its root certificate as trusted on each office PC (on Windows:
+`/etc/caddy/Caddyfile`. It copies the root certificate to `/etc/thinny/office-root.crt`, readable
+by any account. Install it as trusted on each office PC (on Windows:
 `certutil -addstore Root office-root.crt` as administrator):
 
 ```sh
-scp root@<server>:/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt office-root.crt
+scp <you>@<server>:/etc/thinny/office-root.crt .
 ```
 
 **One tunnel for every `url` instance:** set `access.tunnel_port` (e.g. `8080`) and run
