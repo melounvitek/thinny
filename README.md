@@ -272,7 +272,13 @@ thinny status   # release, last update, containers, gateways
 thinny doctor   # every isolation and health check, each with a fix
 ```
 
-Both exit with status 1 when anything fails, so monitoring can use them.
+Both exit with status 1 when anything fails, so monitoring can use them. Over SSH, a sudo account
+that needs a password cannot run them unattended (`sudo -n thinny doctor` fails). Both only read,
+so allow exactly these two without a password, with `sudo visudo -f /etc/sudoers.d/thinny-checks`:
+
+```
+<you> ALL=(root) NOPASSWD: /usr/local/sbin/thinny status, /usr/local/sbin/thinny doctor
+```
 
 ## Extras
 
