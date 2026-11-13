@@ -507,7 +507,7 @@ container; the proxy device publishes it on the same host loopback port, and eve
 points there: **LAN** a Caddy site with its local CA (`tls internal`); **Tailscale**
 `tailscale serve --bg --https=<port>`, offered only when Tailscale runs; **own address** the
 URL entered, the admin points a proxy at the port; **local** `http://<name>.localhost:<port>/`
-through `ssh -L <port>:127.0.0.1:<port> root@<server>`.
+through `ssh -L <port>:127.0.0.1:<port> <you>@<server>`.
 
 With `access.tunnel_port`, Caddy also serves every own address at `http://127.0.0.1:<tunnel_port>`
 for one tunnel (cloudflared with a wildcard route): one site per host, with an instance on its

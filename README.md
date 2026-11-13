@@ -38,11 +38,13 @@ private networks or the tailnet, and cannot change the shared policy.
 
 ## Requirements
 
-- Debian 13, Ubuntu 26.04 or Ubuntu 24.04, with root SSH access by key.
+- Debian 13, Ubuntu 26.04 or Ubuntu 24.04, with SSH by key, as root or as a user with sudo.
 - Internet access for GitHub, the Hermes and Claude Code installers, `images.linuxcontainers.org`,
   Debian mirrors and the model provider.
 - About 0.4 GB RAM and 3 GB disk per idle instance, plus what its agent, Docker and Claude Code
   use.
+
+With a sudo account, prefix the commands with `sudo` (`sudo thinny …`, `sudo incus …`).
 
 ## Prerequisites
 
@@ -112,6 +114,12 @@ As root, with `curl`:
 bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/melounvitek/thinny/main/bin/install | bash'
 ```
 
+Or with sudo:
+
+```sh
+bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/melounvitek/thinny/main/bin/install | sudo bash'
+```
+
 <details>
 <summary>What it does</summary>
 
@@ -139,7 +147,7 @@ server once you confirm. Everything else keeps the example's defaults: change th
 
 Without a terminal, it stops after copying the example. Edit `/etc/thinny/site.toml` (at least
 `policy.model`, `network.interface` and `access.lan_address`, or `""` and another
-`access.default`), then run `sh /usr/local/src/thinny/install.sh`.
+`access.default`), then run `sudo sh /usr/local/src/thinny/install.sh`.
 
 Rerunning `install.sh` is safe. `thinny update` updates thinny itself too (see [Updates](#updates)).
 A changed model guard loads at each gateway's next restart (`thinny instance restart`).
@@ -152,6 +160,9 @@ Every key of `/etc/thinny/site.toml` is commented in [`site.example.toml`](site.
 thinny config edit    # edit a copy, check it, then apply it
 thinny config apply   # apply after editing the file another way
 ```
+
+With sudo, name your editor in the command: `sudo EDITOR=vim thinny config edit` (sudo drops
+`EDITOR`). Avoid `sudo -E`: it also keeps your `HOME`, where Incus then leaves root-owned files.
 
 Applying restarts gateways one by one where needed. `policy.language`, `port_range` and the
 `[webapp]` look apply only to instances added afterwards. A new `language_pack` reaches existing
@@ -186,7 +197,7 @@ thinny instance restart [alice ...]
   running instance.
 - Names are 2-32 lowercase letters, digits and `-`, starting with a letter. Names and ports are
   never reused, and a disabled instance cannot be re-enabled.
-- Shell in a container: `incus exec alice -- runuser -l alice` (or `-- bash` for root).
+- Shell in a container: `sudo incus exec alice -- runuser -l alice` (or `-- bash` for root).
 
 ## Access
 
@@ -195,7 +206,7 @@ thinny instance restart [alice ...]
 | `lan`       | `https://<lan_address>:<port>/`              | trust Caddy's certificate on office PCs |
 | `tailscale` | `https://<machine>.<tailnet>.ts.net:<port>/` | the server and users' devices on the tailnet, with MagicDNS and HTTPS certificates |
 | `url=<URL>` | your URL                                     | a proxy or tunnel on this server, serving HTTPS and forwarding to `http://127.0.0.1:<port>`, or one tunnel for all (below) |
-| `local`     | `http://<name>.localhost:<port>/`            | `ssh -L <port>:127.0.0.1:<port> root@<server>` |
+| `local`     | `http://<name>.localhost:<port>/`            | `ssh -L <port>:127.0.0.1:<port> <you>@<server>` |
 
 Use HTTPS for network addresses: on plain HTTP, browsers turn off the Webapp's clipboard,
 microphone, notifications and the Bot Screen. `<name>.localhost` through SSH keeps them.
