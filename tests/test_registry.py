@@ -16,6 +16,15 @@ def test_instances_get_the_lowest_free_port_and_survive_a_save(tmp_path):
     assert oct(path.stat().st_mode & 0o777) == "0o600"
 
 
+def test_any_account_can_enter_the_state_directory_but_not_list_it(tmp_path):
+    path = tmp_path / "thinny" / "instances.json"
+    Registry().save(path)
+    assert oct(path.parent.stat().st_mode & 0o777) == "0o711"
+    path.parent.chmod(0o700)    # as before
+    Registry().save(path)
+    assert oct(path.parent.stat().st_mode & 0o777) == "0o711"
+
+
 def test_ports_of_disabled_instances_are_never_reused():
     reg = Registry()
     reg.add("alice", "lan", (9120, 9121)).state = "disabled"

@@ -4,7 +4,7 @@
     {
       "name": "Hermes nightly update",
       "kind": "hermes-update",
-      "host": "root@<server>"
+      "host": "<user>@<server>"
     },
     {
       "name": "Nightly snapshot",

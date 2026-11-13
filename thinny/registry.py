@@ -54,7 +54,9 @@ class Registry:
         return cls({name: Instance(name=name, **fields) for name, fields in data["instances"].items()})
 
     def save(self, path: Path = REGISTRY) -> None:
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # Any account may read the update status next to it (extras/nightly-watch), not list the directory.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.chmod(0o711)
         data = {"instances": {inst.name: {k: v for k, v in asdict(inst).items() if k != "name"}
                               for inst in sorted(self.instances.values(), key=lambda inst: inst.port)}}
         tmp = path.with_name(path.name + ".tmp")

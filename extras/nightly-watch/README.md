@@ -27,7 +27,8 @@ Copy `config.example.json` and fill in the placeholders.
 - `max_age_hours`: default `26`.
 - `jobs[].name`: shown in the alert.
 - `jobs[].kind`: one of the kinds above.
-- `jobs[].host`: SSH destination `<user>@<host>`; that user must be able to read the file.
+- `jobs[].host`: SSH destination `<user>@<host>`; that user must be able to read the file. Any
+  account on a thinny server can read its update status, so it needs no root SSH.
 - `jobs[].file`: the status file; required for `netcup-snapshot`.
 
 ## Cron
