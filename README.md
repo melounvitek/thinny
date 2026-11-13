@@ -106,19 +106,33 @@ Unattended-Upgrade::Automatic-Reboot-Time "05:00";
 
 ## Install
 
-As root:
+As root, with `curl`:
 
 ```sh
-apt update
-git clone <repository URL> /root/thinny
-cd /root/thinny
-sh install.sh
+bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/melounvitek/thinny/main/bin/install | bash'
 ```
 
-The first run installs the packages and the tool, then stops. Edit `/etc/thinny/site.toml`: set
+<details>
+<summary>What it does</summary>
+
+1. Downloads and runs thinny's installer from the `main` branch.
+2. Installs Git with apt if it is missing.
+3. Clones thinny to `/usr/local/src/thinny`. If a clone is already there, it uses it as it is.
+4. Runs its `install.sh`, which installs the packages (Incus, btrfs-progs, nftables, curl, Git,
+   Python 3), copies thinny to `/usr/local/lib/thinny` and links the `thinny` command to
+   `/usr/local/sbin/thinny`.
+5. On the first run, it creates `/etc/thinny/site.toml` from the example and stops.
+6. Once `site.toml` exists, it runs `thinny setup`: the Incus storage pool, the firewall, the
+   update timer and the shared policy.
+
+It does not add any instances.
+
+</details>
+
+After the first run, edit `/etc/thinny/site.toml`: set
 at least `policy.model` (with the model lock also `policy.allowed_models`), `network.interface`
-and `access.lan_address` (or `""` and another `access.default` without LAN access). Then run `sh install.sh` again to set
-up Incus, the firewall and the update timer.
+and `access.lan_address` (or `""` and another `access.default` without LAN access). Then run
+`sh /usr/local/src/thinny/install.sh` to set up Incus, the firewall and the update timer.
 
 Rerunning `install.sh` is safe. `thinny update` updates thinny itself too (see [Updates](#updates)).
 A changed model guard loads at each gateway's next restart (`thinny instance restart`).

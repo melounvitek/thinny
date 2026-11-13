@@ -1,0 +1,17 @@
+#!/bin/sh
+# One-line install, as root:
+#   bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/melounvitek/thinny/main/bin/install | bash'
+# Git, a clone of thinny in /usr/local/src/thinny (kept when there is one), then its install.sh.
+set -eu
+
+REPOSITORY=https://github.com/melounvitek/thinny.git
+SRC=/usr/local/src/thinny
+
+[ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
+if ! command -v git >/dev/null; then
+	echo "Installing git"
+	apt-get update -q >/dev/null
+	DEBIAN_FRONTEND=noninteractive apt-get install -y -q git >/dev/null
+fi
+[ -d "$SRC/.git" ] || git clone -q "$REPOSITORY" "$SRC"
+exec sh "$SRC/install.sh"

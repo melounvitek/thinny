@@ -459,6 +459,9 @@ the storage pool once (80% of the free space under `/var/lib`; no Incus network)
 `config apply`: firewall first, units, sysctl, profile, `/etc/hermes`, Webapp settings, access,
 remembered restarts. No Hermes on the host.
 
+`bin/install` is the one-line install (`curl ... | bash`): Git, a clone in
+`/usr/local/src/thinny` (an existing one is kept), then its `install.sh`.
+
 ### 6.5 `thinny`
 
 ```
