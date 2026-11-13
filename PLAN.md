@@ -221,6 +221,13 @@ accounts on a separate v0.23.0 install, updated it to v0.23.1 and rebooted the s
   root gets 403 (Hermes checks the connection belongs to the user's account). A
   `public_url` of `http://<name>.localhost:<port>/` through a root SSH tunnel works: login
   required, secure context, all features **[tested]**.
+- Under a path: a proxy that strips `/<path>` and sends `X-Forwarded-Prefix: /<path>`, with
+  `public_url` `https://<host>/<path>/`. Redirects, assets, sign-in, the WebSocket and a reload
+  stay under the path; cookies get `__Secure-` and `Path=/<path>`, so two Webapps on one host
+  stay signed in side by side. Over Caddy 2.6.2 with `trusted_proxies` for a stand-in of
+  Cloudflare's edge (Secure cookies need its `X-Forwarded-Proto`, the per-client sign-in limit its
+  `X-Forwarded-For`) **[tested, without a model login]**. Instances on one host share the
+  browser's origin, and with it a few browser-side settings (e.g. `sidebar_state`).
 - Without a ChatGPT login, the Webapp's first screen invites the user to connect other
   providers **[tested]**: do the login before the hand-over.
 - `hermes -p <profile> webapp` does not lock a Webapp to one profile; profiles of one gateway
@@ -502,12 +509,18 @@ points there: **LAN** a Caddy site with its local CA (`tls internal`); **Tailsca
 URL entered, the admin points a proxy at the port; **local** `http://<name>.localhost:<port>/`
 through `ssh -L <port>:127.0.0.1:<port> root@<server>`.
 
+With `access.tunnel_port`, Caddy also serves every own address at `http://127.0.0.1:<tunnel_port>`
+for one tunnel (cloudflared with a wildcard route): one site per host, with an instance on its
+root or one per path (`handle_path`, `X-Forwarded-Prefix`), 404 for anything else. An address is
+a host or a host and one path segment, and a host is never both an instance's root and another's
+path.
+
 ### 6.7 Settings (`site.toml`)
 
 `[hermes]` update timing, `[policy]` provider, models, effort, `model_lock`, approvals, language and
 `language_pack` (a catalog plugin name), `[container]` `cpu`, `memory_mb`, `disk_gb`,
 `[webapp]` port range and the look for new instances (`text_scale` 110), `[access]` `default`,
-`lan_address`, `[network]` `interface` (`eth0`) and `blocked_networks` (public networks;
+`lan_address`, `tunnel_port`, `[network]` `interface` (`eth0`) and `blocked_networks` (public networks;
 private ones and the tailnet are always blocked). `site.example.toml` lists every key.
 
 ### 6.8 Nightly update
@@ -551,7 +564,8 @@ private ones and the tailnet are always blocked). `site.example.toml` lists ever
   48 h).
 - Prerequisites (section 6.3), all WARN.
 - Firewall: the loaded table is exactly what `site.toml` renders, chain by chain (FAIL).
-- Office network: Caddy active when any instance uses LAN access (FAIL).
+- Caddy active when any instance uses LAN access, or own addresses with a tunnel port (FAIL);
+  then something answers at the tunnel port (FAIL).
 - Per instance: container running and reaching the internet (FAIL; the fix shows the
   forward-chain lines); gateway active and Webapp answering (FAIL), `public_url` as recorded
   (WARN); Hermes at the recorded commit (WARN); Claude Code and the built-in plugins installed

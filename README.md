@@ -187,7 +187,7 @@ thinny instance restart [alice ...]
 | ----------- | -------------------------------------------- | --------- |
 | `lan`       | `https://<lan_address>:<port>/`              | trust Caddy's certificate on office PCs |
 | `tailscale` | `https://<machine>.<tailnet>.ts.net:<port>/` | the server and users' devices on the tailnet, with MagicDNS and HTTPS certificates |
-| `url=<URL>` | your URL                                     | a proxy or tunnel on this server, serving HTTPS and forwarding to `http://127.0.0.1:<port>` |
+| `url=<URL>` | your URL                                     | a proxy or tunnel on this server, serving HTTPS and forwarding to `http://127.0.0.1:<port>`, or one tunnel for all (below) |
 | `local`     | `http://<name>.localhost:<port>/`            | `ssh -L <port>:127.0.0.1:<port> root@<server>` |
 
 Use HTTPS for network addresses: on plain HTTP, browsers turn off the Webapp's clipboard,
@@ -200,6 +200,26 @@ microphone, notifications and the Bot Screen. `<name>.localhost` through SSH kee
 ```sh
 scp root@<server>:/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt office-root.crt
 ```
+
+**One tunnel for every `url` instance:** set `access.tunnel_port` (e.g. `8080`) and run
+`thinny config apply`. Caddy then serves every `url` instance at `http://127.0.0.1:8080`, by the
+host and path of its address. Set up the tunnel once, e.g. with Cloudflare:
+
+1. `cloudflared` on this server, with a tunnel route from `*.example.org` to
+   `http://127.0.0.1:8080` and a proxied DNS record `*.example.org` pointing to the tunnel. The
+   free certificate covers one level: `jirka.example.org`, not `jirka.hermes.example.org`.
+2. Cloudflare Access in front, e.g. with an email code. A policy can cover a single path.
+
+Then an instance needs only its address:
+
+```sh
+thinny instance add jirka --access url=https://jirka.example.org/                 # a host of its own
+thinny instance add office-accounting --access url=https://office.example.org/accounting/  # or a path
+```
+
+A host has one instance on its root or one on each path, never both. Instances on one host share
+the browser's origin: a bug or a hijacked agent in one Webapp could act in another signed in on
+the same browser. Share a host only within one organisation.
 
 ## Updates
 
