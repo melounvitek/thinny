@@ -21,6 +21,22 @@ as_root() {
 	fi
 }
 
+if [ -n "$TTY" ] && [ ! -f /etc/thinny/site.toml ]; then
+	cat <<-EOF
+	thinny is meant for a dedicated server, not a desktop or a shared machine. It sets up:
+	  - Incus containers, with their own firewall table and IP forwarding
+	  - a storage pool of up to 80% of the free disk space
+	  - user namespaces for every account (Ubuntu restricts them by default)
+	  - a nightly update that runs as root
+	EOF
+	printf "Continue? [y/N] "
+	read -r answer </dev/tty
+	case $answer in
+	[yY]*) ;;
+	*) echo "Nothing installed."; exit 1 ;;
+	esac
+fi
+
 if ! command -v git >/dev/null; then
 	echo "Installing git"
 	as_root apt-get update -q >/dev/null

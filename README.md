@@ -119,15 +119,16 @@ bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/melounvitek/th
 
 1. Downloads and runs thinny's installer from the `main` branch. Without root, it runs the next
    steps with sudo.
-2. Installs Git with apt if it is missing.
-3. Clones thinny to `/usr/local/src/thinny`. If a clone is already there, it uses it as it is.
-4. Runs its `install.sh`, which installs the packages (Incus, btrfs-progs, nftables, curl, Git,
+2. On the first run, lists what it changes on the machine and asks whether to continue.
+3. Installs Git with apt if it is missing.
+4. Clones thinny to `/usr/local/src/thinny`. If a clone is already there, it uses it as it is.
+5. Runs its `install.sh`, which installs the packages (Incus, btrfs-progs, nftables, curl, Git,
    Python 3), copies thinny to `/usr/local/lib/thinny` and links the `thinny` command to
    `/usr/local/sbin/thinny`.
-5. On the first run, `thinny init` asks for the settings below and writes them into
+6. On the first run, `thinny init` asks for the settings below and writes them into
    `/etc/thinny/site.toml`, a copy of the commented example. Without a terminal, it copies the
    example and stops.
-6. Once `site.toml` exists, it runs `thinny setup`: the Incus storage pool, the firewall, the
+7. Once `site.toml` exists, it runs `thinny setup`: the Incus storage pool, the firewall, the
    update timer and the shared policy.
 
 It does not add any instances.
