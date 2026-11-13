@@ -114,7 +114,7 @@ class Incus:
             cmd = list(itertools.dropwhile(lambda a: "=" in a, cmd[cmd.index("-i") + 1:]))
         if cmd[:2] == ["id", "-u"]:
             return "", 0 if c["account"] else 1
-        if cmd[0] == "getent":
+        if cmd[:3] == ["timeout", "10", "getent"]:
             return "", 0 if c.get("internet", True) else 2
         if cmd[0] == "useradd":
             c["account"] = True

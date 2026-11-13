@@ -77,8 +77,8 @@ def ensure_container(p: Person) -> None:
 
 def ensure_packages(name: str) -> None:
     # Without a network apt does not fail, it retries for a very long time: find out first.
-    for _ in range(5):
-        if in_container(name, ["getent", "hosts", "deb.debian.org"], check=False, timeout=60).returncode == 0:
+    for _ in range(3):
+        if in_container(name, ["timeout", "10", "getent", "hosts", "deb.debian.org"], check=False).returncode == 0:
             break
         time.sleep(3)
     else:
