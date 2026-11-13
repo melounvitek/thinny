@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import re
 import tomllib
 from dataclasses import dataclass, fields
@@ -107,6 +108,20 @@ def parse(text: str, source: str = "site.toml") -> Settings:
     settings = Settings(**values)
     _validate(settings, source)
     return settings
+
+
+def fill(template: str, values: dict[tuple[str, str], object]) -> str:
+    """site.toml text: `template` with `values` ((section, key) -> value) set, its comments kept (in their
+    column when the value fits)."""
+    lines, section = [], ""
+    for line in template.splitlines():
+        if m := re.match(r"\[(\w+)\]", line):
+            section = m[1]
+        elif (m := re.match(r"(\w+) = .*?(?:\s+(#.*))?$", line)) and (section, m[1]) in values:
+            new = f"{m[1]} = {json.dumps(values[section, m[1]])}"  # JSON strings, numbers and booleans are TOML
+            line = f"{new:<{m.start(2) - 1}} {m[2]}" if m[2] else new
+        lines.append(line)
+    return "\n".join(lines) + "\n"
 
 
 def _convert(name, type_name, value, source):

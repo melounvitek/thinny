@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from thinny.settings import Settings, SettingsError, parse
+from thinny.settings import Settings, SettingsError, fill, parse
 
 EXAMPLE = Path(__file__).parent.parent / "site.example.toml"
 
@@ -36,6 +36,19 @@ def test_example_parses_once_filled_in():
     s = parse(text)
     assert s.model_lock is False
     assert s.port_range == (9120, 9199)
+
+
+def test_filling_the_example_keeps_its_comments():
+    template = EXAMPLE.read_text()
+    text = fill(template, {("policy", "model"): 'gpt "5"', ("policy", "language_pack"): "hermes-lang-cs",
+                           ("access", "default"): "url", ("access", "lan_address"): "", ("access", "tunnel_port"): 8080,
+                           ("network", "interface"): "enp1s0"})
+    s = parse(text)
+    assert (s.model, s.language_pack, s.access_default, s.lan_address, s.tunnel_port, s.network_interface) == \
+        ('gpt "5"', "hermes-lang-cs", "url", "", 8080, "enp1s0")
+    assert s.language == "en" and s.port_range == (9120, 9199)  # the rest keeps the example's values
+    assert [line.partition("#")[2] for line in text.splitlines()] == \
+        [line.partition("#")[2] for line in template.splitlines()]
 
 
 def test_model_lock_is_off_by_default_and_then_needs_no_allowed_models():
