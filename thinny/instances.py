@@ -1,5 +1,5 @@
-"""Adding, changing and removing people. Each person has their own Incus container; everything in
-their home runs as them, inside it."""
+"""Adding, changing and removing instances. Each instance has its own Incus container; everything in
+its home runs as the instance's account, inside it."""
 
 from __future__ import annotations
 
@@ -11,9 +11,9 @@ import time
 from pathlib import PurePosixPath
 
 from . import host, render
-from .registry import Person, Registry, RegistryError
+from .registry import Instance, Registry, RegistryError
 from .settings import ACCESS_METHODS, Settings
-from .system import (PERSON_UID, STATE_DIR, CommandError, as_user, as_user_interactive, gateway_active, http_status,
+from .system import (INSTANCE_UID, STATE_DIR, CommandError, as_user, as_user_interactive, gateway_active, http_status,
                      in_container, log, read_user_file, run, tailscale_name, uid_of, write_file, write_user_file)
 
 AUTH_PREFIX = "HERMES_DASHBOARD_BASIC_AUTH_"
@@ -35,13 +35,13 @@ def password_hash(password: str) -> str:
 
 
 def home(name: str) -> PurePosixPath:
-    """The person's Hermes home inside their container (its path names their Webapp cookies)."""
+    """The instance's Hermes home inside its container (its path names the Webapp cookies)."""
     return PurePosixPath(f"/home/{name}/.hermes")
 
 
-def url_for(s: Settings, p: Person) -> str:
-    ts = tailscale_name() if p.access == "tailscale" else ""
-    return render.person_url(s, p.name, p.access, p.port, url=p.url, tailscale_name=ts)
+def url_for(s: Settings, inst: Instance) -> str:
+    ts = tailscale_name() if inst.access == "tailscale" else ""
+    return render.instance_url(s, inst.name, inst.access, inst.port, url=inst.url, tailscale_name=ts)
 
 
 # ---------- pieces ----------
@@ -61,19 +61,20 @@ def add_device(name: str, device: str, *args: str) -> None:
         run(["incus", "config", "device", "add", name, device, *args])
 
 
-def ensure_container(p: Person) -> None:
-    """The person's container from the plain Debian image, running, with its network, the
+def ensure_container(inst: Instance) -> None:
+    """The instance's container from the plain Debian image, running, with its network, the
     read-only policy and the Webapp published on the host's loopback (each step repeatable)."""
-    if container_state(p.name) is None:
-        run(["incus", "init", IMAGE, p.name, "--profile", render.PROFILE], timeout=1800)
-    add_device(p.name, "eth0", "nic", "nictype=routed", f"ipv4.address={p.address}", f"host_name=hm-{p.port}")
-    add_device(p.name, "policy", "disk", f"source={host.MANAGED}", f"path={host.MANAGED}", "readonly=true", "shift=true")
-    add_device(p.name, "webapp", "proxy", f"listen=tcp:127.0.0.1:{p.port}", f"connect=tcp:127.0.0.1:{p.port}")
-    if container_state(p.name) != "RUNNING":
-        run(["incus", "start", p.name])
-    in_container(p.name, ["systemctl", "is-system-running", "--wait"], check=False, timeout=300)
-    in_container(p.name, ["sh", "-c", "cat > /etc/systemd/network/eth0.network && systemctl restart systemd-networkd"],
-                 input=render.network_file(p.address))
+    if container_state(inst.name) is None:
+        run(["incus", "init", IMAGE, inst.name, "--profile", render.PROFILE], timeout=1800)
+    add_device(inst.name, "eth0", "nic", "nictype=routed", f"ipv4.address={inst.address}", f"host_name=hm-{inst.port}")
+    add_device(inst.name, "policy", "disk", f"source={host.MANAGED}", f"path={host.MANAGED}",
+               "readonly=true", "shift=true")
+    add_device(inst.name, "webapp", "proxy", f"listen=tcp:127.0.0.1:{inst.port}", f"connect=tcp:127.0.0.1:{inst.port}")
+    if container_state(inst.name) != "RUNNING":
+        run(["incus", "start", inst.name])
+    in_container(inst.name, ["systemctl", "is-system-running", "--wait"], check=False, timeout=300)
+    in_container(inst.name, ["sh", "-c", "cat > /etc/systemd/network/eth0.network && systemctl restart systemd-networkd"],
+                 input=render.network_file(inst.address))
 
 
 def ensure_packages(name: str) -> None:
@@ -91,9 +92,9 @@ def ensure_packages(name: str) -> None:
 
 
 def ensure_account(name: str) -> None:
-    """The person's account in their container: passwordless sudo, user manager kept running."""
+    """The instance's account in its container: passwordless sudo, user manager kept running."""
     if in_container(name, ["id", "-u", name], check=False).returncode != 0:
-        in_container(name, ["useradd", "--create-home", "--shell", "/bin/bash", "--uid", str(PERSON_UID),
+        in_container(name, ["useradd", "--create-home", "--shell", "/bin/bash", "--uid", str(INSTANCE_UID),
                             "--groups", "sudo", name])
     # Docker's group means root in the container, which sudo gives them anyway. Added before their user
     # manager starts: it keeps the groups it started with.
@@ -101,7 +102,7 @@ def ensure_account(name: str) -> None:
     in_container(name, ["sh", "-c", "cat > /etc/sudoers.d/thinny && chmod 440 /etc/sudoers.d/thinny"],
                  input=f"{name} ALL=(ALL) NOPASSWD:ALL\n")
     in_container(name, ["loginctl", "enable-linger", name])
-    bus = f"/run/user/{PERSON_UID}/bus"
+    bus = f"/run/user/{INSTANCE_UID}/bus"
     for _ in range(60):
         if in_container(name, ["test", "-S", bus], check=False).returncode == 0:
             return
@@ -112,7 +113,7 @@ def ensure_account(name: str) -> None:
 def install_hermes(s: Settings, name: str, commit: str, enable: bool) -> None:
     """Hermes at exactly `commit` with the official installer (a first install or an update),
     the Webapp, the Claude Code CLI, the language pack and the built-in plugins. `enable` turns the
-    plugins on in the person's own list."""
+    plugins on in the instance's own list."""
     write_user_file(name, "/tmp/hermes-install.sh", host.installer())
     as_user(name, ["bash", "/tmp/hermes-install.sh", "--channel", "stable", "--commit", commit, "--non-interactive"],
             timeout=3600)
@@ -121,8 +122,8 @@ def install_hermes(s: Settings, name: str, commit: str, enable: bool) -> None:
             timeout=900)
     as_user(name, ["claude", "--version"], timeout=60)
     # The phone plugin's Python packages, as an extra Hermes keeps through every rebuild of its
-    # environment. A plugin's own packages follow the person's own list of plugins that are on, from
-    # which Hermes drops the plugins the model lock turns on whenever it saves their config.
+    # environment. A plugin's own packages follow the instance's own list of plugins that are on, from
+    # which Hermes drops the plugins the model lock turns on whenever it saves its config.
     hermes(name, ["pm", "install", "--extra", "piper"], timeout=1800)
     plugins = ([(s.language_pack,)] if s.language_pack else []) + [args for _, args in render.PLUGINS]
     for args in plugins:
@@ -132,7 +133,7 @@ def install_hermes(s: Settings, name: str, commit: str, enable: bool) -> None:
 
 
 def installed_commit(name: str) -> str:
-    """The commit of the person's Hermes, as their container reports it."""
+    """The commit of the instance's Hermes, as its container reports it."""
     return as_user(name, ["git", "-C", str(home(name) / "hermes-agent"), "rev-parse", "HEAD"],
                    check=False).stdout.strip()
 
@@ -147,7 +148,7 @@ def ensure_model_guard(name: str) -> None:
 
 
 def webapp_settings(name: str) -> dict[str, str]:
-    """The person's `webapp:` settings as text (`hermes config get webapp`)."""
+    """The instance's `webapp:` settings as text (`hermes config get webapp`)."""
     out = hermes(name, ["config", "get", "webapp"], timeout=600).stdout
     current = {}
     for line in out.splitlines():
@@ -158,15 +159,15 @@ def webapp_settings(name: str) -> dict[str, str]:
     return current
 
 
-def configure_webapp(s: Settings, p: Person) -> bool:
-    """Webapp settings in the person's config; True when something changed."""
-    wanted = {"enabled": "true", "host": "127.0.0.1", "port": str(p.port), "public_url": p.url}
-    current = webapp_settings(p.name)
+def configure_webapp(s: Settings, inst: Instance) -> bool:
+    """Webapp settings in the instance's config; True when something changed."""
+    wanted = {"enabled": "true", "host": "127.0.0.1", "port": str(inst.port), "public_url": inst.url}
+    current = webapp_settings(inst.name)
     changes = {key: value for key, value in wanted.items() if current.get(key) != value}
     if changes:
-        mark_restart([p.name])
+        mark_restart([inst.name])
     for key, value in changes.items():
-        hermes(p.name, ["config", "set", f"webapp.{key}", value])
+        hermes(inst.name, ["config", "set", f"webapp.{key}", value])
     return bool(changes)
 
 
@@ -175,8 +176,8 @@ def _env_lines(name: str) -> list[str]:
 
 
 def ensure_sign_in(name: str) -> str | None:
-    """Webapp username and password in the person's .env; returns a new password, or None
-    when they already have one."""
+    """Webapp username and password in the instance's .env; returns a new password, or None
+    when it already has one."""
     lines = _env_lines(name)
     if any(line.startswith(AUTH_PREFIX + "USERNAME=") for line in lines):
         return None
@@ -208,47 +209,47 @@ write_preferences(json.load(sys.stdin), path=store_path(home))
 
 def seed_ui(s: Settings, name: str) -> None:
     """Webapp look from the settings, through Hermes's own store (same lock and revision bump),
-    with the newest Python environment of the person's Hermes."""
+    with the newest Python environment of the instance's Hermes."""
     as_user(name, ["sh", "-c", 'py=$(ls -t "$2"/installs/*/environments/*/venv/bin/python3 | head -n 1) && '
                    'exec "$py" -I -c "$1" "$2"', "sh", SEED_UI, str(home(name))],
             input=json.dumps(render.ui_preferences(s)))
 
 
-def check_gateway(s: Settings, p: Person, timeout: float = 180) -> None:
+def check_gateway(s: Settings, inst: Instance, timeout: float = 180) -> None:
     """Gateway active, Webapp answering, model-guard enabled with the model lock; raise otherwise."""
     deadline = time.time() + timeout
     while True:
-        active = gateway_active(p.name)
-        code = http_status(f"http://127.0.0.1:{p.port}/")
+        active = gateway_active(inst.name)
+        code = http_status(f"http://127.0.0.1:{inst.port}/")
         if active and code[0] in "23":
             break
         if time.time() > deadline:
-            raise CommandError(f"{p.name}: gateway {'active' if active else 'not active'}, Webapp HTTP {code}")
+            raise CommandError(f"{inst.name}: gateway {'active' if active else 'not active'}, Webapp HTTP {code}")
         time.sleep(5)
     if not s.model_lock:
         return
-    if plugin_states(p.name).get("model-guard") != "enabled":
-        raise CommandError(f"{p.name}: model-guard is not enabled")
+    if plugin_states(inst.name).get("model-guard") != "enabled":
+        raise CommandError(f"{inst.name}: model-guard is not enabled")
 
 
 def plugin_states(name: str) -> dict[str, str]:
-    """The person's plugins: name -> enabled, not enabled or disabled."""
+    """The instance's plugins: name -> enabled, not enabled or disabled."""
     rows = json.loads(hermes(name, ["plugins", "list", "--json"], timeout=600).stdout)
     return {row["name"]: row["status"] for row in rows}
 
 
-def start_or_restart_gateway(s: Settings, p: Person) -> None:
-    _gateway_up(s, p)
-    _set_pending([n for n in _pending() if n != p.name])
+def start_or_restart_gateway(s: Settings, inst: Instance) -> None:
+    _gateway_up(s, inst)
+    _set_pending([n for n in _pending() if n != inst.name])
 
 
-def _gateway_up(s: Settings, p: Person) -> None:
-    unit = home(p.name).parent / ".config/systemd/user/hermes-gateway.service"
-    if as_user(p.name, ["test", "-e", str(unit)], check=False).returncode == 0:
-        hermes(p.name, ["gateway", "restart", "--yes"], timeout=RESTART_TIMEOUT)
+def _gateway_up(s: Settings, inst: Instance) -> None:
+    unit = home(inst.name).parent / ".config/systemd/user/hermes-gateway.service"
+    if as_user(inst.name, ["test", "-e", str(unit)], check=False).returncode == 0:
+        hermes(inst.name, ["gateway", "restart", "--yes"], timeout=RESTART_TIMEOUT)
     else:
-        hermes(p.name, ["gateway", "install"], timeout=600)
-    check_gateway(s, p)
+        hermes(inst.name, ["gateway", "install"], timeout=600)
+    check_gateway(s, inst)
 
 
 def _pending() -> list[str]:
@@ -268,18 +269,18 @@ def mark_restart(names: list[str]) -> None:
     _set_pending(list(dict.fromkeys([*_pending(), *names])))
 
 
-def restart_all(s: Settings, people: list[Person], reg: Registry) -> None:
+def restart_all(s: Settings, instances: list[Instance], reg: Registry) -> None:
     """Restart these gateways and every remembered one, one at a time (each waits for a
     running reply); stop at the first failure, leaving the rest remembered."""
-    mark_restart([p.name for p in people])
+    mark_restart([inst.name for inst in instances])
     for name in _pending():
-        p = reg.people.get(name)
-        if p is None or p.state != "active":
+        inst = reg.instances.get(name)
+        if inst is None or inst.state != "active":
             _set_pending([n for n in _pending() if n != name])
             continue
-        log(f"restarting {p.name} (port {p.port})")
-        start_or_restart_gateway(s, p)
-        log(f"  ok {p.name}")
+        log(f"restarting {inst.name} (port {inst.port})")
+        start_or_restart_gateway(s, inst)
+        log(f"  ok {inst.name}")
 
 
 # ---------- commands ----------
@@ -292,11 +293,11 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
         raise CommandError("url access needs the address, e.g. url=https://alice.example.org/")
     if access == "lan" and not s.lan_address:
         raise CommandError("set access.lan_address in site.toml first")
-    if name in reg.people:
-        p = reg.get(name)
-        if p.state == "active":
+    if name in reg.instances:
+        inst = reg.get(name)
+        if inst.state == "active":
             raise CommandError(f"{name} already exists (use: thinny instance access {name} ...)")
-        if p.state == "disabled":
+        if inst.state == "disabled":
             raise CommandError(f"{name} was disabled; names are not reused")
         log(f"resuming the unfinished setup of {name}")
     else:
@@ -304,21 +305,21 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
             raise CommandError(f"{name!r} is a system account name; choose another name")
         if container_state(name) is not None:
             raise CommandError(f"an Incus container {name!r} already exists; choose another name")
-        p = reg.add(name, access, s.port_range)
-    p.access, p.url = access, url if access == "url" else ""
+        inst = reg.add(name, access, s.port_range)
+    inst.access, inst.url = access, url if access == "url" else ""
     reg.save()
 
-    log(f"{name}: container {p.address} (packages take a few minutes)")
-    ensure_container(p)
+    log(f"{name}: container {inst.address} (packages take a few minutes)")
+    ensure_container(inst)
     ensure_packages(name)
     ensure_account(name)
     tag, commit = host.release() or host.first_release()
     log(f"{name}: Hermes {tag} (takes a few minutes)")
     install_hermes(s, name, commit, enable=True)  # a resumed add repeats it: it may have stopped halfway
     ensure_model_guard(name)
-    p.url = url_for(s, p)
+    inst.url = url_for(s, inst)
     reg.save()
-    configure_webapp(s, p)
+    configure_webapp(s, inst)
     hermes(name, ["config", "set", "display.language", s.language])
     if not s.model_lock:  # with the lock the policy sets them
         for key, value in starting_model(s).items():
@@ -327,72 +328,72 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     seed_ui(s, name)
     host.reconcile_access(s, reg)
     log(f"{name}: gateway")
-    start_or_restart_gateway(s, p)
-    p.state, p.built_ins = "active", render.BUILT_INS
+    start_or_restart_gateway(s, inst)
+    inst.state, inst.built_ins = "active", render.BUILT_INS
     reg.save()
 
-    print(f"\n{name} is ready.\n  Webapp:   {p.url}\n  Username: {name}")
+    print(f"\n{name} is ready.\n  Webapp:   {inst.url}\n  Username: {name}")
     print(f"  Password: {password}   (shown once; reset with: thinny instance reset-password {name})" if password
           else "  Password: unchanged (reset with: thinny instance reset-password " + name + ")")
-    _print_access_hint(p)
+    _print_access_hint(inst)
     print(f"Next: sign {name} in to {s.model_provider} before handing over: thinny instance login {name}")
 
 
 def starting_model(s: Settings) -> dict[str, str]:
-    """Where a person added without the model lock starts, in their own config."""
+    """Where an instance added without the model lock starts, in its own config."""
     return {"model.provider": s.model_provider, "model.default": s.model, "agent.reasoning_effort": s.reasoning_effort}
 
 
-def _print_access_hint(p: Person) -> None:
-    if p.access == "url":
-        print(f"  Point your proxy or tunnel at http://127.0.0.1:{p.port} (see README, Access).")
-    elif p.access == "local":
-        print(f"  Open with: ssh -L {p.port}:127.0.0.1:{p.port} root@<server>, then browse to {p.url}")
-    elif p.access == "lan":
+def _print_access_hint(inst: Instance) -> None:
+    if inst.access == "url":
+        print(f"  Point your proxy or tunnel at http://127.0.0.1:{inst.port} (see README, Access).")
+    elif inst.access == "local":
+        print(f"  Open with: ssh -L {inst.port}:127.0.0.1:{inst.port} root@<server>, then browse to {inst.url}")
+    elif inst.access == "lan":
         print(f"  Office PCs should trust Caddy's certificate: {host.caddy_root_ca()} (see README).")
 
 
 def change_access(s: Settings, reg: Registry, name: str, access: str, url: str = "") -> None:
-    p = _active(reg, name)
+    inst = _active(reg, name)
     if access not in ACCESS_METHODS:
         raise CommandError(f"access must be one of {', '.join(ACCESS_METHODS)}")
     if access == "url" and not url.startswith(("https://", "http://")):
         raise CommandError("url access needs the address, e.g. url=https://alice.example.org/")
-    p.access, p.url = access, url if access == "url" else ""
-    p.url = url_for(s, p)
+    inst.access, inst.url = access, url if access == "url" else ""
+    inst.url = url_for(s, inst)
     reg.save()
-    configure_webapp(s, p)
+    configure_webapp(s, inst)
     host.reconcile_access(s, reg)
-    start_or_restart_gateway(s, p)
-    print(f"{name}: {p.url}")
-    _print_access_hint(p)
+    start_or_restart_gateway(s, inst)
+    print(f"{name}: {inst.url}")
+    _print_access_hint(inst)
 
 
 def login(s: Settings, reg: Registry, name: str, claude: bool = False) -> None:
     _active(reg, name)
     if claude:
-        print(f"Signing {name} in to their Claude subscription. Give the link below to {name}, then enter the "
-              "code they get back.")
+        print(f"Signing {name} in to a Claude subscription. Give the link below to whoever uses {name}, then "
+              "enter the code they get back.")
         cmd = ["claude", "auth", "login"]
     else:
-        print(f"Signing {name} in to {s.model_provider}. Give the code below to {name}; it expires in about "
-              "15 minutes.")
+        print(f"Signing {name} in to {s.model_provider}. Give the code below to whoever uses {name}; it expires "
+              "in about 15 minutes.")
         cmd = ["hermes", "auth", "add", s.model_provider, "--type", "oauth", "--no-browser"]
     if as_user_interactive(name, cmd):
         raise CommandError("the login did not finish")
 
 
 def password(s: Settings, reg: Registry, name: str) -> None:
-    p = _active(reg, name)
+    inst = _active(reg, name)
     new = reset_password(name)
-    start_or_restart_gateway(s, p)
+    start_or_restart_gateway(s, inst)
     print(f"{name}: new Webapp password: {new}   (shown once; open browsers must sign in again)")
 
 
 def disable(s: Settings, reg: Registry, name: str) -> None:
-    """Disable a person: their container stops for good; their data stays in it."""
-    p = reg.get(name)
-    if p.state == "disabled":
+    """Disable an instance: its container stops for good; its data stays in it."""
+    inst = reg.get(name)
+    if inst.state == "disabled":
         print(f"{name} is already disabled")
         return
     if container_state(name) is not None:
@@ -402,25 +403,25 @@ def disable(s: Settings, reg: Registry, name: str) -> None:
             run(["incus", "stop", name, "--force"])  # its root may refuse to shut down
         if container_state(name) == "RUNNING":
             raise CommandError(f"{name}'s container is still running")
-    p.state = "disabled"
+    inst.state = "disabled"
     reg.save()
     host.reconcile_access(s, reg)
-    print(f"{name} disabled: container stopped, Webapp and agent with it. Their data stays in the container {name}.")
+    print(f"{name} disabled: container stopped, Webapp and agent with it. Its data stays in the container {name}.")
 
 
-def list_people(reg: Registry) -> None:
+def list_instances(reg: Registry) -> None:
     rows = [("NAME", "STATE", "ACCESS", "PORT", "GATEWAY", "URL")]
-    for p in sorted(reg.people.values(), key=lambda p: p.port):
-        gateway = "-" if p.state == "disabled" or container_state(p.name) is None else \
-            ("active" if gateway_active(p.name) else "INACTIVE")
-        rows.append((p.name, p.state, p.access, str(p.port), gateway, p.url))
+    for inst in sorted(reg.instances.values(), key=lambda inst: inst.port):
+        gateway = "-" if inst.state == "disabled" or container_state(inst.name) is None else \
+            ("active" if gateway_active(inst.name) else "INACTIVE")
+        rows.append((inst.name, inst.state, inst.access, str(inst.port), gateway, inst.url))
     widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
     for r in rows:
         print("  ".join(c.ljust(w) for c, w in zip(r, widths)).rstrip())
 
 
-def _active(reg: Registry, name: str) -> Person:
-    p = reg.get(name)
-    if p.state != "active":
-        raise RegistryError(f"{name} is {p.state}")
-    return p
+def _active(reg: Registry, name: str) -> Instance:
+    inst = reg.get(name)
+    if inst.state != "active":
+        raise RegistryError(f"{name} is {inst.state}")
+    return inst

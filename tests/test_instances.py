@@ -6,8 +6,8 @@ import sys
 
 import pytest
 
-from thinny import host, people, render, system
-from thinny.registry import Person, Registry
+from thinny import host, instances, render, system
+from thinny.registry import Instance, Registry
 from thinny.settings import Settings
 from thinny.system import CommandError
 
@@ -17,18 +17,18 @@ def gateways(tmp_path, monkeypatch):
     """Records restarts; restarting a name in `broken` fails."""
     restarted, broken = [], set()
 
-    def restart(s, p):
-        if p.name in broken:
-            raise CommandError(f"{p.name}: gateway not active")
-        restarted.append(p.name)
-    monkeypatch.setattr(people, "_gateway_up", restart)
-    monkeypatch.setattr(people, "RESTART_PENDING", tmp_path / "restart-pending")
+    def restart(s, inst):
+        if inst.name in broken:
+            raise CommandError(f"{inst.name}: gateway not active")
+        restarted.append(inst.name)
+    monkeypatch.setattr(instances, "_gateway_up", restart)
+    monkeypatch.setattr(instances, "RESTART_PENDING", tmp_path / "restart-pending")
     monkeypatch.setattr(system, "LOG_FILE", tmp_path / "log")
     return restarted, broken
 
 
 def registry():
-    return Registry({n: Person(n, 9120 + i, "lan", state="active") for i, n in enumerate(["alice", "bob", "carol"])})
+    return Registry({n: Instance(n, 9120 + i, "lan", state="active") for i, n in enumerate(["alice", "bob", "carol"])})
 
 
 def test_gateways_left_by_a_failed_restart_are_restarted_next_time(gateways):
@@ -36,29 +36,29 @@ def test_gateways_left_by_a_failed_restart_are_restarted_next_time(gateways):
     reg = registry()
     broken.add("bob")
     with pytest.raises(CommandError):
-        people.restart_all(S, reg.current(), reg)
+        instances.restart_all(S, reg.current(), reg)
     assert restarted == ["alice"]
 
     broken.clear()
-    people.restart_all(S, [], reg)   # e.g. an apply that changed nothing
+    instances.restart_all(S, [], reg)   # e.g. an apply that changed nothing
     assert restarted == ["alice", "bob", "carol"]
-    people.restart_all(S, [], reg)
+    instances.restart_all(S, [], reg)
     assert restarted == ["alice", "bob", "carol"]
 
 
 def test_a_marked_restart_survives_a_failure_before_any_restart(gateways):
     restarted, _ = gateways
     reg = registry()
-    people.mark_restart(["bob"])   # e.g. apply changed bob's settings, then failed
-    people.restart_all(S, [], reg)
+    instances.mark_restart(["bob"])   # e.g. apply changed bob's settings, then failed
+    instances.restart_all(S, [], reg)
     assert restarted == ["bob"]
 
 
-def test_disabled_people_are_not_restarted(gateways):
+def test_disabled_instances_are_not_restarted(gateways):
     restarted, _ = gateways
     reg = registry()
     reg.get("bob").state = "disabled"
-    people.restart_all(S, list(reg.people.values()), reg)
+    instances.restart_all(S, list(reg.instances.values()), reg)
     assert restarted == ["alice", "carol"]
 
 
@@ -70,7 +70,7 @@ def test_an_oversized_env_is_refused_not_truncated(monkeypatch):
 
 
 class Incus:
-    """A fake host: plays Incus and the person's container, and records every command as text."""
+    """A fake host: plays Incus and the instance's container, and records every command as text."""
 
     def __init__(self):
         self.calls = []
@@ -112,7 +112,7 @@ class Incus:
         return "", 0
 
     def inside(self, c, cmd):
-        if cmd[0] == "runuser":   # as the person: runuser -u NAME -- env -i VAR=... command
+        if cmd[0] == "runuser":   # as the instance's account: runuser -u NAME -- env -i VAR=... command
             cmd = list(itertools.dropwhile(lambda a: "=" in a, cmd[cmd.index("-i") + 1:]))
         if cmd[:2] == ["id", "-u"]:
             return "", 0 if c["account"] else 1
@@ -150,22 +150,22 @@ LOCKED = dataclasses.replace(S, model_lock=True)
 @pytest.fixture
 def incus(tmp_path, monkeypatch):
     fake = Incus()
-    for module in (system, people):
+    for module in (system, instances):
         monkeypatch.setattr(module, "run", fake.run)
     monkeypatch.setattr(system, "run_bytes", fake.run_bytes)
-    monkeypatch.setattr(people, "uid_of", lambda name: None)
+    monkeypatch.setattr(instances, "uid_of", lambda name: None)
     monkeypatch.setattr(host, "release", lambda: ("v2", "c0ffee"))
     monkeypatch.setattr(host, "installer", lambda: "#!/bin/sh\n")
     monkeypatch.setattr(host, "reconcile_access", lambda s, reg: None)
     monkeypatch.setattr(Registry, "save", lambda self, path=None: None)
-    monkeypatch.setattr(people, "RESTART_PENDING", tmp_path / "restart-pending")
+    monkeypatch.setattr(instances, "RESTART_PENDING", tmp_path / "restart-pending")
     monkeypatch.setattr(system, "LOG_FILE", tmp_path / "log")
     return fake
 
 
-def test_a_new_person_gets_their_own_container_with_hermes(incus):
+def test_a_new_instance_gets_its_own_container_with_hermes(incus):
     reg = Registry()
-    people.add(S, reg, "alice", "local")
+    instances.add(S, reg, "alice", "local")
     assert reg.get("alice").state == "active" and reg.get("alice").url == "http://alice.localhost:9120/"
     assert reg.get("alice").built_ins == render.BUILT_INS
     assert incus.ran("incus init images:debian/13 alice --profile hm-person")   # nothing from the default profile
@@ -186,7 +186,7 @@ def test_a_new_person_gets_their_own_container_with_hermes(incus):
     assert incus.ran("hermes plugins install claude-subscription-directsdk --force --yes-deps --enable")
     assert incus.ran("hermes pm install --extra piper")   # the phone plugin's packages, whatever is turned on
     assert incus.ran("hermes plugins install https://github.com/melounvitek/hermes-3310 --ref ")
-    # without the model lock, the policy's model is only where the person starts
+    # without the model lock, the policy's model is only where the instance starts
     for setting in ("model.provider openai-codex", "model.default m1", "agent.reasoning_effort high"):
         assert incus.ran(f"hermes config set {setting}")
     # network before packages, packages before the account, model guard into the finished checkout
@@ -206,22 +206,22 @@ def test_a_new_person_gets_their_own_container_with_hermes(incus):
 
 
 def test_with_the_model_lock_the_policy_sets_the_model_and_the_guard_must_be_on(incus):
-    people.add(LOCKED, Registry(), "alice", "local")
+    instances.add(LOCKED, Registry(), "alice", "local")
     assert not incus.ran("hermes config set model.")   # managed: Hermes refuses it
 
     incus.containers["alice"]["guard"] = False
-    alice = Person("alice", 9120, "local", state="active")
+    alice = Instance("alice", 9120, "local", state="active")
     with pytest.raises(CommandError, match="model-guard is not enabled"):
-        people.check_gateway(LOCKED, alice)
-    people.check_gateway(S, alice)   # without the lock, model-guard stays off
+        instances.check_gateway(LOCKED, alice)
+    instances.check_gateway(S, alice)   # without the lock, model-guard stays off
 
 
-def test_a_person_signs_in_to_claude_with_the_admins_terminal(incus, monkeypatch):
+def test_an_instance_signs_in_to_claude_with_the_admins_terminal(incus, monkeypatch):
     started = []
-    monkeypatch.setattr(people, "as_user_interactive", lambda name, cmd: started.append((name, cmd)) or 0)
-    reg = Registry({"alice": Person("alice", 9120, "local", state="active")})
-    people.login(S, reg, "alice", claude=True)
-    people.login(S, reg, "alice")
+    monkeypatch.setattr(instances, "as_user_interactive", lambda name, cmd: started.append((name, cmd)) or 0)
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
+    instances.login(S, reg, "alice", claude=True)
+    instances.login(S, reg, "alice")
     assert started == [("alice", ["claude", "auth", "login"]),
                        ("alice", ["hermes", "auth", "add", "openai-codex", "--type", "oauth", "--no-browser"])]
 
@@ -231,7 +231,7 @@ def test_an_interrupted_add_resumes_where_it_stopped(incus):
     reg.add("alice", "local", (9120, 9199))
     incus.containers["alice"] = {"state": "STOPPED", "devices": {"eth0", "policy", "webapp", "model-guard"},
                                  "account": True, "hermes": True, "unit": False}
-    people.add(S, reg, "alice", "local")
+    instances.add(S, reg, "alice", "local")
     assert reg.get("alice").state == "active"
     assert not any(c.startswith(("incus init", "incus config device add")) for c in incus.calls)
     assert not incus.ran("useradd")
@@ -240,24 +240,24 @@ def test_an_interrupted_add_resumes_where_it_stopped(incus):
 
 
 def test_a_container_without_internet_fails_fast_with_the_fix(incus, monkeypatch):
-    monkeypatch.setattr(people.time, "sleep", lambda s: None)
+    monkeypatch.setattr(instances.time, "sleep", lambda s: None)
     incus.containers["alice"] = {"state": "RUNNING", "devices": {"eth0", "policy", "webapp"}, "internet": False}
     with pytest.raises(CommandError, match="forward chain"):
-        people.ensure_packages("alice")
+        instances.ensure_packages("alice")
     assert not incus.ran("apt-get")
 
 
 def test_an_unknown_container_with_the_name_is_left_alone(incus):
     incus.containers["alice"] = {"state": "RUNNING"}
     with pytest.raises(CommandError, match="container 'alice' already exists"):
-        people.add(S, Registry(), "alice", "local")
+        instances.add(S, Registry(), "alice", "local")
 
 
 def test_disabling_turns_off_autostart_before_stopping_and_forces_a_stuck_container(incus):
-    reg = Registry({"alice": Person("alice", 9120, "local", address="10.78.0.1", state="active")})
+    reg = Registry({"alice": Instance("alice", 9120, "local", address="10.78.0.1", state="active")})
     incus.containers["alice"] = {"state": "RUNNING"}
     incus.graceful_stop_fails = True
-    people.disable(S, reg, "alice")
+    instances.disable(S, reg, "alice")
     assert incus.index("incus config set alice boot.autostart=false") < incus.index("incus stop alice --timeout 60") \
         < incus.index("incus stop alice --force")
     assert reg.get("alice").state == "disabled" and incus.containers["alice"]["state"] == "STOPPED"

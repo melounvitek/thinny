@@ -1,5 +1,5 @@
 """The host-wide pieces: Incus storage and profile, firewall, units, the managed scope, the
-Hermes release everyone runs, and the proxies that publish Webapps."""
+Hermes release all instances run, and the proxies that publish Webapps."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ SYSCTL_FILE = Path("/etc/sysctl.d/90-thinny.conf")
 SYSTEMD = Path("/etc/systemd/system")
 REPO_API = "https://api.github.com/repos/NousResearch/hermes-agent"
 INSTALLER_URL = "https://hermes-agent.nousresearch.com/install.sh"
-RELEASE_FILE = STATE_DIR / "release"   # "<tag> <commit>": the Hermes release everyone runs
+RELEASE_FILE = STATE_DIR / "release"   # "<tag> <commit>": the Hermes release all instances run
 
 
 def _github(path: str) -> dict:
@@ -44,8 +44,8 @@ def commit_of(tag: str) -> str:
 
 
 def release() -> tuple[str, str] | None:
-    """(tag, commit) of the Hermes release everyone runs and new people get; None before the first
-    person."""
+    """(tag, commit) of the Hermes release all instances run and new ones get; None before the first
+    instance."""
     if not RELEASE_FILE.exists():
         return None
     tag, commit = RELEASE_FILE.read_text().split()
@@ -53,7 +53,7 @@ def release() -> tuple[str, str] | None:
 
 
 def first_release() -> tuple[str, str]:
-    """The latest stable release becomes the one everyone runs."""
+    """The latest stable release becomes the one all instances run."""
     tag, _ = latest_release()
     write_release(tag, commit_of(tag))
     return release()
@@ -91,12 +91,12 @@ def init_incus() -> None:
     if run(["incus", "storage", "show", render.POOL], check=False).returncode == 0:
         return
     size = int(shutil.disk_usage("/var/lib").free * 0.8) // 2**30
-    log(f"creating the Incus storage pool ({size} GiB at most; it takes space as people use it)")
+    log(f"creating the Incus storage pool ({size} GiB at most; it takes space as instances use it)")
     run(["incus", "storage", "create", render.POOL, "btrfs", f"size={size}GiB"], timeout=600)
 
 
 def ensure_profile(s: Settings) -> None:
-    """The profile of every person container; changed limits apply to running containers too."""
+    """The profile of every instance container; changed limits apply to running containers too."""
     if run(["incus", "profile", "show", render.PROFILE], check=False).returncode != 0:
         run(["incus", "profile", "create", render.PROFILE])
     run(["incus", "profile", "edit", render.PROFILE], input=render.profile(s))
@@ -124,9 +124,9 @@ def firewall(s: Settings) -> None:
 
 
 def reconcile_access(s: Settings, reg: Registry) -> None:
-    """Caddy sites for LAN people, `tailscale serve` for Tailscale people; nothing else
+    """Caddy sites for LAN instances, `tailscale serve` for Tailscale instances; nothing else
     published in the Webapp port range."""
-    lan = [p.port for p in reg.current() if p.access == "lan"]
+    lan = [inst.port for inst in reg.current() if inst.access == "lan"]
     if lan or CADDYFILE.exists() and "thinny" in CADDYFILE.read_text():
         if lan and not shutil.which("caddy"):
             log("installing Caddy for office-network access")
@@ -139,7 +139,7 @@ def reconcile_access(s: Settings, reg: Registry) -> None:
     status = tailscale_status()
     if status is None:
         return
-    wanted = {p.port for p in reg.current() if p.access == "tailscale"}
+    wanted = {inst.port for inst in reg.current() if inst.access == "tailscale"}
     served = _tailscale_served_ports()
     low, high = s.port_range
     for port in sorted(wanted - served):

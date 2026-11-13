@@ -1,9 +1,9 @@
 """Server policy plugin: only allow the models the administrator approved.
 
 Installed by thinny into the shared install's bundled plugins and enabled from the managed
-scope (/etc/hermes/config.yaml), so people cannot disable it from their settings. The allowlist is
+scope (/etc/hermes/config.yaml), so users cannot disable it from their settings. The allowlist is
 /etc/hermes/allowed-models.txt (one model id per line, '#' comments), read on every turn; when it is
-missing or empty every turn is blocked (fail closed). The message people see comes from
+missing or empty every turn is blocked (fail closed). The message users see comes from
 /etc/hermes/model-guard-message.txt ({model} and {allowed} are filled in).
 """
 

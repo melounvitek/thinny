@@ -8,33 +8,33 @@ min_release_age_hours = 48      # install a stable release only once it is this 
 
 [policy]
 model_provider = "openai-codex"
-model = "<model id>"            # default model (with model_lock = false, only where new people start)
+model = "<model id>"            # default model (with model_lock = false, only where new instances start)
 reasoning_effort = "high"
-model_lock = false              # true: everyone uses model_provider, reasoning_effort and allowed_models
+model_lock = false              # true: every instance uses model_provider, reasoning_effort and allowed_models
                                 # only, and the plugins the policy turns on
 allowed_models = []             # with model_lock: the model-guard plugin blocks every other model
 approvals = "smart"             # manual | smart (never off: every command would run unasked)
-language = "en"                 # Hermes UI language (display.language) for new people
+language = "en"                 # Hermes UI language (display.language) for new instances
 language_pack = ""              # catalog plugin for that language, e.g. "hermes-lang-cs"
 model_guard_message = "Model {model} is not allowed on this server. Allowed: {allowed}."  # with model_lock
 
-[container]                     # limits of each person's container
+[container]                     # limits of each instance's container
 cpu = 2
 memory_mb = 4096
 disk_gb = 30
 
 [webapp]
-port_range = [9120, 9199]       # one local port per person
-theme = "light"                 # light | dark, for new people
+port_range = [9120, 9199]       # one local port per instance
+theme = "light"                 # light | dark, for new instances
 text_scale = 110                # chat text size in %
 interface = "simple"
 known_models = []               # with model_lock: other model ids the model picker should not announce as new
 
 [access]
-default = "lan"                 # lan | tailscale | url | local (asked per person)
+default = "lan"                 # lan | tailscale | url | local (asked per instance)
 lan_address = "<server LAN IP>" # the address office PCs use (required for lan)
 
 [network]
 interface = "eth0"              # the server's internet interface; containers go out through it
-blocked_networks = []           # public networks people's containers may not reach, e.g. ["203.0.113.0/24"]
+blocked_networks = []           # public networks instance containers may not reach, e.g. ["203.0.113.0/24"]
                                 # (private networks and the tailnet are always out of reach)

@@ -12,13 +12,13 @@ import re
 import shutil
 from pathlib import Path
 
-from . import host, people, render, system
-from .registry import Person, Registry
+from . import host, instances, render, system
+from .registry import Instance, Registry
 from .settings import Settings
 
 UPDATE_STATUS = system.STATE_DIR / "update-status.json"
 INCUS_DROPIN = host.SYSTEMD / "incus.service.d/thinny.conf"
-# Read before the managed scope is resolved, so a person's own value beats the policy.
+# Read before the managed scope is resolved, so an instance's own value beats the policy.
 BYPASS_VARS = ("HERMES_MANAGED_DIR", "HERMES_BUNDLED_PLUGINS", "HERMES_ENABLE_PROJECT_PLUGINS")
 FORWARD_FIX = """let the containers' traffic through your firewall's forward chain, e.g. in /etc/nftables.conf:
   iifname "hm-*" accept
@@ -39,8 +39,8 @@ def fail(message: str, fix: str = ""):
     return "FAIL", message, fix
 
 
-def active(reg: Registry) -> list[Person]:
-    return [p for p in reg.current() if p.state == "active"]
+def active(reg: Registry) -> list[Instance]:
+    return [inst for inst in reg.current() if inst.state == "active"]
 
 
 # ---------- host checks ----------
@@ -57,13 +57,13 @@ def install(s: Settings, reg: Registry):
            else fail("IPv4 forwarding off: containers have no network", "thinny config apply"))
     userns = Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")  # Ubuntu only
     if userns.exists():
-        yield (ok("AppArmor lets people create user namespaces") if userns.read_text().strip() == "0"
-               else fail("AppArmor keeps people from creating user namespaces: their browser cannot start",
+        yield (ok("AppArmor lets instances create user namespaces") if userns.read_text().strip() == "0"
+               else fail("AppArmor keeps instances from creating user namespaces: their browser cannot start",
                          "thinny config apply"))
     yield (ok(f"{host.MANAGED} matches site.toml") if host.managed_scope_current(s)
            else warn(f"{host.MANAGED} is not as site.toml says", "thinny config apply"))
     if host.RELEASE_FILE.exists():
-        yield ok(f"Hermes release for everyone: {host.RELEASE_FILE.read_text().split()[0]}")
+        yield ok(f"Hermes release of all instances: {host.RELEASE_FILE.read_text().split()[0]}")
     state = system.run(["systemctl", "is-enabled", "thinny-update.timer"], check=False).stdout.strip()
     yield (ok("thinny-update.timer enabled") if state == "enabled"
            else warn(f"thinny-update.timer is {state or 'missing'}",
@@ -159,7 +159,7 @@ def table_parts(text: str) -> tuple[dict[str, list[str]], dict[str, str]]:
 
 
 def lan_access(s: Settings, reg: Registry):
-    if not any(p.access == "lan" for p in active(reg)):
+    if not any(inst.access == "lan" for inst in active(reg)):
         return
     state = system.run(["systemctl", "is-active", "caddy"], check=False).stdout.strip()
     yield (ok("caddy active (office-network access)") if state == "active"
@@ -168,68 +168,69 @@ def lan_access(s: Settings, reg: Registry):
         yield ok(f"Caddy root certificate for office PCs: {host.caddy_root_ca()}")
 
 
-# ---------- per-person checks ----------
+# ---------- per-instance checks ----------
 
-def container(s: Settings, p: Person):
-    state = people.container_state(p.name)
+def container(s: Settings, inst: Instance):
+    state = instances.container_state(inst.name)
     if state != "RUNNING":
-        yield fail(f"{p.name}: container is {state or 'missing'}", f"incus start {p.name}")
+        yield fail(f"{inst.name}: container is {state or 'missing'}", f"incus start {inst.name}")
         return
-    yield ok(f"{p.name}: container running")
-    code = system.in_container(p.name, ["curl", "-s", "-o", "/dev/null", "-m", "8", "-w", "%{http_code}",
-                                        "https://deb.debian.org/"], check=False, timeout=30).stdout.strip()
-    yield (ok(f"{p.name}: container reaches the internet") if code[:1] in ("2", "3")
-           else fail(f"{p.name}: container cannot reach the internet (HTTP {code or '000'})", FORWARD_FIX))
+    yield ok(f"{inst.name}: container running")
+    code = system.in_container(inst.name, ["curl", "-s", "-o", "/dev/null", "-m", "8", "-w", "%{http_code}",
+                                           "https://deb.debian.org/"], check=False, timeout=30).stdout.strip()
+    yield (ok(f"{inst.name}: container reaches the internet") if code[:1] in ("2", "3")
+           else fail(f"{inst.name}: container cannot reach the internet (HTTP {code or '000'})", FORWARD_FIX))
 
 
-def webapp(s: Settings, p: Person):
-    url = f"http://127.0.0.1:{p.port}/"
-    fix = f"thinny instance restart {p.name}"
-    yield (ok(f"{p.name}: gateway active") if system.gateway_active(p.name)
-           else fail(f"{p.name}: gateway not active", fix))
+def webapp(s: Settings, inst: Instance):
+    url = f"http://127.0.0.1:{inst.port}/"
+    fix = f"thinny instance restart {inst.name}"
+    yield (ok(f"{inst.name}: gateway active") if system.gateway_active(inst.name)
+           else fail(f"{inst.name}: gateway not active", fix))
     code = system.http_status(url)
-    yield (ok(f"{p.name}: Webapp answers (HTTP {code})") if code[0] in "23"
-           else fail(f"{p.name}: Webapp does not answer at {url} (HTTP {code})", fix))
-    public_url = people.webapp_settings(p.name).get("public_url", "")
-    yield (ok(f"{p.name}: Webapp address {p.url}") if public_url == p.url
-           else warn(f"{p.name}: Webapp public_url is {public_url or 'not set'}, not {p.url}", "thinny config apply"))
+    yield (ok(f"{inst.name}: Webapp answers (HTTP {code})") if code[0] in "23"
+           else fail(f"{inst.name}: Webapp does not answer at {url} (HTTP {code})", fix))
+    public_url = instances.webapp_settings(inst.name).get("public_url", "")
+    yield (ok(f"{inst.name}: Webapp address {inst.url}") if public_url == inst.url
+           else warn(f"{inst.name}: Webapp public_url is {public_url or 'not set'}, not {inst.url}",
+                     "thinny config apply"))
 
 
-def version(s: Settings, p: Person):
+def version(s: Settings, inst: Instance):
     tag, commit = host.release() or ("none", "")
-    yield (ok(f"{p.name}: Hermes {tag}") if people.installed_commit(p.name) == commit
-           else warn(f"{p.name}: Hermes is not at {tag}, the release everyone runs (changed by them, or an "
+    yield (ok(f"{inst.name}: Hermes {tag}") if instances.installed_commit(inst.name) == commit
+           else warn(f"{inst.name}: Hermes is not at {tag}, the release all instances run (changed by its users, or an "
                      "update is unfinished); the next update puts it back"))
 
 
-def built_ins(s: Settings, p: Person):
-    """What everyone gets besides Hermes. Whether a plugin is on is the person's choice without the
+def built_ins(s: Settings, inst: Instance):
+    """What every instance gets besides Hermes. Whether a plugin is on is its users' choice without the
     model lock, and the policy's with it."""
-    fix = f"incus exec {p.name} -- runuser -l {p.name} -c "
+    fix = f"incus exec {inst.name} -- runuser -l {inst.name} -c "
     found = []
-    if system.as_user(p.name, ["claude", "--version"], check=False, timeout=60).returncode != 0:
-        found.append(warn(f"{p.name}: Claude Code is missing (the Claude subscription plugin runs it)",
-                          fix + f"'curl -fsSL {people.CLAUDE_INSTALLER} | bash'"))
-    installed = people.plugin_states(p.name)
+    if system.as_user(inst.name, ["claude", "--version"], check=False, timeout=60).returncode != 0:
+        found.append(warn(f"{inst.name}: Claude Code is missing (the Claude subscription plugin runs it)",
+                          fix + f"'curl -fsSL {instances.CLAUDE_INSTALLER} | bash'"))
+    installed = instances.plugin_states(inst.name)
     for name, args in render.PLUGINS:
         if name not in installed:
-            found.append(warn(f"{p.name}: plugin {name} is missing",
+            found.append(warn(f"{inst.name}: plugin {name} is missing",
                               fix + f"'hermes plugins install {' '.join(args)} --yes-deps --enable'"))
-    return found or [ok(f"{p.name}: Claude Code and the built-in plugins installed")]
+    return found or [ok(f"{inst.name}: Claude Code and the built-in plugins installed")]
 
 
-def bypass(s: Settings, p: Person):
-    home = people.home(p.name)
+def bypass(s: Settings, inst: Instance):
+    home = instances.home(inst.name)
     unit = home.parent / ".config/systemd/user/hermes-gateway.service"
-    own_guard = s.model_lock and system.as_user(p.name, ["test", "-e", str(home / "plugins/model-guard")],
+    own_guard = s.model_lock and system.as_user(inst.name, ["test", "-e", str(home / "plugins/model-guard")],
                                                 check=False, timeout=30).returncode == 0
-    yield from bypasses(p.name, system.read_user_file(p.name, str(home / ".env")),
-                        system.read_user_file(p.name, str(unit)), own_guard,
+    yield from bypasses(inst.name, system.read_user_file(inst.name, str(home / ".env")),
+                        system.read_user_file(inst.name, str(unit)), own_guard,
                         str(home / "hermes-agent/.hermes/bin/hermes"))
 
 
 def bypasses(name: str, env_text: str, unit_text: str, own_guard: bool, gateway_binary: str) -> list:
-    """Ways around the central policy in a person's own files. A guardrail (they are root in their
+    """Ways around the central policy in an instance's own files. A guardrail (its users are root in its
     container), so WARN. Reports variable names only, never file contents."""
     found = []
     names = [v for v in BYPASS_VARS if re.search(rf"^\s*(export\s+)?{v}\s*=", env_text, re.M)]
@@ -240,39 +241,39 @@ def bypasses(name: str, env_text: str, unit_text: str, own_guard: bool, gateway_
                           f"incus exec {name} -- rm -r /home/{name}/.hermes/plugins/model-guard"))
     names = [v for v in BYPASS_VARS if v in unit_text]
     if names:
-        found.append(warn(f"{name}: their hermes-gateway.service sets {', '.join(names)}"))
+        found.append(warn(f"{name}: its hermes-gateway.service sets {', '.join(names)}"))
     commands = {c for c in re.findall(r'^\s*ExecStart\s*=\s*[-@:+!]*"?([^\s"]*)', unit_text, re.M) if c}
     if unit_text and commands != {gateway_binary}:
-        found.append(warn(f"{name}: their hermes-gateway.service does not start {gateway_binary}"))
+        found.append(warn(f"{name}: its hermes-gateway.service does not start {gateway_binary}"))
     return found or [ok(f"{name}: no way around the policy found")]
 
 
 # ---------- status: the quick look ----------
 
 def overview(s: Settings, reg: Registry):
-    yield ok(f"Hermes release for everyone: {(host.release() or ('none yet',))[0]}")
+    yield ok(f"Hermes release of all instances: {(host.release() or ('none yet',))[0]}")
     yield update_status(UPDATE_STATUS, dt.datetime.now(dt.UTC))
 
 
-def running(s: Settings, p: Person):
-    state = people.container_state(p.name)
+def running(s: Settings, inst: Instance):
+    state = instances.container_state(inst.name)
     if state != "RUNNING":
-        yield fail(f"{p.name}: container is {state or 'missing'}", f"incus start {p.name}")
-    elif system.gateway_active(p.name):
-        yield ok(f"{p.name}: running, gateway active")
+        yield fail(f"{inst.name}: container is {state or 'missing'}", f"incus start {inst.name}")
+    elif system.gateway_active(inst.name):
+        yield ok(f"{inst.name}: running, gateway active")
     else:
-        yield fail(f"{p.name}: gateway not active", f"thinny instance restart {p.name}")
+        yield fail(f"{inst.name}: gateway not active", f"thinny instance restart {inst.name}")
 
 
 # ---------- runner ----------
 
 CHECKS = [install, prerequisites, firewall, lan_access]
-PERSON_CHECKS = [container, webapp, version, built_ins, bypass]
+INSTANCE_CHECKS = [container, webapp, version, built_ins, bypass]
 
 
 def run(s: Settings, reg: Registry) -> int:
     """Every check (doctor); 1 when anything failed."""
-    return run_checks(s, reg, CHECKS, PERSON_CHECKS)
+    return run_checks(s, reg, CHECKS, INSTANCE_CHECKS)
 
 
 def status(s: Settings, reg: Registry) -> int:
@@ -280,10 +281,10 @@ def status(s: Settings, reg: Registry) -> int:
     return run_checks(s, reg, [overview], [running])
 
 
-def run_checks(s: Settings, reg: Registry, checks, person_checks) -> int:
+def run_checks(s: Settings, reg: Registry, checks, instance_checks) -> int:
     """Print every result; 1 when anything failed."""
     jobs = [(check.__name__, check, (s, reg)) for check in checks]
-    jobs += [(f"{check.__name__} {p.name}", check, (s, p)) for p in active(reg) for check in person_checks]
+    jobs += [(f"{check.__name__} {inst.name}", check, (s, inst)) for inst in active(reg) for check in instance_checks]
     failed = False
     for name, check, args in jobs:
         try:

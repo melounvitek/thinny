@@ -18,12 +18,12 @@ def test_managed_config_pins_the_policy():
     assert config["plugins"] == {"enabled": ["model-guard", "hermes-lang-cs",
                                              "claude-subscription-directsdk-experimental", "hermes-3310"],
                                  "disabled": []}
-    assert config["terminal"] == {"backend": "local"}   # the person's container is the sandbox
+    assert config["terminal"] == {"backend": "local"}   # the instance's container is the sandbox
     assert config["bot_desktop"] == {"placement": "terminal"}
     assert config["approvals"] == {"mode": "smart"}
 
 
-def test_without_the_model_lock_people_choose_their_model_effort_and_plugins():
+def test_without_the_model_lock_users_choose_their_model_effort_and_plugins():
     yaml = pytest.importorskip("yaml")
     config = yaml.safe_load(render.managed_config(S))
     assert config == {"terminal": {"backend": "local"}, "bot_desktop": {"placement": "terminal"},
@@ -63,17 +63,17 @@ def test_ui_preferences_without_the_model_lock_leave_the_model_picker_alone():
     ("local", "http://alice.localhost:9123/"),
     ("url", "https://alice.example.org/"),
 ])
-def test_person_url(access, expected):
-    assert render.person_url(S, "alice", access, 9123, url="https://alice.example.org/",
-                             tailscale_name="srv.example.ts.net") == expected
+def test_instance_url(access, expected):
+    assert render.instance_url(S, "alice", access, 9123, url="https://alice.example.org/",
+                               tailscale_name="srv.example.ts.net") == expected
 
 
-def test_person_url_brackets_ipv6():
+def test_instance_url_brackets_ipv6():
     s = Settings(model="m1", allowed_models=("m1",), lan_address="fd00::5")
-    assert render.person_url(s, "alice", "lan", 9120) == "https://[fd00::5]:9120/"
+    assert render.instance_url(s, "alice", "lan", 9120) == "https://[fd00::5]:9120/"
 
 
-def test_caddyfile_has_one_https_site_per_lan_person_and_no_admin_api():
+def test_caddyfile_has_one_https_site_per_lan_instance_and_no_admin_api():
     text = render.caddyfile(S, [9120, 9122])
     assert "admin off" in text
     assert text.count("tls internal") == 2
@@ -81,7 +81,7 @@ def test_caddyfile_has_one_https_site_per_lan_person_and_no_admin_api():
     assert "reverse_proxy 127.0.0.1:9122" in text
 
 
-def test_caddyfile_without_lan_people_needs_no_address():
+def test_caddyfile_without_lan_instances_needs_no_address():
     s = Settings(model="m1", allowed_models=("m1",), access_default="local")
     assert "https://" not in render.caddyfile(s, [])
 

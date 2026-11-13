@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""thinny: shared Hermes Agent server, one isolated account per person."""
+"""thinny: shared Hermes Agent server, one isolated container per instance."""
 import sys
 from pathlib import Path
 

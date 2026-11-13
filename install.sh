@@ -28,7 +28,7 @@ echo "Installing thinny into $LIB"
 mkdir -p "$LIB"
 rm -rf "$LIB/thinny"
 cp -r "$SRC/thinny" "$SRC/bin" "$SRC/site.example.toml" "$LIB/"
-# In place: every person's container mounts files/model-guard, and a replaced directory would
+# In place: every instance's container mounts files/model-guard, and a replaced directory would
 # leave them an empty one. Gateways load a changed model guard at their next restart.
 mkdir -p "$LIB/files"
 cp -r "$SRC/files/." "$LIB/files/"

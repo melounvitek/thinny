@@ -5,8 +5,8 @@ import subprocess
 
 import pytest
 
-from thinny import checks, host, people, render, system
-from thinny.registry import Person, Registry
+from thinny import checks, host, instances, render, system
+from thinny.registry import Instance, Registry
 from thinny.settings import Settings
 
 S = Settings(model="m1", allowed_models=("m1",), lan_address="192.168.1.10")
@@ -114,7 +114,7 @@ def test_untouched_home_has_no_bypass():
 def test_an_own_model_guard_is_a_bypass_only_with_the_model_lock(monkeypatch):
     monkeypatch.setattr(system, "as_user", lambda name, cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""))
     monkeypatch.setattr(system, "read_user_file", lambda name, path: "")
-    alice = Person("alice", 9120, "local", state="active")
+    alice = Instance("alice", 9120, "local", state="active")
     assert [r[0] for r in checks.bypass(S, alice)] == ["OK"]
     assert [r[0] for r in checks.bypass(dataclasses.replace(S, model_lock=True), alice)] == ["WARN"]
 
@@ -127,10 +127,10 @@ def test_an_own_model_guard_is_a_bypass_only_with_the_model_lock(monkeypatch):
       ("WARN", "alice: plugin hermes-3310 is missing")]),
 ])
 def test_missing_built_ins_are_reported(monkeypatch, plugins, has_claude, expected):
-    monkeypatch.setattr(people, "plugin_states", lambda name: plugins)
+    monkeypatch.setattr(instances, "plugin_states", lambda name: plugins)
     monkeypatch.setattr(system, "as_user", lambda name, cmd, **kw: subprocess.CompletedProcess(
         cmd, 0 if has_claude else 127, "", ""))
-    results = list(checks.built_ins(S, Person("alice", 9120, "local", state="active")))
+    results = list(checks.built_ins(S, Instance("alice", 9120, "local", state="active")))
     assert [(level, message) for level, message, _ in results] == expected
     assert all(fix.startswith("incus exec alice -- runuser -l alice -c ") for level, _, fix in results
                if level == "WARN")
@@ -168,16 +168,16 @@ def test_a_crashing_check_fails_without_stopping_the_others(monkeypatch, capsys)
 
 
 def test_status_is_the_quick_look(tmp_path, monkeypatch, capsys):
-    reg = Registry({"alice": Person("alice", 9120, "local", state="active"),
-                    "bob": Person("bob", 9121, "local", state="active"),
-                    "carol": Person("carol", 9122, "local", state="disabled")})
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="active"),
+                    "bob": Instance("bob", 9121, "local", state="active"),
+                    "carol": Instance("carol", 9122, "local", state="disabled")})
     (tmp_path / "release").write_text("v0.23.1 abc123\n")
     monkeypatch.setattr(host, "RELEASE_FILE", tmp_path / "release")
     monkeypatch.setattr(checks, "UPDATE_STATUS", tmp_path / "update-status.json")
-    monkeypatch.setattr(people, "container_state", lambda name: {"alice": "RUNNING", "bob": "STOPPED"}[name])
+    monkeypatch.setattr(instances, "container_state", lambda name: {"alice": "RUNNING", "bob": "STOPPED"}[name])
     monkeypatch.setattr(system, "gateway_active", lambda name: True)
     assert checks.status(S, reg) == 1
-    assert capsys.readouterr().out == ("OK   Hermes release for everyone: v0.23.1\n"
+    assert capsys.readouterr().out == ("OK   Hermes release of all instances: v0.23.1\n"
                                        "WARN no nightly update status yet (the update timer has not run)\n"
                                        "OK   alice: running, gateway active\n"
                                        "FAIL bob: container is STOPPED\n"

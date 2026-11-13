@@ -1,4 +1,4 @@
-"""Running commands as root on the host and as a person in their container, and small host facts."""
+"""Running commands as root on the host and as an instance's account in its container, and small host facts."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from pathlib import Path
 STATE_DIR = Path("/var/lib/thinny")
 LOG_FILE = Path("/var/log/thinny.log")
 LOCK_FILE = Path("/run/thinny.lock")
-PERSON_UID = 1000          # every person's account inside their container
+INSTANCE_UID = 1000        # every instance's account inside its container
 OUTPUT_LIMIT = 4_000_000   # bytes per output stream of one command
 
 
@@ -39,7 +39,7 @@ def log(message: str) -> None:
 
 def run_bytes(cmd: list[str], *, input: bytes | None = None, timeout: float = 600, env: dict | None = None,
               cwd: str | Path | None = None, limit: int = OUTPUT_LIMIT) -> tuple[int, bytes, bytes]:
-    """(exit code, stdout, stderr) of a command. A person controls every program in their
+    """(exit code, stdout, stderr) of a command. An instance's users control every program in its
     container, so the output is bounded and the timeout covers it: past either, the command is
     killed and CommandError raised."""
     proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL if input is None else subprocess.PIPE,
@@ -94,15 +94,15 @@ def run(cmd: list[str], *, check: bool = True, input: str | None = None, timeout
 
 
 def user_env(name: str) -> dict[str, str]:
-    runtime = f"/run/user/{PERSON_UID}"
+    runtime = f"/run/user/{INSTANCE_UID}"
     return {"HOME": f"/home/{name}", "USER": name, "LOGNAME": name,
             "PATH": f"/home/{name}/.local/bin:/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8",
             "XDG_RUNTIME_DIR": runtime, "DBUS_SESSION_BUS_ADDRESS": f"unix:path={runtime}/bus"}
 
 
 def as_user_cmd(name: str, cmd: list[str]) -> list[str]:
-    """`cmd` as the person in their container, from their home, in a clean environment.
-    (`incus exec --user` would leave out their groups.)"""
+    """`cmd` as the instance's account in its container, from its home, in a clean environment.
+    (`incus exec --user` would leave out its groups.)"""
     return ["incus", "exec", name, "--cwd", f"/home/{name}", "--", "runuser", "-u", name, "--", "env", "-i",
             *[f"{k}={v}" for k, v in user_env(name).items()], *cmd]
 
@@ -112,12 +112,12 @@ def as_user(name: str, cmd: list[str], **kw) -> subprocess.CompletedProcess:
 
 
 def in_container(name: str, cmd: list[str], **kw) -> subprocess.CompletedProcess:
-    """`cmd` as root inside the person's container."""
+    """`cmd` as root inside the instance's container."""
     return run(["incus", "exec", name, "--", *cmd], **kw)
 
 
 def as_user_interactive(name: str, cmd: list[str]) -> int:
-    """Run as the person with the admin's terminal attached (device logins)."""
+    """Run as the instance's account with the admin's terminal attached (device logins)."""
     return subprocess.run(as_user_cmd(name, cmd)).returncode
 
 
@@ -138,7 +138,7 @@ def write_file(path: Path, content: str, mode: int = 0o644) -> bool:
 
 
 def read_user_file(name: str, path: str, limit: int = 1_000_000) -> str:
-    """A file in a person's container, read as the person and bounded (it could point at
+    """A file in an instance's container, read as its account and bounded (it could point at
     /dev/zero). Empty when unreadable."""
     try:
         code, out, _ = run_bytes(as_user_cmd(name, ["cat", path]), timeout=30, limit=limit)
@@ -153,7 +153,7 @@ def read_user_file(name: str, path: str, limit: int = 1_000_000) -> str:
 
 
 def write_user_file(name: str, path: str, content: str) -> None:
-    """Write a private file as the person (as root it could follow a planted symlink)."""
+    """Write a private file as the instance's account (as root it could follow a planted symlink)."""
     as_user(name, ["sh", "-c", 'umask 077 && cat > "$1.tmp" && mv -f "$1.tmp" "$1"', "sh", path], input=content)
 
 
