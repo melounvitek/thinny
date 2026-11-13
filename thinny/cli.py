@@ -45,8 +45,10 @@ def main(argv: list[str] | None = None) -> int:
     acc = inst.add_parser("access", help="change how a person opens their Webapp")
     acc.add_argument("name")
     acc.add_argument("access", help="lan | tailscale | url=<URL> | local")
-    for name, text in (("login", "sign a person in to the model provider (device code)"),
-                       ("reset-password", "give a person a new Webapp password"),
+    lgn = inst.add_parser("login", help="sign a person in to the model provider (device code)")
+    lgn.add_argument("name")
+    lgn.add_argument("--claude", action="store_true", help="sign them in to their Claude subscription instead")
+    for name, text in (("reset-password", "give a person a new Webapp password"),
                        ("disable", "stop a person's container for good, keep their data")):
         inst.add_parser(name, help=text).add_argument("name")
     rst = inst.add_parser("restart", help="restart gateways one by one (all, or the named people)")
@@ -87,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
             elif command == "instance access":
                 people.change_access(s, reg, a.name, *parse_access(a.access))
             elif command == "instance login":
-                people.login(s, reg, a.name)
+                people.login(s, reg, a.name, claude=a.claude)
             elif command == "instance reset-password":
                 people.password(s, reg, a.name)
             elif command == "instance disable":

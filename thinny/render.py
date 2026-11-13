@@ -28,6 +28,15 @@ PACKAGES = (
     "tigervnc-standalone-server", "xfce4-panel", "xfwm4", "xfdesktop4", "xfce4-settings", "xfce4-terminal",
     "dbus-x11", "x11-xserver-utils", "x11-utils", "x11-xkb-utils", "xauth", "fonts-dejavu-core", "libxi6",
     "chromium",
+    # The phone plugin's Asterisk runs in Docker, and its install script needs envsubst.
+    "docker.io", "docker-cli", "gettext-base",
+)
+# Plugins everyone gets: (installed name, `hermes plugins install` arguments).
+PLUGINS = (
+    # A Claude subscription as model provider, through the Claude Code CLI; pinned by each release's catalog.
+    ("claude-subscription-directsdk-experimental", ("claude-subscription-directsdk",)),
+    # Calls over a phone line. Not in the catalog, so pinned here.
+    ("hermes-3310", ("https://github.com/melounvitek/hermes-3310", "--ref", "17bfb3f8e670c03a7e647cd1162d48a2570b7dc0")),
 )
 
 
@@ -47,7 +56,7 @@ def to_yaml(value, indent: int = 0) -> str:
 def managed_config(s: Settings) -> str:
     config = {}
     if s.model_lock:  # without it, the person's own config holds these, seeded at instance add
-        plugins = ["model-guard"] + ([s.language_pack] if s.language_pack else [])
+        plugins = ["model-guard", *([s.language_pack] if s.language_pack else []), *(name for name, _ in PLUGINS)]
         config = {
             "model": {"provider": s.model_provider, "default": s.model},
             "agent": {"reasoning_effort": s.reasoning_effort},

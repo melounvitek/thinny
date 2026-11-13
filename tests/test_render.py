@@ -15,7 +15,9 @@ def test_managed_config_pins_the_policy():
     config = yaml.safe_load(render.managed_config(LOCKED))
     assert config["model"] == {"provider": "openai-codex", "default": "m1"}
     assert config["agent"] == {"reasoning_effort": "high"}
-    assert config["plugins"] == {"enabled": ["model-guard", "hermes-lang-cs"], "disabled": []}
+    assert config["plugins"] == {"enabled": ["model-guard", "hermes-lang-cs",
+                                             "claude-subscription-directsdk-experimental", "hermes-3310"],
+                                 "disabled": []}
     assert config["terminal"] == {"backend": "local"}   # the person's container is the sandbox
     assert config["bot_desktop"] == {"placement": "terminal"}
     assert config["approvals"] == {"mode": "smart"}

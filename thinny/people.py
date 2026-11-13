@@ -20,6 +20,7 @@ AUTH_PREFIX = "HERMES_DASHBOARD_BASIC_AUTH_"
 RESTART_TIMEOUT = 45 * 60  # a restart waits for a running reply (up to 30 min by default)
 RESTART_PENDING = STATE_DIR / "restart-pending"
 IMAGE = "images:debian/13"
+CLAUDE_INSTALLER = "https://claude.ai/install.sh"
 
 
 def hermes(name: str, args: list[str], **kw):
@@ -94,6 +95,9 @@ def ensure_account(name: str) -> None:
     if in_container(name, ["id", "-u", name], check=False).returncode != 0:
         in_container(name, ["useradd", "--create-home", "--shell", "/bin/bash", "--uid", str(PERSON_UID),
                             "--groups", "sudo", name])
+    # Docker's group means root in the container, which sudo gives them anyway. Added before their user
+    # manager starts: it keeps the groups it started with.
+    in_container(name, ["usermod", "--append", "--groups", "docker", name])
     in_container(name, ["sh", "-c", "cat > /etc/sudoers.d/thinny && chmod 440 /etc/sudoers.d/thinny"],
                  input=f"{name} ALL=(ALL) NOPASSWD:ALL\n")
     in_container(name, ["loginctl", "enable-linger", name])
@@ -107,15 +111,23 @@ def ensure_account(name: str) -> None:
 
 def install_hermes(s: Settings, name: str, commit: str, enable: bool) -> None:
     """Hermes at exactly `commit` with the official installer (a first install or an update),
-    the Webapp and the language pack that release's catalog pins. `enable` turns the plugins on in
-    the person's own list (with the model lock, the policy turns them on anyway)."""
+    the Webapp, the Claude Code CLI, the language pack and the built-in plugins. `enable` turns the
+    plugins on in the person's own list."""
     write_user_file(name, "/tmp/hermes-install.sh", host.installer())
     as_user(name, ["bash", "/tmp/hermes-install.sh", "--channel", "stable", "--commit", commit, "--non-interactive"],
             timeout=3600)
     hermes(name, ["webapp", "--build-only"], timeout=3600)  # the installer does not build it
-    if s.language_pack:
-        hermes(name, ["plugins", "install", s.language_pack, "--force", "--yes-deps",
-                      "--enable" if enable else "--no-enable"], timeout=1800)
+    as_user(name, ["bash", "-c", f"set -o pipefail; command -v claude >/dev/null || curl -fsSL {CLAUDE_INSTALLER} | bash"],
+            timeout=900)
+    as_user(name, ["claude", "--version"], timeout=60)
+    # The phone plugin's Python packages, as an extra Hermes keeps through every rebuild of its
+    # environment. A plugin's own packages follow the person's own list of plugins that are on, from
+    # which Hermes drops the plugins the model lock turns on whenever it saves their config.
+    hermes(name, ["pm", "install", "--extra", "piper"], timeout=1800)
+    plugins = ([(s.language_pack,)] if s.language_pack else []) + [args for _, args in render.PLUGINS]
+    for args in plugins:
+        hermes(name, ["plugins", "install", *args, "--force", "--yes-deps", "--enable" if enable else "--no-enable"],
+               timeout=1800)
     hermes(name, ["pm", "gc"], check=False, timeout=600)
 
 
@@ -215,10 +227,14 @@ def check_gateway(s: Settings, p: Person, timeout: float = 180) -> None:
         time.sleep(5)
     if not s.model_lock:
         return
-    plugins = hermes(p.name, ["plugins", "list"], timeout=600).stdout
-    row = next((line for line in plugins.splitlines() if "model-guard" in line), "")
-    if "enabled" not in row or "not enabled" in row or "disabled" in row:
+    if plugin_states(p.name).get("model-guard") != "enabled":
         raise CommandError(f"{p.name}: model-guard is not enabled")
+
+
+def plugin_states(name: str) -> dict[str, str]:
+    """The person's plugins: name -> enabled, not enabled or disabled."""
+    rows = json.loads(hermes(name, ["plugins", "list", "--json"], timeout=600).stdout)
+    return {row["name"]: row["status"] for row in rows}
 
 
 def start_or_restart_gateway(s: Settings, p: Person) -> None:
@@ -352,10 +368,17 @@ def change_access(s: Settings, reg: Registry, name: str, access: str, url: str =
     _print_access_hint(p)
 
 
-def login(s: Settings, reg: Registry, name: str) -> None:
+def login(s: Settings, reg: Registry, name: str, claude: bool = False) -> None:
     _active(reg, name)
-    print(f"Signing {name} in to {s.model_provider}. Give the code below to {name}; it expires in about 15 minutes.")
-    if as_user_interactive(name, ["hermes", "auth", "add", s.model_provider, "--type", "oauth", "--no-browser"]):
+    if claude:
+        print(f"Signing {name} in to their Claude subscription. Give the link below to {name}, then enter the "
+              "code they get back.")
+        cmd = ["claude", "auth", "login"]
+    else:
+        print(f"Signing {name} in to {s.model_provider}. Give the code below to {name}; it expires in about "
+              "15 minutes.")
+        cmd = ["hermes", "auth", "add", s.model_provider, "--type", "oauth", "--no-browser"]
+    if as_user_interactive(name, cmd):
         raise CommandError("the login did not finish")
 
 

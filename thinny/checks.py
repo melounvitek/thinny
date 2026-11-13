@@ -202,6 +202,22 @@ def version(s: Settings, p: Person):
                      "update is unfinished); the next update puts it back"))
 
 
+def built_ins(s: Settings, p: Person):
+    """What everyone gets besides Hermes. Whether a plugin is on is the person's choice without the
+    model lock, and the policy's with it."""
+    fix = f"incus exec {p.name} -- runuser -l {p.name} -c "
+    found = []
+    if system.as_user(p.name, ["claude", "--version"], check=False, timeout=60).returncode != 0:
+        found.append(warn(f"{p.name}: Claude Code is missing (the Claude subscription plugin runs it)",
+                          fix + f"'curl -fsSL {people.CLAUDE_INSTALLER} | bash'"))
+    installed = people.plugin_states(p.name)
+    for name, args in render.PLUGINS:
+        if name not in installed:
+            found.append(warn(f"{p.name}: plugin {name} is missing",
+                              fix + f"'hermes plugins install {' '.join(args)} --yes-deps --enable'"))
+    return found or [ok(f"{p.name}: Claude Code and the built-in plugins installed")]
+
+
 def bypass(s: Settings, p: Person):
     home = people.home(p.name)
     unit = home.parent / ".config/systemd/user/hermes-gateway.service"
@@ -251,7 +267,7 @@ def running(s: Settings, p: Person):
 # ---------- runner ----------
 
 CHECKS = [install, prerequisites, firewall, lan_access]
-PERSON_CHECKS = [container, webapp, version, bypass]
+PERSON_CHECKS = [container, webapp, version, built_ins, bypass]
 
 
 def run(s: Settings, reg: Registry) -> int:

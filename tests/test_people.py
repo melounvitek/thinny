@@ -1,5 +1,6 @@
 import dataclasses
 import itertools
+import json
 import subprocess
 import sys
 
@@ -128,7 +129,8 @@ class Incus:
         elif cmd[:3] == ["hermes", "gateway", "install"]:
             c["unit"] = True
         elif cmd[:3] == ["hermes", "plugins", "list"]:
-            return f"model-guard  {'enabled' if c.get('guard', True) else 'not enabled'}\n", 0
+            return json.dumps([{"name": "model-guard", "status": "enabled" if c.get("guard", True) else "not enabled",
+                                "version": "1.0", "source": "bundled"}]), 0
         elif cmd[:2] == ["systemctl", "--user"]:
             return "active\n", 0
         return "", 0
@@ -172,6 +174,17 @@ def test_a_new_person_gets_their_own_container_with_hermes(incus):
     assert incus.ran("useradd --create-home --shell /bin/bash --uid 1000 --groups sudo alice")
     assert incus.ran("bash /tmp/hermes-install.sh --channel stable --commit c0ffee --non-interactive")
     assert incus.ran("hermes plugins install hermes-lang-cs --force --yes-deps --enable")
+    # the built-in plugins and what they need: Docker for the phone plugin, Claude Code for the subscription
+    packages = incus.calls[incus.index("incus exec alice -- sh -c export DEBIAN_FRONTEND")].split()
+    assert {"docker.io", "docker-cli", "gettext-base"} <= set(packages)   # without recommends: no docker-cli
+    assert incus.index("incus exec alice -- usermod --append --groups docker alice") \
+        < incus.index("incus exec alice -- loginctl enable-linger alice")
+    claude = next(i for i, c in enumerate(incus.calls) if "curl -fsSL https://claude.ai/install.sh | bash" in c)
+    assert claude < next(i for i, c in enumerate(incus.calls) if c.endswith(" claude --version")) \
+        < next(i for i, c in enumerate(incus.calls) if "hermes plugins install claude-subscription-directsdk " in c)
+    assert incus.ran("hermes plugins install claude-subscription-directsdk --force --yes-deps --enable")
+    assert incus.ran("hermes pm install --extra piper")   # the phone plugin's packages, whatever is turned on
+    assert incus.ran("hermes plugins install https://github.com/melounvitek/hermes-3310 --ref ")
     # without the model lock, the policy's model is only where the person starts
     for setting in ("model.provider openai-codex", "model.default m1", "agent.reasoning_effort high"):
         assert incus.ran(f"hermes config set {setting}")
@@ -200,6 +213,16 @@ def test_with_the_model_lock_the_policy_sets_the_model_and_the_guard_must_be_on(
     with pytest.raises(CommandError, match="model-guard is not enabled"):
         people.check_gateway(LOCKED, alice)
     people.check_gateway(S, alice)   # without the lock, model-guard stays off
+
+
+def test_a_person_signs_in_to_claude_with_the_admins_terminal(incus, monkeypatch):
+    started = []
+    monkeypatch.setattr(people, "as_user_interactive", lambda name, cmd: started.append((name, cmd)) or 0)
+    reg = Registry({"alice": Person("alice", 9120, "local", state="active")})
+    people.login(S, reg, "alice", claude=True)
+    people.login(S, reg, "alice")
+    assert started == [("alice", ["claude", "auth", "login"]),
+                       ("alice", ["hermes", "auth", "add", "openai-codex", "--type", "oauth", "--no-browser"])]
 
 
 def test_an_interrupted_add_resumes_where_it_stopped(incus):

@@ -119,6 +119,23 @@ def test_an_own_model_guard_is_a_bypass_only_with_the_model_lock(monkeypatch):
     assert [r[0] for r in checks.bypass(dataclasses.replace(S, model_lock=True), alice)] == ["WARN"]
 
 
+@pytest.mark.parametrize("plugins, has_claude, expected", [
+    ({"claude-subscription-directsdk-experimental": "enabled", "hermes-3310": "not enabled"}, True,
+     [("OK", "alice: Claude Code and the built-in plugins installed")]),   # turning one off is their choice
+    ({"claude-subscription-directsdk-experimental": "enabled"}, False,
+     [("WARN", "alice: Claude Code is missing (the Claude subscription plugin runs it)"),
+      ("WARN", "alice: plugin hermes-3310 is missing")]),
+])
+def test_missing_built_ins_are_reported(monkeypatch, plugins, has_claude, expected):
+    monkeypatch.setattr(people, "plugin_states", lambda name: plugins)
+    monkeypatch.setattr(system, "as_user", lambda name, cmd, **kw: subprocess.CompletedProcess(
+        cmd, 0 if has_claude else 127, "", ""))
+    results = list(checks.built_ins(S, Person("alice", 9120, "local", state="active")))
+    assert [(level, message) for level, message, _ in results] == expected
+    assert all(fix.startswith("incus exec alice -- runuser -l alice -c ") for level, _, fix in results
+               if level == "WARN")
+
+
 @pytest.mark.parametrize("reboot, warned", [("02:00", True), ("03:00", True), ("04:30", False), ("now", False)])
 def test_automatic_reboot_must_come_after_the_update(reboot, warned):
     dump = ('APT::Periodic::Unattended-Upgrade "1";\nUnattended-Upgrade::Automatic-Reboot "true";\n'
