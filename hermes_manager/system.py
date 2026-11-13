@@ -18,10 +18,6 @@ from pathlib import Path
 STATE_DIR = Path("/var/lib/hermes-manager")
 LOG_FILE = Path("/var/log/hermes-manager.log")
 LOCK_FILE = Path("/run/hermes-manager.lock")
-HERMES = "/usr/local/bin/hermes"
-# HOME for root's Hermes runs: the official installer and `hermes update` publish launchers
-# into ~/.local/bin, which must not replace root's own.
-ROOT_HERMES_HOME_DIR = STATE_DIR / "root-home"
 PERSON_UID = 1000          # every person's account inside their container
 OUTPUT_LIMIT = 4_000_000   # bytes per output stream of one command
 
@@ -125,14 +121,6 @@ def as_user_interactive(name: str, cmd: list[str]) -> int:
     return subprocess.run(as_user_cmd(name, cmd)).returncode
 
 
-def hermes_root(args: list[str], **kw) -> subprocess.CompletedProcess:
-    """Root's `hermes` on the shared install, keeping /opt/hermes at 711."""
-    ROOT_HERMES_HOME_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-    env = {"PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C.UTF-8",
-           "HOME": str(ROOT_HERMES_HOME_DIR), "HERMES_HOME": "/opt/hermes", "HERMES_HOME_MODE": "0711"}
-    return run([HERMES, *args], env=env, cwd=ROOT_HERMES_HOME_DIR, **kw)
-
-
 def write_file(path: Path, content: str, mode: int = 0o644) -> bool:
     """Atomically write a root-owned file; True when the content changed."""
     path = Path(path)
@@ -185,15 +173,6 @@ def uid_of(name: str) -> int | None:
         return pwd.getpwnam(name).pw_uid
     except KeyError:
         return None
-
-
-def slice_uids() -> list[int]:
-    """Uids whose user slice exists now (nft can only match existing cgroups)."""
-    uids = []
-    for path in Path("/sys/fs/cgroup/user.slice").glob("user-*.slice"):
-        with contextlib.suppress(ValueError):
-            uids.append(int(path.name[len("user-"):-len(".slice")]))
-    return sorted(uids)
 
 
 def tailscale_status() -> dict | None:
