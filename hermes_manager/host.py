@@ -17,7 +17,7 @@ from pathlib import Path
 from . import render
 from .registry import Registry
 from .settings import Settings
-from .system import (ROOT_HERMES_HOME_DIR, CommandError, hermes_root, log, run, slice_uids,
+from .system import (ROOT_HERMES_HOME_DIR, STATE_DIR, CommandError, hermes_root, log, run, slice_uids,
                      tailscale_status, uid_of, write_file)
 
 INSTALL = Path(render.INSTALL)
@@ -30,17 +30,46 @@ CADDYFILE = Path("/etc/caddy/Caddyfile")
 FIREWALL_FILE = Path("/etc/hermes-manager/hermes-manager.nft")
 FIREWALL_LOCK = Path("/run/hermes-manager-firewall.lock")
 SYSTEMD = Path("/etc/systemd/system")
-RELEASES_API = "https://api.github.com/repos/NousResearch/hermes-agent/releases/latest"
+REPO_API = "https://api.github.com/repos/NousResearch/hermes-agent"
 INSTALLER_URL = "https://hermes-agent.nousresearch.com/install.sh"
+RELEASE_FILE = STATE_DIR / "release"   # "<tag> <commit>": the Hermes release everyone runs
+
+
+def _github(path: str) -> dict:
+    req = urllib.request.Request(REPO_API + path, headers={"Accept": "application/vnd.github+json",
+                                                          "User-Agent": "hermes-manager"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r)
 
 
 def latest_release() -> tuple[str, dt.datetime]:
     """Tag and publication time of the latest stable Hermes release."""
-    req = urllib.request.Request(RELEASES_API, headers={"Accept": "application/vnd.github+json",
-                                                       "User-Agent": "hermes-manager"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        data = json.load(r)
+    data = _github("/releases/latest")
     return data["tag_name"], dt.datetime.fromisoformat(data["published_at"].replace("Z", "+00:00"))
+
+
+def commit_of(tag: str) -> str:
+    return _github(f"/commits/{tag}")["sha"]
+
+
+def release() -> tuple[str, str]:
+    """(tag, commit) of the Hermes release everyone runs and new people get. The updates record it;
+    before the first person it becomes the latest stable release."""
+    if not RELEASE_FILE.exists():
+        tag, _ = latest_release()
+        write_release(tag, commit_of(tag))
+    tag, commit = RELEASE_FILE.read_text().split()
+    return tag, commit
+
+
+def write_release(tag: str, commit: str) -> None:
+    write_file(RELEASE_FILE, f"{tag} {commit}\n")
+
+
+def installer() -> str:
+    """The official Hermes installer."""
+    with urllib.request.urlopen(INSTALLER_URL, timeout=60) as r:
+        return r.read().decode()
 
 
 def installed_tags() -> set[str]:

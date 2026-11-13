@@ -1,4 +1,4 @@
-"""Running commands as root and as a person, and small host facts."""
+"""Running commands as root on the host and as a person in their container, and small host facts."""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ import pwd
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 STATE_DIR = Path("/var/lib/hermes-manager")
@@ -20,9 +22,15 @@ HERMES = "/usr/local/bin/hermes"
 # HOME for root's Hermes runs: the official installer and `hermes update` publish launchers
 # into ~/.local/bin, which must not replace root's own.
 ROOT_HERMES_HOME_DIR = STATE_DIR / "root-home"
+PERSON_UID = 1000          # every person's account inside their container
+OUTPUT_LIMIT = 4_000_000   # bytes per output stream of one command
 
 
 class CommandError(Exception):
+    pass
+
+
+class OutputTooLarge(CommandError):
     pass
 
 
@@ -33,39 +41,88 @@ def log(message: str) -> None:
         f.write(line + "\n")
 
 
+def run_bytes(cmd: list[str], *, input: bytes | None = None, timeout: float = 600, env: dict | None = None,
+              cwd: str | Path | None = None, limit: int = OUTPUT_LIMIT) -> tuple[int, bytes, bytes]:
+    """(exit code, stdout, stderr) of a command. A person controls every program in their
+    container, so the output is bounded and the timeout covers it: past either, the command is
+    killed and CommandError raised."""
+    proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL if input is None else subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=cwd)
+    out, err, too_large = bytearray(), bytearray(), []
+
+    def drain(pipe, buf):
+        while chunk := pipe.read1(65536):
+            buf += chunk
+            if len(buf) > limit:
+                too_large.append(True)
+                proc.kill()
+                return
+
+    def feed():
+        with contextlib.suppress(BrokenPipeError):
+            proc.stdin.write(input)
+            proc.stdin.close()
+
+    threads = [threading.Thread(target=drain, args=(proc.stdout, out), daemon=True),
+               threading.Thread(target=drain, args=(proc.stderr, err), daemon=True)]
+    if input is not None:
+        threads.append(threading.Thread(target=feed, daemon=True))
+    for thread in threads:
+        thread.start()
+    deadline = time.monotonic() + timeout
+    try:
+        for thread in threads:
+            thread.join(max(0, deadline - time.monotonic()))
+        code = proc.wait(max(0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        code = None
+    if code is None or any(thread.is_alive() for thread in threads):
+        proc.kill()
+        raise CommandError(f"{' '.join(cmd)}: timed out after {timeout:.0f} s")
+    proc.stdout.close()
+    proc.stderr.close()
+    if too_large:
+        raise OutputTooLarge(f"{' '.join(cmd)}: more than {limit} bytes of output")
+    return code, bytes(out), bytes(err)
+
+
 def run(cmd: list[str], *, check: bool = True, input: str | None = None, timeout: float = 600,
         env: dict | None = None, cwd: str | Path | None = None) -> subprocess.CompletedProcess:
     """Run a command with captured text output; raise CommandError with its tail on failure."""
-    try:
-        res = subprocess.run(cmd, input=input, capture_output=True, text=True, timeout=timeout,
-                             env=env, cwd=cwd, stdin=None if input is not None else subprocess.DEVNULL)
-    except subprocess.TimeoutExpired as e:
-        raise CommandError(f"{' '.join(cmd)}: timed out after {timeout:.0f} s") from e
-    if check and res.returncode != 0:
+    code, out, err = run_bytes(cmd, input=None if input is None else input.encode(), timeout=timeout, env=env, cwd=cwd)
+    res = subprocess.CompletedProcess(cmd, code, out.decode(errors="replace"), err.decode(errors="replace"))
+    if check and code != 0:
         tail = "\n".join((res.stdout + res.stderr).strip().splitlines()[-15:])
-        raise CommandError(f"{' '.join(cmd)} -> exit {res.returncode}\n{tail}")
+        raise CommandError(f"{' '.join(cmd)} -> exit {code}\n{tail}")
     return res
 
 
 def user_env(name: str) -> dict[str, str]:
-    pw = pwd.getpwnam(name)
-    runtime = f"/run/user/{pw.pw_uid}"
-    return {"HOME": pw.pw_dir, "USER": name, "LOGNAME": name, "PATH": "/usr/local/bin:/usr/bin:/bin",
-            "LANG": "C.UTF-8", "XDG_RUNTIME_DIR": runtime, "DBUS_SESSION_BUS_ADDRESS": f"unix:path={runtime}/bus"}
+    runtime = f"/run/user/{PERSON_UID}"
+    return {"HOME": f"/home/{name}", "USER": name, "LOGNAME": name,
+            "PATH": f"/home/{name}/.local/bin:/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8",
+            "XDG_RUNTIME_DIR": runtime, "DBUS_SESSION_BUS_ADDRESS": f"unix:path={runtime}/bus"}
 
 
 def as_user_cmd(name: str, cmd: list[str]) -> list[str]:
-    return ["runuser", "-u", name, "--", "env", "-i", *[f"{k}={v}" for k, v in user_env(name).items()], *cmd]
+    """`cmd` as the person in their container, from their home, in a clean environment.
+    (`incus exec --user` would leave out their groups.)"""
+    return ["incus", "exec", name, "--cwd", f"/home/{name}", "--", "runuser", "-u", name, "--", "env", "-i",
+            *[f"{k}={v}" for k, v in user_env(name).items()], *cmd]
 
 
 def as_user(name: str, cmd: list[str], **kw) -> subprocess.CompletedProcess:
-    """Run as the person, in a clean environment, from their home (never as root inside it)."""
-    return run(as_user_cmd(name, cmd), cwd=pwd.getpwnam(name).pw_dir, **kw)
+    return run(as_user_cmd(name, cmd), **kw)
+
+
+def in_container(name: str, cmd: list[str], **kw) -> subprocess.CompletedProcess:
+    """`cmd` as root inside the person's container."""
+    return run(["incus", "exec", name, "--", *cmd], **kw)
 
 
 def as_user_interactive(name: str, cmd: list[str]) -> int:
     """Run as the person with the admin's terminal attached (device logins)."""
-    return subprocess.run(as_user_cmd(name, cmd), cwd=pwd.getpwnam(name).pw_dir).returncode
+    return subprocess.run(as_user_cmd(name, cmd)).returncode
 
 
 def hermes_root(args: list[str], **kw) -> subprocess.CompletedProcess:
@@ -93,23 +150,22 @@ def write_file(path: Path, content: str, mode: int = 0o644) -> bool:
 
 
 def read_user_file(name: str, path: str, limit: int = 1_000_000) -> str:
-    """A file in a person's home, read as the person (as root, a planted symlink could pull in
-    another file) and bounded (it could point at /dev/zero). Empty when unreadable."""
+    """A file in a person's container, read as the person and bounded (it could point at
+    /dev/zero). Empty when unreadable."""
     try:
-        res = subprocess.run(as_user_cmd(name, ["head", "-c", str(limit + 1), path]), capture_output=True,
-                             timeout=30, cwd=pwd.getpwnam(name).pw_dir, stdin=subprocess.DEVNULL)
-    except subprocess.TimeoutExpired as e:
-        raise CommandError(f"reading {path} of {name} timed out") from e
-    if len(res.stdout) > limit:  # bytes, before decoding
-        raise CommandError(f"{path} of {name} is larger than {limit} bytes")
+        code, out, _ = run_bytes(as_user_cmd(name, ["cat", path]), timeout=30, limit=limit)
+    except OutputTooLarge:
+        raise CommandError(f"{path} of {name} is larger than {limit} bytes") from None
+    if code != 0:
+        return ""
     try:
-        return res.stdout.decode("utf-8")
+        return out.decode("utf-8")
     except UnicodeDecodeError:
         raise CommandError(f"{path} of {name} is not UTF-8 text") from None
 
 
 def write_user_file(name: str, path: str, content: str) -> None:
-    """Write a private file as the person (a root write could follow a planted symlink)."""
+    """Write a private file as the person (as root it could follow a planted symlink)."""
     as_user(name, ["sh", "-c", 'umask 077 && cat > "$1.tmp" && mv -f "$1.tmp" "$1"', "sh", path], input=content)
 
 

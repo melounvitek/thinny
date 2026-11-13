@@ -1,24 +1,26 @@
-"""Adding, changing and removing people. Everything inside a person's home runs as that person."""
+"""Adding, changing and removing people. Each person has their own Incus container; everything in
+their home runs as them, inside it."""
 
 from __future__ import annotations
 
 import base64
 import hashlib
 import json
-import pwd
 import secrets
 import time
-from pathlib import Path
+from pathlib import PurePosixPath
 
 from . import host, render
 from .registry import Person, Registry, RegistryError
 from .settings import ACCESS_METHODS, Settings
-from .system import (STATE_DIR, CommandError, as_user, as_user_interactive, gateway_active, http_status, log,
-                     read_user_file, run, tailscale_name, uid_of, write_file, write_user_file)
+from .system import (PERSON_UID, STATE_DIR, CommandError, as_user, as_user_interactive, gateway_active, http_status,
+                     in_container, log, read_user_file, run, tailscale_name, uid_of, write_file, write_user_file)
 
 AUTH_PREFIX = "HERMES_DASHBOARD_BASIC_AUTH_"
 RESTART_TIMEOUT = 45 * 60  # a restart waits for a running reply (up to 30 min by default)
 RESTART_PENDING = STATE_DIR / "restart-pending"
+IMAGE = "images:debian/13"
+PROFILE = "hm-person"
 
 
 def hermes(name: str, args: list[str], **kw):
@@ -32,8 +34,9 @@ def password_hash(password: str) -> str:
     return f"scrypt$16384$8$1${base64.b64encode(salt).decode()}${base64.b64encode(key).decode()}"
 
 
-def home(name: str) -> Path:
-    return Path(pwd.getpwnam(name).pw_dir) / ".hermes"
+def home(name: str) -> PurePosixPath:
+    """The person's Hermes home inside their container (its path names their Webapp cookies)."""
+    return PurePosixPath(f"/home/{name}/.hermes")
 
 
 def url_for(s: Settings, p: Person) -> str:
@@ -43,18 +46,84 @@ def url_for(s: Settings, p: Person) -> str:
 
 # ---------- pieces ----------
 
-def ensure_account(name: str) -> int:
-    if uid_of(name) is None:
-        run(["useradd", "--create-home", "--shell", "/bin/bash", "--key", "HOME_MODE=0700", name])
-    pw = pwd.getpwnam(name)
-    Path(pw.pw_dir).chmod(0o700)
-    run(["loginctl", "enable-linger", name])
-    bus = Path(f"/run/user/{pw.pw_uid}/bus")
+def container_state(name: str) -> str | None:
+    """RUNNING, STOPPED, ... or None when there is no such container."""
+    out = run(["incus", "list", "--format", "csv", "--columns", "s", f"^{name}$"]).stdout.strip()
+    return out or None
+
+
+def devices(name: str) -> set[str]:
+    return set(run(["incus", "config", "device", "list", name]).stdout.split())
+
+
+def add_device(name: str, device: str, *args: str) -> None:
+    if device not in devices(name):
+        run(["incus", "config", "device", "add", name, device, *args])
+
+
+def ensure_container(p: Person) -> None:
+    """The person's container from the plain Debian image, running, with its network, the
+    read-only policy and the Webapp published on the host's loopback (each step repeatable)."""
+    if container_state(p.name) is None:
+        run(["incus", "init", IMAGE, p.name, "--profile", PROFILE], timeout=1800)
+    add_device(p.name, "eth0", "nic", "nictype=routed", f"ipv4.address={p.address}", f"host_name=hm-{p.port}")
+    add_device(p.name, "policy", "disk", f"source={host.MANAGED}", f"path={host.MANAGED}", "readonly=true", "shift=true")
+    add_device(p.name, "webapp", "proxy", f"listen=tcp:127.0.0.1:{p.port}", f"connect=tcp:127.0.0.1:{p.port}")
+    if container_state(p.name) != "RUNNING":
+        run(["incus", "start", p.name])
+    in_container(p.name, ["systemctl", "is-system-running", "--wait"], check=False, timeout=300)
+    in_container(p.name, ["sh", "-c", "cat > /etc/systemd/network/eth0.network && systemctl restart systemd-networkd"],
+                 input=render.network_file(p.address))
+
+
+def ensure_packages(name: str) -> None:
+    try:
+        in_container(name, ["sh", "-c", 'export DEBIAN_FRONTEND=noninteractive && apt-get update -q && '
+                            'apt-get install -y -q --no-install-recommends "$@" && apt-get clean',
+                            "sh", *render.PACKAGES], timeout=3600)
+    except CommandError as e:
+        raise CommandError(f"{e}\nNo internet in {name}'s container? See README, Requirements "
+                           "(the forward chain).") from None
+
+
+def ensure_account(name: str) -> None:
+    """The person's account in their container: passwordless sudo, user manager kept running."""
+    if in_container(name, ["id", "-u", name], check=False).returncode != 0:
+        in_container(name, ["useradd", "--create-home", "--shell", "/bin/bash", "--uid", str(PERSON_UID),
+                            "--groups", "sudo", name])
+    in_container(name, ["sh", "-c", "cat > /etc/sudoers.d/hermes-manager && chmod 440 /etc/sudoers.d/hermes-manager"],
+                 input=f"{name} ALL=(ALL) NOPASSWD:ALL\n")
+    in_container(name, ["loginctl", "enable-linger", name])
+    bus = f"/run/user/{PERSON_UID}/bus"
     for _ in range(60):
-        if bus.exists():
-            return pw.pw_uid
+        if in_container(name, ["test", "-S", bus], check=False).returncode == 0:
+            return
         time.sleep(1)
     raise CommandError(f"the user manager of {name} did not start")
+
+
+def install_hermes(s: Settings, name: str, commit: str) -> None:
+    """Hermes at exactly `commit` with the official installer (a first install or an update),
+    the Webapp and the language pack that release's catalog pins."""
+    write_user_file(name, "/tmp/hermes-install.sh", host.installer())
+    as_user(name, ["bash", "/tmp/hermes-install.sh", "--channel", "stable", "--commit", commit, "--non-interactive"],
+            timeout=3600)
+    hermes(name, ["webapp", "--build-only"], timeout=3600)  # the installer does not build it
+    if s.language_pack:
+        hermes(name, ["plugins", "install", s.language_pack, "--force", "--yes-deps", "--no-enable"], timeout=1800)
+    hermes(name, ["pm", "gc"], check=False, timeout=600)
+
+
+def hermes_installed(name: str) -> bool:
+    return as_user(name, ["test", "-d", str(home(name) / "hermes-agent/.git")], check=False).returncode == 0
+
+
+def ensure_model_guard(name: str) -> None:
+    """The server's model guard as a bundled plugin, read-only, hidden from the checkout's git."""
+    add_device(name, "model-guard", "disk", f"source={host.FILES / 'model-guard'}",
+               f"path={home(name) / 'hermes-agent/plugins/model-guard'}", "readonly=true", "shift=true")
+    as_user(name, ["sh", "-c", 'grep -qx /plugins/model-guard/ "$1" || echo /plugins/model-guard/ >> "$1"', "sh",
+                   str(home(name) / "hermes-agent/.git/info/exclude")])
 
 
 def webapp_settings(name: str) -> dict[str, str]:
@@ -110,19 +179,18 @@ def _write_sign_in(name: str, lines: list[str]) -> str:
 SEED_UI = r'''
 import json, sys
 from pathlib import Path
-sys.path.insert(0, "/opt/hermes/hermes-agent")
+home = Path(sys.argv[1])
+sys.path.insert(0, str(home / "hermes-agent"))
 from hermes_cli.ui_preferences import store_path, write_preferences
-values = json.load(sys.stdin)
-write_preferences(values, path=store_path(Path(sys.argv[1])))
+write_preferences(json.load(sys.stdin), path=store_path(home))
 '''
 
 
 def seed_ui(s: Settings, name: str) -> None:
-    """Webapp look from the settings, through Hermes's own store (same lock and revision bump)."""
-    pythons = sorted(home(name).glob("installs/*/environments/*/venv/bin/python3"), key=lambda p: p.stat().st_mtime)
-    if not pythons:
-        raise CommandError(f"no Hermes environment for {name}; run: hermes-manager add-person {name}")
-    as_user(name, [str(pythons[-1]), "-I", "-c", SEED_UI, str(home(name))],
+    """Webapp look from the settings, through Hermes's own store (same lock and revision bump),
+    with the newest Python environment of the person's Hermes."""
+    as_user(name, ["sh", "-c", 'py=$(ls -t "$2"/installs/*/environments/*/venv/bin/python3 | head -n 1) && '
+                   'exec "$py" -I -c "$1" "$2"', "sh", SEED_UI, str(home(name))],
             input=json.dumps(render.ui_preferences(s)))
 
 
@@ -150,7 +218,7 @@ def start_or_restart_gateway(p: Person) -> None:
 
 def _gateway_up(p: Person) -> None:
     unit = home(p.name).parent / ".config/systemd/user/hermes-gateway.service"
-    if unit.exists():
+    if as_user(p.name, ["test", "-e", str(unit)], check=False).returncode == 0:
         hermes(p.name, ["gateway", "restart", "--yes"], timeout=RESTART_TIMEOUT)
     else:
         hermes(p.name, ["gateway", "install"], timeout=600)
@@ -206,20 +274,23 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
             raise CommandError(f"{name} was removed; names are not reused")
         log(f"resuming the unfinished setup of {name}")
     else:
-        if name in ("caddy", *s.proxy_users):
-            raise CommandError(f"{name!r} is reserved for a proxy account; choose another name")
-        if uid_of(name) is not None:
-            raise CommandError(f"a Linux account {name!r} already exists; choose another name")
+        if uid_of(name) is not None:  # Debian's system accounts, which the container has too
+            raise CommandError(f"{name!r} is a system account name; choose another name")
+        if container_state(name) is not None:
+            raise CommandError(f"an Incus container {name!r} already exists; choose another name")
         p = reg.add(name, access, s.port_range)
     p.access, p.url = access, url if access == "url" else ""
     reg.save()
 
-    log(f"{name}: account")
-    p.uid = ensure_account(name)
-    reg.save()
-    host.firewall(s)  # the user slice exists now, so the loopback rule can load
-    log(f"{name}: Hermes environment (hermes pm repair)")
-    hermes(name, ["pm", "repair"], timeout=1800)
+    log(f"{name}: container {p.address} (packages take a few minutes)")
+    ensure_container(p)
+    ensure_packages(name)
+    ensure_account(name)
+    if not hermes_installed(name):
+        tag, commit = host.release()
+        log(f"{name}: Hermes {tag} (takes a few minutes)")
+        install_hermes(s, name, commit)
+    ensure_model_guard(name)
     p.url = url_for(s, p)
     reg.save()
     configure_webapp(s, p)
@@ -279,29 +350,28 @@ def password(reg: Registry, name: str) -> None:
 
 
 def remove(s: Settings, reg: Registry, name: str) -> None:
-    """Disable a person: everything stops and the account is locked; their data stays."""
+    """Disable a person: their container stops for good; their data stays in it."""
     p = reg.get(name)
     if p.state == "disabled":
         print(f"{name} is already removed")
         return
-    if uid_of(name) is not None:
-        as_user(name, ["systemctl", "--user", "disable", "--now", "hermes-gateway"], check=False, timeout=300)
-        as_user(name, ["podman", "rm", "--all", "--force", "--time", "10"], check=False, timeout=300)
-        run(["loginctl", "disable-linger", name], check=False)
-        run(["loginctl", "terminate-user", name], check=False)
-        run(["usermod", "--lock", "--expiredate", "1", name])
+    if container_state(name) is not None:
+        run(["incus", "config", "set", name, "boot.autostart=false"])  # first: a reboot must not bring it back
+        if container_state(name) == "RUNNING" and \
+                run(["incus", "stop", name, "--timeout", "60"], check=False, timeout=120).returncode != 0:
+            run(["incus", "stop", name, "--force"])  # its root may refuse to shut down
+        if container_state(name) == "RUNNING":
+            raise CommandError(f"{name}'s container is still running")
     p.state = "disabled"
     reg.save()
     host.reconcile_access(s, reg)
-    host.firewall(s)
-    print(f"{name} removed: account locked, Webapp and agent stopped. Their data stays in "
-          f"{pwd.getpwnam(name).pw_dir if uid_of(name) is not None else '(no home)'}.")
+    print(f"{name} removed: container stopped, Webapp and agent with it. Their data stays in the container {name}.")
 
 
 def list_people(reg: Registry) -> None:
     rows = [("NAME", "STATE", "ACCESS", "PORT", "GATEWAY", "URL")]
     for p in sorted(reg.people.values(), key=lambda p: p.port):
-        gateway = "-" if p.state == "disabled" or uid_of(p.name) is None else \
+        gateway = "-" if p.state == "disabled" or container_state(p.name) is None else \
             ("active" if gateway_active(p.name) else "INACTIVE")
         rows.append((p.name, p.state, p.access, str(p.port), gateway, p.url))
     widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
