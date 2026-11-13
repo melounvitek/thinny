@@ -283,8 +283,10 @@ def test_an_instance_signs_in_to_claude_with_the_admins_terminal(incus, monkeypa
     reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
     instances.login(S, reg, "alice", claude=True)
     instances.login(S, reg, "alice")
+    instances.login(dataclasses.replace(S, model_provider="claude-subscription-directsdk-experimental"), reg, "alice")
     assert started == [("alice", ["claude", "auth", "login"]),
-                       ("alice", ["hermes", "auth", "add", "openai-codex", "--type", "oauth", "--no-browser"])]
+                       ("alice", ["hermes", "auth", "add", "openai-codex", "--type", "oauth", "--no-browser"]),
+                       ("alice", ["claude", "auth", "login"])]
 
 
 def test_an_interrupted_add_resumes_where_it_stopped(incus):

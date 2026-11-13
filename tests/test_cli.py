@@ -69,8 +69,8 @@ def answering(monkeypatch, *answers):
 
 @pytest.mark.parametrize("typed, language", [("cs", "cs"), ("pt-BR", "pt-br")])
 def test_init_writes_the_answers_into_the_commented_example(new_server, monkeypatch, capsys, typed, language):
-    # provider, model (asked again after Enter), language, interface, own addresses, tunnel port, write
-    answering(monkeypatch, "", "", "gpt-5.5", typed, "", "2", "", "")
+    # OpenAI, its model, language, interface, own addresses, tunnel port, write
+    answering(monkeypatch, "", "", typed, "", "2", "", "")
     assert cli.main(["init"]) == 0
     s = settings.load(new_server)
     assert (s.model_provider, s.model, s.language, s.language_pack, s.network_interface) == \
@@ -81,13 +81,22 @@ def test_init_writes_the_answers_into_the_commented_example(new_server, monkeypa
 
 
 def test_init_offers_the_detected_lan_address(new_server, monkeypatch):
-    # provider, model, language (no pack in the catalog), interface, LAN (the default), its address, write
-    answering(monkeypatch, "anthropic", "claude", "de", "eth1", "", "", "y")
+    # another provider, its id, model, language (no pack in the catalog), interface, LAN (the default),
+    # its address, write
+    answering(monkeypatch, "3", "anthropic", "claude", "de", "eth1", "", "", "y")
     assert cli.main(["init"]) == 0
     s = settings.load(new_server)
     assert (s.model_provider, s.model, s.language, s.language_pack, s.network_interface) == \
         ("anthropic", "claude", "de", "", "eth1")
     assert (s.access_default, s.lan_address, s.tunnel_port) == ("lan", "192.168.1.5", 0)
+
+
+def test_init_suggests_a_model_of_the_claude_subscription(new_server, monkeypatch):
+    # no such provider (asked again), Anthropic, its model, language, interface, LAN, its address, write
+    answering(monkeypatch, "4", "2", "", "", "", "", "", "")
+    assert cli.main(["init"]) == 0
+    s = settings.load(new_server)
+    assert (s.model_provider, s.model) == ("claude-subscription-directsdk-experimental", "claude-opus-5-5")
 
 
 def test_init_says_when_it_could_not_check_for_a_language_pack(new_server, monkeypatch, capsys):

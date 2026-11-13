@@ -182,8 +182,15 @@ def init_config() -> None:
     print(f"thinny needs a few settings for {path}. Enter takes the [suggestion].\n"
           "Everything else keeps its default; change any of it later with: thinny config edit\n")
     try:
-        provider = ask("Model provider", "openai-codex")
-        model = ask("Model id, e.g. gpt-5.5")
+        kind = choose("Model provider", [("openai", "OpenAI      a ChatGPT subscription"),
+                                         ("anthropic", "Anthropic   a Claude Pro or Max subscription"),
+                                         ("other", "Other       another Hermes provider")], "openai")
+        if kind == "openai":
+            provider, model = "openai-codex", ask("Model id", "gpt-5.5")
+        elif kind == "anthropic":
+            provider, model = instances.CLAUDE_PROVIDER, ask("Model id", "claude-opus-5-5")
+        else:
+            provider, model = ask("Hermes provider id"), ask("Model id")
         language = ask("Webapp language (en, cs, de, ...)", "en").lower()  # Hermes's codes, e.g. pt-br
         interface = ask("Internet interface, containers go out through it", interface or "eth0")
         print()
@@ -234,12 +241,16 @@ def ask_access(question: str, lan_address: str, default: str) -> str:
                ("tailscale", "Tailscale             https://<machine>.<tailnet>.ts.net:<port>/") if tailscale else None,
                ("url", "Own address           you enter the URL (Cloudflare, your proxy, ...)"),
                ("local", "Local only            no network access; open via an SSH tunnel")]
-    options = [o for o in options if o]
+    return choose(question, [o for o in options if o], default)
+
+
+def choose(question: str, options: list[tuple[str, str]], default: str) -> str:
+    """The value of the option picked by its number, or `default` on Enter; asks until it gets one."""
     print(question)
     for i, (_, text) in enumerate(options, 1):
         print(f"  {i}) {text}")
-    default = next((i for i, (m, _) in enumerate(options, 1) if m == default), 1)
-    answer = input(f"Choice [{default}]: ").strip() or str(default)
-    if not answer.isdigit() or not 1 <= int(answer) <= len(options):
-        raise CommandError("no such choice")
-    return options[int(answer) - 1][0]
+    default = next((i for i, (value, _) in enumerate(options, 1) if value == default), 1)
+    while True:
+        answer = input(f"Choice [{default}]: ").strip() or str(default)
+        if answer.isdigit() and 1 <= int(answer) <= len(options):
+            return options[int(answer) - 1][0]

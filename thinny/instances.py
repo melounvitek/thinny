@@ -25,6 +25,8 @@ RESTART_PENDING = STATE_DIR / "restart-pending"
 IMAGE = "images:debian/13"
 URL_RE = re.compile(r"https?://[a-z0-9.-]+(:\d+)?(/[a-z0-9-]+)?/?")
 CLAUDE_INSTALLER = "https://claude.ai/install.sh"
+# The Claude subscription plugin's provider; it signs in through Claude Code.
+CLAUDE_PROVIDER = "claude-subscription-directsdk-experimental"
 
 
 def hermes(name: str, args: list[str], **kw):
@@ -426,7 +428,7 @@ def limits(reg: Registry, name: str, cpu: int | None, memory_mb: int | None, dis
 
 def login(s: Settings, reg: Registry, name: str, claude: bool = False) -> None:
     _active(reg, name)
-    if claude:
+    if claude or s.model_provider == CLAUDE_PROVIDER:
         print(f"Signing {name} in to a Claude subscription. Give the link below to whoever uses {name}, then "
               "enter the code they get back.")
         cmd = ["claude", "auth", "login"]

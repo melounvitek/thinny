@@ -135,11 +135,11 @@ It does not add any instances.
 
 </details>
 
-On the first run, the installer asks for the model provider and model, the Webapp language, the
-internet interface and how users will open the Webapps. It suggests the interface and LAN address
-it detects and the language pack it finds in Hermes's catalog, shows a summary, and sets up the
-server once you confirm. Everything else keeps the example's defaults: change them with
-`thinny config edit`.
+On the first run, the installer asks for the model provider (OpenAI, Anthropic or another) and
+model, the Webapp language, the internet interface and how users will open the Webapps. It
+suggests the interface and LAN address it detects and the language pack it finds in Hermes's
+catalog, shows a summary, and sets up the server once you confirm. Everything else keeps the
+example's defaults: change them with `thinny config edit`.
 
 Without a terminal, it stops after copying the example. Edit `/etc/thinny/site.toml` (at least
 `policy.model`, `network.interface` and `access.lan_address`, or `""` and another
@@ -185,7 +185,8 @@ thinny instance restart [alice ...]
 - Run `login` before the hand-over. Whoever uses `alice` opens the link and signs in with their
   own account within about 15 minutes. With `--claude`, they then choose *Claude Subscription
   DirectSDK (Experimental)* in the Webapp's model picker (with the model lock, only if
-  `model_provider = "claude-subscription-directsdk-experimental"`).
+  `model_provider = "claude-subscription-directsdk-experimental"`). With that `model_provider`
+  (Anthropic in the installer), `login` signs in to Claude without `--claude`.
 - The phone plugin stays idle until it is set up in the Webapp (Messaging → Hermes 3310), then
   with `~/.hermes/plugins/hermes-3310/install-asterisk.sh` and a gateway restart. See its README.
 - `add` takes the same `--cpu`, `--memory-mb` and `--disk-gb`. Limits an instance was not given
