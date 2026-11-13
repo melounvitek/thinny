@@ -1,4 +1,4 @@
-"""Isolation and health checks (thinny check).
+"""Isolation and health checks (thinny doctor).
 
 Every check yields (level, message, fix) results. A check that crashes is reported as a
 failure and the other checks still run.
@@ -46,7 +46,7 @@ def active(reg: Registry) -> list[Person]:
 # ---------- host checks ----------
 
 def install(s: Settings, reg: Registry):
-    fix = "thinny install"
+    fix = "thinny setup"
     for kind, name in (("storage", render.POOL), ("profile", render.PROFILE)):
         found = system.run(["incus", kind, "show", name], check=False).returncode == 0
         yield ok(f"Incus {kind} {name} present") if found else fail(f"Incus {kind} {name} missing", fix)
@@ -54,14 +54,14 @@ def install(s: Settings, reg: Registry):
            else fail(f"{INCUS_DROPIN} missing: containers could start without their firewall", fix))
     forwarding = Path("/proc/sys/net/ipv4/ip_forward").read_text().strip()
     yield (ok("IPv4 forwarding on") if forwarding == "1"
-           else fail("IPv4 forwarding off: containers have no network", "thinny apply"))
+           else fail("IPv4 forwarding off: containers have no network", "thinny config apply"))
     userns = Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")  # Ubuntu only
     if userns.exists():
         yield (ok("AppArmor lets people create user namespaces") if userns.read_text().strip() == "0"
                else fail("AppArmor keeps people from creating user namespaces: their browser cannot start",
-                         "thinny apply"))
+                         "thinny config apply"))
     yield (ok(f"{host.MANAGED} matches site.toml") if host.managed_scope_current(s)
-           else warn(f"{host.MANAGED} is not as site.toml says", "thinny apply"))
+           else warn(f"{host.MANAGED} is not as site.toml says", "thinny config apply"))
     if host.RELEASE_FILE.exists():
         yield ok(f"Hermes release for everyone: {host.RELEASE_FILE.read_text().split()[0]}")
     state = system.run(["systemctl", "is-enabled", "thinny-update.timer"], check=False).stdout.strip()
@@ -132,7 +132,7 @@ def firewall(s: Settings, reg: Registry):
     yield (ok("firewall table inet thinny loaded as site.toml says")
            if table_parts(listed) == table_parts(rendered)
            else fail("firewall table inet thinny is missing or not as site.toml says: containers may reach "
-                     "each other, the host or blocked networks", "thinny apply"))
+                     "each other, the host or blocked networks", "thinny config apply"))
 
 
 def table_parts(text: str) -> tuple[dict[str, list[str]], dict[str, str]]:
@@ -184,7 +184,7 @@ def container(p: Person):
 
 def webapp(p: Person):
     url = f"http://127.0.0.1:{p.port}/"
-    fix = f"thinny restart {p.name}"
+    fix = f"thinny instance restart {p.name}"
     yield (ok(f"{p.name}: gateway active") if system.gateway_active(p.name)
            else fail(f"{p.name}: gateway not active", fix))
     code = system.http_status(url)
@@ -192,7 +192,7 @@ def webapp(p: Person):
            else fail(f"{p.name}: Webapp does not answer at {url} (HTTP {code})", fix))
     public_url = people.webapp_settings(p.name).get("public_url", "")
     yield (ok(f"{p.name}: Webapp address {p.url}") if public_url == p.url
-           else warn(f"{p.name}: Webapp public_url is {public_url or 'not set'}, not {p.url}", "thinny apply"))
+           else warn(f"{p.name}: Webapp public_url is {public_url or 'not set'}, not {p.url}", "thinny config apply"))
 
 
 def version(p: Person):
@@ -231,6 +231,23 @@ def bypasses(name: str, env_text: str, unit_text: str, own_guard: bool, gateway_
     return found or [ok(f"{name}: no way around the policy found")]
 
 
+# ---------- status: the quick look ----------
+
+def overview(s: Settings, reg: Registry):
+    yield ok(f"Hermes release for everyone: {(host.release() or ('none yet',))[0]}")
+    yield update_status(UPDATE_STATUS, dt.datetime.now(dt.UTC))
+
+
+def running(p: Person):
+    state = people.container_state(p.name)
+    if state != "RUNNING":
+        yield fail(f"{p.name}: container is {state or 'missing'}", f"incus start {p.name}")
+    elif system.gateway_active(p.name):
+        yield ok(f"{p.name}: running, gateway active")
+    else:
+        yield fail(f"{p.name}: gateway not active", f"thinny instance restart {p.name}")
+
+
 # ---------- runner ----------
 
 CHECKS = [install, prerequisites, firewall, lan_access]
@@ -238,9 +255,19 @@ PERSON_CHECKS = [container, webapp, version, bypass]
 
 
 def run(s: Settings, reg: Registry) -> int:
+    """Every check (doctor); 1 when anything failed."""
+    return run_checks(s, reg, CHECKS, PERSON_CHECKS)
+
+
+def status(s: Settings, reg: Registry) -> int:
+    """The quick look: no internet, Webapp or policy probes; 1 when anything failed."""
+    return run_checks(s, reg, [overview], [running])
+
+
+def run_checks(s: Settings, reg: Registry, checks, person_checks) -> int:
     """Print every result; 1 when anything failed."""
-    jobs = [(check.__name__, check, (s, reg)) for check in CHECKS]
-    jobs += [(f"{check.__name__} {p.name}", check, (p,)) for p in active(reg) for check in PERSON_CHECKS]
+    jobs = [(check.__name__, check, (s, reg)) for check in checks]
+    jobs += [(f"{check.__name__} {p.name}", check, (p,)) for p in active(reg) for check in person_checks]
     failed = False
     for name, check, args in jobs:
         try:

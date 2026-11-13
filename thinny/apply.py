@@ -1,4 +1,4 @@
-"""`install` (Incus and everything around the people) and `apply` (bring everything in line with
+"""`setup` (Incus and everything around the people) and `apply` (bring everything in line with
 site.toml)."""
 
 from __future__ import annotations
@@ -9,10 +9,10 @@ from .settings import Settings
 from .system import log
 
 
-def install(s: Settings) -> None:
+def setup(s: Settings) -> None:
     host.init_incus()
     apply(s)
-    print("Ready. Add people with: thinny add-person <name>")
+    print("Ready. Add people with: thinny instance add <name>")
 
 
 def apply(s: Settings) -> None:

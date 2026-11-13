@@ -3,8 +3,8 @@ import json
 
 import pytest
 
-from thinny import checks, render
-from thinny.registry import Registry
+from thinny import checks, host, people, render, system
+from thinny.registry import Person, Registry
 from thinny.settings import Settings
 
 S = Settings(model="m1", allowed_models=("m1",), lan_address="192.168.1.10")
@@ -138,3 +138,20 @@ def test_a_crashing_check_fails_without_stopping_the_others(monkeypatch, capsys)
 
     monkeypatch.setattr(checks, "CHECKS", [healthy])
     assert checks.run(S, Registry()) == 0
+
+
+def test_status_is_the_quick_look(tmp_path, monkeypatch, capsys):
+    reg = Registry({"alice": Person("alice", 9120, "local", state="active"),
+                    "bob": Person("bob", 9121, "local", state="active"),
+                    "carol": Person("carol", 9122, "local", state="disabled")})
+    (tmp_path / "release").write_text("v0.23.1 abc123\n")
+    monkeypatch.setattr(host, "RELEASE_FILE", tmp_path / "release")
+    monkeypatch.setattr(checks, "UPDATE_STATUS", tmp_path / "update-status.json")
+    monkeypatch.setattr(people, "container_state", lambda name: {"alice": "RUNNING", "bob": "STOPPED"}[name])
+    monkeypatch.setattr(system, "gateway_active", lambda name: True)
+    assert checks.status(S, reg) == 1
+    assert capsys.readouterr().out == ("OK   Hermes release for everyone: v0.23.1\n"
+                                       "WARN no nightly update status yet (the update timer has not run)\n"
+                                       "OK   alice: running, gateway active\n"
+                                       "FAIL bob: container is STOPPED\n"
+                                       "     fix: incus start bob\n")

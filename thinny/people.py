@@ -275,7 +275,7 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     if name in reg.people:
         p = reg.get(name)
         if p.state == "active":
-            raise CommandError(f"{name} already exists (use: thinny access {name} ...)")
+            raise CommandError(f"{name} already exists (use: thinny instance access {name} ...)")
         if p.state == "disabled":
             raise CommandError(f"{name} was removed; names are not reused")
         log(f"resuming the unfinished setup of {name}")
@@ -309,10 +309,10 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     reg.save()
 
     print(f"\n{name} is ready.\n  Webapp:   {p.url}\n  Username: {name}")
-    print(f"  Password: {password}   (shown once; reset with: thinny password {name})" if password
-          else "  Password: unchanged (reset with: thinny password " + name + ")")
+    print(f"  Password: {password}   (shown once; reset with: thinny instance reset-password {name})" if password
+          else "  Password: unchanged (reset with: thinny instance reset-password " + name + ")")
     _print_access_hint(p)
-    print(f"Next: sign {name} in to {s.model_provider} before handing over: thinny login {name}")
+    print(f"Next: sign {name} in to {s.model_provider} before handing over: thinny instance login {name}")
 
 
 def _print_access_hint(p: Person) -> None:
@@ -354,11 +354,11 @@ def password(reg: Registry, name: str) -> None:
     print(f"{name}: new Webapp password: {new}   (shown once; open browsers must sign in again)")
 
 
-def remove(s: Settings, reg: Registry, name: str) -> None:
+def disable(s: Settings, reg: Registry, name: str) -> None:
     """Disable a person: their container stops for good; their data stays in it."""
     p = reg.get(name)
     if p.state == "disabled":
-        print(f"{name} is already removed")
+        print(f"{name} is already disabled")
         return
     if container_state(name) is not None:
         run(["incus", "config", "set", name, "boot.autostart=false"])  # first: a reboot must not bring it back
@@ -370,7 +370,7 @@ def remove(s: Settings, reg: Registry, name: str) -> None:
     p.state = "disabled"
     reg.save()
     host.reconcile_access(s, reg)
-    print(f"{name} removed: container stopped, Webapp and agent with it. Their data stays in the container {name}.")
+    print(f"{name} disabled: container stopped, Webapp and agent with it. Their data stays in the container {name}.")
 
 
 def list_people(reg: Registry) -> None:

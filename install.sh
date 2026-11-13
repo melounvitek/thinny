@@ -1,5 +1,5 @@
 #!/bin/sh
-# thinny bootstrap: packages, the tool itself, then `thinny install`.
+# thinny bootstrap: packages, the tool itself, then `thinny setup`.
 # Safe to rerun: it repairs and never updates Hermes or removes data.
 # incus-base: containers only (no virtual machines). Ubuntu 24.04 has no incus-base, and its
 # incus has no virtual machines either.
@@ -44,4 +44,4 @@ if [ ! -f "$SITE" ]; then
 	exit 0
 fi
 
-exec /usr/local/sbin/thinny install
+exec /usr/local/sbin/thinny setup

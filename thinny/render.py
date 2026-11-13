@@ -208,7 +208,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/thinny update
+ExecStart=/usr/local/sbin/thinny update --scheduled
 TimeoutStartSec=6h
 Nice=10
 """

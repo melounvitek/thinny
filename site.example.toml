@@ -1,5 +1,5 @@
 # thinny site settings: /etc/thinny/site.toml
-# After editing, run: thinny apply
+# After editing, run: thinny config apply
 
 [hermes]
 auto_update = true              # false: the nightly job only checks and reports a new release

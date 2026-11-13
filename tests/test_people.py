@@ -213,11 +213,11 @@ def test_an_unknown_container_with_the_name_is_left_alone(incus):
         people.add(S, Registry(), "alice", "local")
 
 
-def test_removing_turns_off_autostart_before_stopping_and_forces_a_stuck_container(incus):
+def test_disabling_turns_off_autostart_before_stopping_and_forces_a_stuck_container(incus):
     reg = Registry({"alice": Person("alice", 9120, "local", address="10.78.0.1", state="active")})
     incus.containers["alice"] = {"state": "RUNNING"}
     incus.graceful_stop_fails = True
-    people.remove(S, reg, "alice")
+    people.disable(S, reg, "alice")
     assert incus.index("incus config set alice boot.autostart=false") < incus.index("incus stop alice --timeout 60") \
         < incus.index("incus stop alice --force")
     assert reg.get("alice").state == "disabled" and incus.containers["alice"]["state"] == "STOPPED"

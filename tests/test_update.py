@@ -86,7 +86,7 @@ def test_only_a_due_release_is_installed(server, release, age, auto_update, now,
 
 
 def test_check_only_reports(server):
-    assert update.run(S, registry(), check=True) == 0
+    assert update.run(S, registry(), dry_run=True) == 0
     assert server.calls == []
     assert not (server.tmp / "status.json").exists()
 

@@ -67,7 +67,7 @@ class Registry:
         try:
             return self.people[name]
         except KeyError:
-            raise RegistryError(f"no person named {name!r} (see thinny list)") from None
+            raise RegistryError(f"no person named {name!r} (see thinny instance list)") from None
 
     def add(self, name: str, access: str, port_range: tuple[int, int]) -> Person:
         validate_name(name)
