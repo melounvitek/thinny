@@ -328,7 +328,7 @@ Debian 13, kernel 6.12, Incus 6.0.4 (`incus-base`), Hermes v0.23.0 -> v0.23.1. A
   Screen and a real chat with terminal and browser tools worked.
 - Docker inside worked (hermes-3310's `install-asterisk.sh` ran unchanged); Tailscale inside
   signed in to another tailnet and worked over a DERP relay.
-- add-person ≈ 92 + 191 + 122 s + config ≈ 7 min; update ≈ 93 + 107 s + restart per person.
+- `instance add` ≈ 92 + 191 + 122 s + config ≈ 7 min; update ≈ 93 + 107 s + restart per person.
   Idle container with Hermes ~370 MB private RAM; an empty one with Docker and Tailscale
   ~80 MB. ~2.8 GB own disk per person for Hermes (copied from a template, so without the
   system packages).
@@ -470,14 +470,14 @@ private ones and the tailnet are always blocked). `site.example.toml` lists ever
   only reports it.
 - Exact target: the tag's commit from the GitHub API. `hermes update` cannot pin one, so for
   each active person not at the commit, one at a time: the official installer again with
-  `--commit <sha>` (the same path as add-person), `hermes webapp --build-only`, the language
+  `--commit <sha>` (the same path as `instance add`), `hermes webapp --build-only`, the language
   pack (`hermes plugins install --force`), `hermes pm gc`, then `gateway restart --yes` with
   the checks. Stop at the first failure.
 - `update-unfinished` holds tag, commit and the person being updated; a later run finishes the
   rollout without asking GitHub, whatever its age: that person again from the start (their
   checkout may be at the commit while their Webapp build is not), then the people not yet at
   the commit. The recorded release
-  moves only when everyone runs it; add-person installs it (the latest stable release when
+  moves only when everyone runs it; `instance add` installs it (the latest stable release when
   none is recorded yet).
 - No pre-update backup: `/etc/hermes`, model-guard and the language pack can all be
   recreated. The snapshot (off the server, not awaited) is the only way back.
@@ -524,7 +524,7 @@ Container switch (2026-11-12/13):
 6. README and this file (done).
 7. Server test from a rebuilt playground (done, 2026-11-13) **[tested]**: everything of the
    shared-install design and of the spikes removed (Tailscale kept); `install.sh` twice; `doctor`
-   all OK. With the forward-chain lines removed, add-person hung in apt for over 15 minutes
+   all OK. With the forward-chain lines removed, `instance add` hung in apt for over 15 minutes
    (apt neither fails nor gives up without a network): now a DNS probe fails it in 40 s with
    the fix, and the resumed add finished. alice (local), bob (tailscale), carol (lan): 486, 438
    and 487 s each, pinned to v0.23.0. From inside a container, as the person and as root: only
@@ -561,7 +561,7 @@ inside, a reboot.
 
 - Package drift: `render.PACKAGES` copies the official image's Dockerfile lists (v0.23.1).
   When Hermes adds a system dependency the list must follow; containers get the list at
-  add-person and before each Hermes update.
+  `instance add` and before each Hermes update.
 - The hermes-3310 phone plugin needs to be in the managed `plugins.enabled` (it replaces the
   person's list) and Docker in the person's container; neither is wired up.
 - Per-person SSH and Tailscale are left to the person; SSH needs the host as jump host.

@@ -72,13 +72,29 @@ def test_config_edit_offers_another_try_and_can_discard(server, monkeypatch, cap
     assert "unknown setting nonsense.key" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("text, code", [(VALID, 0), ("[policy]\n", 1)])
-def test_config_edit_changes_nothing_without_a_saved_change(server, monkeypatch, text, code):
+@pytest.mark.parametrize("text, code, exit", [(VALID, 0, 0),           # nothing changed
+                                              ("[policy]\n", 1, 1)])  # the editor quit with an error
+def test_config_edit_changes_nothing_without_a_saved_change(server, monkeypatch, text, code, exit):
     site, calls = server
-    editor(monkeypatch, text, code=code)  # nothing changed, or the editor quit with an error
-    assert cli.main(["config", "edit"]) == 0
+    editor(monkeypatch, text, code=code)
+    assert cli.main(["config", "edit"]) == exit
     assert site.read_text() == VALID
     assert calls == []
+
+
+def test_config_edit_refuses_before_editing_while_another_run_holds_the_lock(server, monkeypatch):
+    site, calls = server
+    started = editor(monkeypatch, VALID.replace('"m1"', '"m2"'))
+    with system.lock():  # e.g. the nightly update
+        assert cli.main(["config", "edit"]) == 1
+    assert started == []
+    assert site.read_text() == VALID
+
+
+def test_config_edit_with_a_missing_editor_fails(server, monkeypatch, capsys):
+    monkeypatch.setenv("VISUAL", "no-such-editor --wait")
+    assert cli.main(["config", "edit"]) == 1
+    assert "cannot start no-such-editor --wait" in capsys.readouterr().err
 
 
 def test_config_edit_without_an_editor_says_what_to_do(server, monkeypatch, capsys):

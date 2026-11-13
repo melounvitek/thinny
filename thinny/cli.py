@@ -58,7 +58,10 @@ def main(argv: list[str] | None = None) -> int:
         print("thinny must run as root", file=sys.stderr)
         return 2
     try:
-        if command == "config edit" and not edit_config():
+        if command == "config edit":
+            with lock():  # before editing: a running update says so now, not after the edit
+                if edit_config():
+                    apply.apply(load())
             return 0
         s = load()
         if command == "doctor":
@@ -72,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
             reg = Registry.load()
             if command == "setup":
                 apply.setup(s)
-            elif command in ("config edit", "config apply"):
+            elif command == "config apply":
                 apply.apply(s)
             elif command == "update":
                 return update.run(s, reg, dry_run=a.dry_run, now=not a.scheduled)
@@ -112,9 +115,12 @@ def edit_config() -> bool:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(original)
         while True:
-            if subprocess.run([*shlex.split(editor), str(copy)]).returncode != 0:
-                print("The editor failed; site.toml is unchanged.")
-                return False
+            try:
+                code = subprocess.run([*shlex.split(editor), str(copy)]).returncode
+            except OSError as e:
+                raise CommandError(f"cannot start {editor}: {e.strerror}") from e
+            if code != 0:
+                raise CommandError(f"{editor} exited with {code}; site.toml is unchanged")
             text = copy.read_text(encoding="utf-8")
             if text == original:
                 print("site.toml is unchanged.")

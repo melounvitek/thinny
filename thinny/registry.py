@@ -1,6 +1,6 @@
 """People registry (/var/lib/thinny/people.json), the source of truth for who exists.
 
-People are never deleted: a removed person stays as `disabled`, so their container, its
+People are never deleted: a disabled person stays, so their container, its
 address and their Webapp port are never handed to someone else.
 """
 

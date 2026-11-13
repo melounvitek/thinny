@@ -277,7 +277,7 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
         if p.state == "active":
             raise CommandError(f"{name} already exists (use: thinny instance access {name} ...)")
         if p.state == "disabled":
-            raise CommandError(f"{name} was removed; names are not reused")
+            raise CommandError(f"{name} was disabled; names are not reused")
         log(f"resuming the unfinished setup of {name}")
     else:
         if uid_of(name) is not None:  # Debian's system accounts, which the container has too
