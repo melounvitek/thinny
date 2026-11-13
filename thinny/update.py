@@ -1,17 +1,22 @@
-"""Hermes update (thinny update, nightly with --scheduled): every instance's Hermes, one container
-at a time, to exactly the same release."""
+"""thinny update (nightly with --scheduled): thinny itself from its clone, then every instance's Hermes,
+one container at a time, to exactly the same release."""
 
 from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 from pathlib import Path
 
-from . import host, instances, render
+from . import host, instances, render, system
 from .registry import Registry
 from .settings import Settings
-from .system import STATE_DIR, CommandError, as_user, log, write_file
+from .system import STATE_DIR, CommandError, as_user, lock, log, write_file
 
+SOURCE = host.LIB / "source"      # the clone install.sh ran from
+INSTALLED = host.LIB / "commit"   # its commit, once install.sh set it up
+# Not the thinny lock: install.sh runs `thinny setup`, which takes that.
+SELF_UPDATE_LOCK = Path("/run/thinny-self-update.lock")
 STATUS_FILE = STATE_DIR / "update-status.json"
 # "<tag> <commit> [<instance being updated>]" while an update runs; a later run finishes the job.
 UNFINISHED = STATE_DIR / "update-unfinished"
@@ -53,9 +58,42 @@ def run(s: Settings, reg: Registry, *, dry_run: bool = False, now: bool = False)
         update_claude(reg)
     log(f"{result}: {detail}")
     if not dry_run:
-        status = {"time": dt.datetime.now().isoformat(timespec="seconds"), "result": result, "detail": detail}
-        write_file(STATUS_FILE, json.dumps(status, ensure_ascii=False, indent=1) + "\n")
+        save_status(result, detail)
     return 1 if result == "FAILED" else 0
+
+
+def save_status(result: str, detail: str) -> None:
+    status = {"time": dt.datetime.now().isoformat(timespec="seconds"), "result": result, "detail": detail}
+    write_file(STATUS_FILE, json.dumps(status, ensure_ascii=False, indent=1) + "\n")
+
+
+def update_thinny() -> bool:
+    """Pull the clone install.sh ran from and install a new commit with its install.sh, which also runs
+    `thinny setup`. True when it did: the rest of the update must run the new code. A commit pulled
+    but not installed (a failed install.sh) is installed by the next run."""
+    def installed() -> str:
+        return INSTALLED.read_text().strip() if INSTALLED.exists() else ""
+    with lock(SELF_UPDATE_LOCK):
+        try:
+            if not SOURCE.exists():
+                raise CommandError(f"{SOURCE} is missing; run install.sh from the thinny clone")
+            src = SOURCE.read_text().strip()
+            # Nobody answers a password prompt at night.
+            env = os.environ | {"GIT_TERMINAL_PROMPT": "0", "GIT_SSH_COMMAND": "ssh -o BatchMode=yes"}
+            system.run(["git", "-C", src, "pull", "--ff-only", "-q"], env=env, timeout=300)
+            head = system.run(["git", "-C", src, "rev-parse", "HEAD"]).stdout.strip()
+            if installed() == head:
+                return False
+            log(f"installing thinny {head[:12]}")
+            system.run(["sh", f"{src}/install.sh"], timeout=3600)
+            if installed() != head:  # the new thinny would install it again, and again
+                raise CommandError(f"install.sh did not record {INSTALLED}")
+            return True
+        except Exception as e:  # noqa: BLE001 - any failure must end as FAILED
+            detail = str(e) or type(e).__name__
+            log(f"FAILED: thinny: {detail}")
+            save_status("FAILED", f"thinny: {detail}")
+            raise CommandError(detail) from e
 
 
 def due(s: Settings, *, dry_run: bool, now: bool) -> tuple[str, str, str]:

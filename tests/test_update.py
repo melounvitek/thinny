@@ -2,6 +2,7 @@ import dataclasses
 import datetime as dt
 import json
 import re
+import subprocess
 
 import pytest
 
@@ -229,3 +230,92 @@ def test_claude_code_is_updated_every_night_whatever_happens_to_hermes(server):
     server.claude.clear()
     assert update.run(S, registry()) == 0
     assert server.claude == ["bob"]
+
+
+def git(*args, cwd):
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", *args],
+                   cwd=cwd, check=True, capture_output=True)
+
+
+@pytest.fixture
+def clone(tmp_path, monkeypatch):
+    """thinny's origin and the clone install.sh ran from. Its install.sh counts its runs, fails while
+    `fail` exists, and records the commit it installed."""
+    origin, src = tmp_path / "origin", tmp_path / "src"
+    monkeypatch.setattr(system, "LOG_FILE", tmp_path / "thinny.log")
+    monkeypatch.setattr(update, "STATUS_FILE", tmp_path / "status.json")
+    monkeypatch.setattr(update, "SOURCE", tmp_path / "source")
+    monkeypatch.setattr(update, "INSTALLED", tmp_path / "commit")
+    monkeypatch.setattr(update, "SELF_UPDATE_LOCK", tmp_path / "self-update.lock")
+    origin.mkdir()
+    git("init", "-q", "-b", "main", cwd=origin)
+    (origin / "install.sh").write_text(f"""echo run >> {tmp_path}/runs
+[ ! -e {tmp_path}/fail ] || exit 1
+git -C "$(dirname "$0")" rev-parse HEAD > {tmp_path}/commit
+""")
+    git("add", ".", cwd=origin)
+    git("commit", "-qm", "v1", cwd=origin)
+    git("clone", "-q", str(origin), str(src), cwd=tmp_path)
+    (tmp_path / "source").write_text(f"{src}\n")
+    subprocess.run(["sh", src / "install.sh"], check=True)
+    return origin
+
+
+def runs(tmp_path):
+    return len((tmp_path / "runs").read_text().splitlines())
+
+
+def head(repo):
+    return subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+
+
+def test_thinny_installs_each_new_commit_of_its_clone_once(clone, tmp_path):
+    assert update.update_thinny() is False
+    git("commit", "-qm", "v2", "--allow-empty", cwd=clone)
+    assert update.update_thinny() is True
+    assert (tmp_path / "commit").read_text().strip() == head(clone)
+    assert update.update_thinny() is False
+    assert runs(tmp_path) == 2   # the first install, then v2
+
+
+def test_a_failed_install_fails_the_update_and_is_retried_without_a_new_commit(clone, tmp_path):
+    (tmp_path / "fail").touch()
+    git("commit", "-qm", "v2", "--allow-empty", cwd=clone)
+    with pytest.raises(CommandError):
+        update.update_thinny()
+    status = json.loads((tmp_path / "status.json").read_text())
+    assert status["result"] == "FAILED" and status["detail"].startswith("thinny: sh ")
+
+    (tmp_path / "fail").unlink()
+    assert update.update_thinny() is True
+    assert (tmp_path / "commit").read_text().strip() == head(clone)
+
+
+def test_a_clone_that_cannot_pull_fails_the_update_without_installing(clone, tmp_path):
+    clone.rename(tmp_path / "gone")
+    with pytest.raises(CommandError):
+        update.update_thinny()
+    status = json.loads((tmp_path / "status.json").read_text())
+    assert status["result"] == "FAILED" and status["detail"].startswith("thinny: git ")
+    assert runs(tmp_path) == 1
+
+
+def test_without_a_recorded_clone_the_update_says_what_to_do(clone, tmp_path):
+    (tmp_path / "source").unlink()
+    with pytest.raises(CommandError, match="run install.sh from the thinny clone"):
+        update.update_thinny()
+
+
+def test_any_failure_fails_the_update(clone, tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path / "nothing"))   # no git
+    with pytest.raises(CommandError):
+        update.update_thinny()
+    assert json.loads((tmp_path / "status.json").read_text())["result"] == "FAILED"
+
+
+def test_one_thinny_update_at_a_time(clone, tmp_path):
+    git("commit", "-qm", "v2", "--allow-empty", cwd=clone)
+    with system.lock(tmp_path / "self-update.lock"), pytest.raises(CommandError, match="in progress"):
+        update.update_thinny()
+    assert runs(tmp_path) == 1
+    assert not (tmp_path / "status.json").exists()   # the other run reports

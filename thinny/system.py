@@ -158,9 +158,9 @@ def write_user_file(name: str, path: str, content: str) -> None:
 
 
 @contextlib.contextmanager
-def lock():
-    """One thinny change at a time (commands and the nightly update)."""
-    with LOCK_FILE.open("w") as f:
+def lock(path: Path | None = None):
+    """One thinny change at a time (commands and the nightly update); another `path` locks something else."""
+    with (path or LOCK_FILE).open("w") as f:
         try:
             fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
