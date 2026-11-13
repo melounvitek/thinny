@@ -148,6 +148,19 @@ def test_unattended_upgrades_off_warns():
     assert [r[0] for r in checks.unattended_upgrades('APT::Periodic::Unattended-Upgrade "0";\n', "03:00")] == ["WARN"]
 
 
+@pytest.mark.parametrize("answer, expected", [
+    ("404", ("OK", "Caddy answers the tunnel at http://127.0.0.1:8080/")),
+    ("000", ("FAIL", "nothing answers the tunnel at http://127.0.0.1:8080/")),
+])
+def test_caddy_must_answer_the_tunnel_of_url_instances(monkeypatch, answer, expected):
+    reg = Registry({"jirka": Instance("jirka", 9120, "url", url="https://jirka.example.org/", state="active")})
+    monkeypatch.setattr(system, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "active\n", ""))
+    monkeypatch.setattr(system, "http_status", lambda url: answer)
+    assert list(checks.caddy(S, reg)) == []   # no tunnel port, no Caddy for url instances
+    results = list(checks.caddy(dataclasses.replace(S, tunnel_port=8080), reg))
+    assert [(level, message) for level, message, _ in results] == [("OK", "caddy active"), expected]
+
+
 def test_a_crashing_check_fails_without_stopping_the_others(monkeypatch, capsys):
     def broken(s, reg):
         yield checks.ok("before the crash")

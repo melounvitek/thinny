@@ -158,13 +158,20 @@ def table_parts(text: str) -> tuple[dict[str, list[str]], dict[str, str]]:
                     for name, body in sets.items()}
 
 
-def lan_access(s: Settings, reg: Registry):
-    if not any(inst.access == "lan" for inst in active(reg)):
+def caddy(s: Settings, reg: Registry):
+    """Caddy serves LAN instances and, with a tunnel port, url instances."""
+    lan = any(inst.access == "lan" for inst in active(reg))
+    tunnel = s.tunnel_port and any(inst.access == "url" for inst in active(reg))
+    if not (lan or tunnel):
         return
     state = system.run(["systemctl", "is-active", "caddy"], check=False).stdout.strip()
-    yield (ok("caddy active (office-network access)") if state == "active"
-           else fail(f"caddy is {state}: office-network Webapps are unreachable", "systemctl restart caddy"))
-    if host.caddy_root_ca().exists():
+    yield (ok("caddy active") if state == "active"
+           else fail(f"caddy is {state}: Webapps it serves are unreachable", "systemctl restart caddy"))
+    if tunnel:
+        url = f"http://127.0.0.1:{s.tunnel_port}/"
+        yield (ok(f"Caddy answers the tunnel at {url}") if system.http_status(url) != "000"
+               else fail(f"nothing answers the tunnel at {url}", "thinny config apply"))
+    if lan and host.caddy_root_ca().exists():
         yield ok(f"Caddy root certificate for office PCs: {host.caddy_root_ca()}")
 
 
@@ -267,7 +274,7 @@ def running(s: Settings, inst: Instance):
 
 # ---------- runner ----------
 
-CHECKS = [install, prerequisites, firewall, lan_access]
+CHECKS = [install, prerequisites, firewall, caddy]
 INSTANCE_CHECKS = [container, webapp, version, built_ins, bypass]
 
 
