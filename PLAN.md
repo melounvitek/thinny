@@ -1,7 +1,9 @@
 # hermes-manager: plan
 
-Status: rounds 0-5 implemented and tested on the test server (2026-11-12). The README is the
-user documentation; this file keeps the design and what we learned.
+Status: the shared-install design (rounds 0-5) was implemented and tested on the test server
+(2026-11-12). The switch to one Incus container per person (section 8) is implemented in
+code, rounds 0-5, but not yet tested on the server as a whole. The README is the user
+documentation; this file keeps the design and what we learned.
 
 ## 1. Goal
 
@@ -16,20 +18,27 @@ it into a reproducible, public tool.
 
 In priority order.
 
-1. **Person isolation is non-negotiable.** Every person has their own Linux account. One
-   person must never reach another person's data: files, chats, credentials, Webapp,
-   sandbox, browser. The operating system enforces it: separate accounts, hidepid, our own
-   nft table, a root-only Tailscale socket where Tailscale is used. Hermes's own settings
-   (managed scope, sandbox) are defence in depth inside one account. The model provider
-   seeing traffic is accepted. There is no file sharing between people through Hermes.
-2. **One central install.** One Hermes code tree (`/opt/hermes`) and one config
-   (`/etc/hermes`, Hermes "managed scope") for everyone. One nightly update for everyone.
+1. **Person isolation is non-negotiable.** Every person has their own Incus system
+   container (Debian 13 with systemd): their own uid range on the host, filesystem, network
+   namespace and processes. The host has no person accounts. One person must never reach
+   another person's data (files, chats, credentials, Webapp, browser) nor see other
+   people's names or processes. The containers and our nft table enforce it: a container
+   reaches the internet only, not other containers, host services, private networks, the
+   tailnet or the blocked networks. Hermes's own settings (managed scope) are a guardrail
+   inside a container. The model provider seeing traffic is accepted. There is no file
+   sharing between people through Hermes.
+2. **One release and one policy.** One Hermes release for everyone, installed in every
+   container with the official installer at the recorded commit, and one config
+   (`/etc/hermes`, Hermes "managed scope") mounted read-only into every container. One
+   nightly update for everyone, one person at a time.
 3. **Central policy:** pinned model and reasoning effort, model allowlist enforced by a
-   plugin, approvals mode, plugin list, sandbox settings. People cannot change it from the
-   Webapp or their settings. It is a guardrail, not enforcement: a signed-in Webapp user
-   has a host shell as their own account and can get around it. `check` reports it when
-   they do.
-4. **Agent tools run in rootless Podman sandboxes.** No Docker daemon (docker group = root).
+   plugin, approvals mode, plugin list, terminal backend. People cannot change it from the
+   Webapp or their settings. It is a guardrail, not enforcement: a person is root in their
+   own container and can get around it. `check` reports it when they do.
+4. **Agent tools run in the person's container** (`terminal.backend: local`); no sandbox
+   image, no nested Podman. The person has passwordless `sudo`, so they and their agent can
+   `apt install`. Docker and Tailscale are possible inside (nesting, `/dev/net/tun`). No
+   Docker daemon on the host (docker group = root).
 5. **Built-in Hermes Webapp per person** on loopback, always behind sign-in. How each person
    reaches it is chosen per person when they are added (section 6.6). The tool assumes
    nothing about the site's network.
@@ -43,7 +52,7 @@ In priority order.
 Non-goals: hiding data from the server admin (impossible while the admin is root on the
 machine that runs the agent), multi-server fleets, a web UI for the admin, hardening the
 base server (a documented prerequisite that `check` verifies), making the policy
-tamper-proof against a person with a shell.
+tamper-proof against a person who is root in their container.
 
 ## 3. Public from day one
 
@@ -65,10 +74,15 @@ tamper-proof against a person with a shell.
 
 ## 4. What we know
 
-Hermes v0.23.1, Debian 13, rootless Podman 5.4. Sources are marked: **[proto]** seen on the
-hand-built test server, **[tested]** tried on the test server during the review and round 0
-(2026-11-12), **[src]** read in the Hermes source (also present in v0.23.1 unless noted),
-**[static]** read in the source but not run.
+Hermes v0.23.1, Debian 13, rootless Podman 5.4, Incus 6.0.4. Sources are marked: **[proto]**
+seen on the hand-built test server, **[tested]** tried on the test server during the review,
+round 0 (2026-11-12) and the container spike (2026-11-12/13), **[src]** read in the Hermes
+source (also present in v0.23.1 unless noted), **[static]** read in the source but not run.
+
+The subsections from Layout to Capacity describe the previous design (one Linux account per
+person on a shared `/opt/hermes` install, sandboxes in rootless Podman) and are kept as
+history; their findings about Hermes itself (managed scope, model guard, Webapp, login,
+restarts) still hold unless the last subsection says otherwise.
 
 The prototype ran one Linux account with two Hermes homes. Round 0 added two person
 accounts on a separate v0.23.0 install, updated it to v0.23.1 and rebooted the server.
@@ -265,6 +279,61 @@ accounts on a separate v0.23.0 install, updated it to v0.23.1 and rebooted the s
 - ~0.8 GB RAM per idle person (gateway ~0.45 + sandbox ~0.35).
 - Disk per person: venv 0.45-0.9 GB + sandbox image ~4 GB.
 
+### Incus containers (2026-11-12/13)
+Debian 13, kernel 6.12, Incus 6.0.4 (`incus-base`), Hermes v0.23.0 -> v0.23.1. All
+**[tested]**; "VM" marks what was tried in a local Debian 13 VM instead of the test server.
+
+- Storage: a btrfs pool in a sparse loop file on the ext4 root; snapshots are instant;
+  idmapped mounts, so nothing is chowned. A root disk `size` is a quota (`fallocate` of
+  28 GB on 5 GB used: "Disk quota exceeded"); `limits.processes=2000` shows as `pids.max`.
+  Plain `images:debian/13` + one `apt-get install --no-install-recommends` of the full
+  package list: 92 s, so no template.
+- Inside, no trace of others: hostname = own name, own users, processes and cgroup, `dmesg`
+  blocked, lxcfs shows the container's own CPU and memory limits.
+- Network: with a managed bridge (VM) containers pinged each other and resolved each other's
+  names through its dnsmasq; `port_isolation` stopped the ping, but reverse DNS still leaked
+  names with `dns.mode=none`. A routed NIC (`host_name` at most 15 characters) has no DHCP
+  and no shared DNS. Inside, systemd-networkd needs a static file (`Address=<ip>/32`,
+  `Gateway=169.254.0.1`, `GatewayOnLink=yes`, public DNS; the host's may be MagicDNS) or it
+  drops the address.
+- Firewall (the rules in 6.2, eth0 hardcoded then): from inside, the internet works; another
+  container, host SSH on every address, Caddy, the monitoring agent, the host's tailnet
+  address, MagicDNS and private ranges are blocked. A drop in any base chain is final: the
+  admin's forward chain (`policy drop`) needed `iifname "hm-*" accept` and
+  `oifname "hm-*" ct state established,related accept`.
+- Anti-spoofing: Incus adds `iif "hm-..." fib saddr . iif oif missing drop` per routed NIC
+  (table `inet incus`) and `rp_filter=2`; a spoofed source address got no reply.
+- An incus.service drop-in `ExecStartPre=/usr/sbin/nft -f <file>`: `systemctl restart incus`
+  keeps containers and gateways running (same PID); with the file missing incus.service
+  fails (fail closed). After a reboot the tables, `ip_forward`, containers, gateways, a
+  container's own Tailscale and the Webapp over `tailscale serve` came back.
+- Webapp: a proxy device on the host loopback (listener owned by incusd); Hermes sees
+  127.0.0.1, and a Host header mismatch is harmless (302 to /login). A real browser over
+  `tailscale serve` got `__Host-` Secure cookies, the Czech UI and the seeded look.
+- `incus exec --user` sets no supplementary groups, so commands run through `runuser`.
+  Gateway ExecStart: `"/home/<name>/.hermes/hermes-agent/.hermes/bin/hermes" "gateway" "run"`.
+- Policy: a read-only `/etc/hermes` disk (`shift=true`) was honoured ("9 managed settings
+  were not saved"); model-guard mounted read-only into `hermes-agent/plugins/` plus a
+  `.git/info/exclude` line was enabled. Managed `plugins.enabled` replaces the person's
+  list, so a plugin they install (e.g. hermes-3310, the phone plugin) loads only if listed.
+- Official installer as the person, `--channel stable --commit <sha>`: fresh v0.23.0 in
+  191 s; rerun with the v0.23.1 sha: exit 0 in 93 s, exactly v0.23.1, git status clean,
+  read-only model-guard intact. It does not build the Webapp: `hermes webapp --build-only`
+  122 s fresh, 107 s after an update. `hermes update` cannot pin a tag (VM: 171 s, ~200 MB
+  download, +0.8 GB disk, rebuilds the Webapp itself).
+- `hermes pm gc`: 1 s, keeps the previous generation (2 environments, ~420 MB each).
+  `hermes plugins install hermes-lang-cs --yes-deps --no-enable` as the person installs the
+  sha their catalog pins into `~/.hermes/plugins/`.
+- The native installer installs neither Chromium's shared libraries nor the Bot Screen
+  packages. With the official image's Dockerfile lists (v0.23.1) the browser tool, the Bot
+  Screen and a real chat with terminal and browser tools worked.
+- Docker inside worked (hermes-3310's `install-asterisk.sh` ran unchanged); Tailscale inside
+  signed in to another tailnet and worked over a DERP relay.
+- add-person ≈ 92 + 191 + 122 s + config ≈ 7 min; update ≈ 93 + 107 s + restart per person.
+  Idle container with Hermes ~370 MB private RAM; an empty one with Docker and Tailscale
+  ~80 MB. ~2.8 GB own disk per person for Hermes (copied from a template, so without the
+  system packages).
+
 ## 5. Rejected options (and why)
 
 - Docker: docker group = root.
@@ -279,195 +348,187 @@ accounts on a separate v0.23.0 install, updated it to v0.23.1 and rebooted the s
 - One shared ChatGPT subscription for several people: against the provider's terms.
 - Editing Hermes source: everything works through managed scope, bundled-but-excluded
   plugins and catalog plugins. Keep it that way so updates stay safe.
+- Rootless Podman with the official Hermes image per person: one 3.85 GB image copy per
+  person, no `sudo` or `apt` for the person, and SSH, Tailscale and the phone plugin need
+  workarounds.
+- One Linux account per person on a shared `/opt/hermes` install (the previous design):
+  borrowing a root-owned install needed workarounds (permissions, the environment resync,
+  `pm gc`, the Webapp build as root) and a per-account loopback firewall (section 4).
+- An Incus managed bridge: containers resolve each other's names through its DNS, reverse
+  lookups even with `dns.mode=none`.
 
 ## 6. Approach
 
 ### 6.1 Repository layout
 
 ```
-install.sh                    thin bootstrap: packages, the tool, then `hermes-manager install`
-hermes-manager                admin CLI entry point (Python 3 stdlib only, runs as root)
-hermes_manager/               settings, registry, render (all generated text), system, host
-                              (shared install, firewall, access), people, apply, checks, update
-files/                        installed as-is: hermes-podman, model-guard/
-site.example.toml             every site setting, commented
-extras/                       netcup snapshot, nightly watch (run off the server)
-tests/                        pytest
+install.sh          thin bootstrap: packages, the tool, then `hermes-manager install`
+hermes-manager      admin CLI entry point (Python 3 stdlib only, runs as root)
+hermes_manager/     settings, registry, render (all generated text), system (commands on the
+                    host and in containers), host (Incus pool and profile, firewall, units,
+                    release, access), people, apply, checks, update
+files/model-guard/  mounted read-only into every container
+site.example.toml   every site setting with its default, commented
+extras/, tests/     netcup snapshot and nightly watch (run off the server); pytest
 ```
-
-The nightly update is `hermes-manager update` (unit `hermes-manager-update.timer`), and the
-one-by-one restart is `hermes-manager restart`. The language pack is a catalog plugin name;
-its commit comes from the installed Hermes plugin catalog. A proxy account for `url` access
-comes from `access.proxy_users` (not asked per person).
 
 ### 6.2 State on the server
 
 ```
-/etc/hermes-manager/site.toml          admin-edited settings
-/var/lib/hermes-manager/people.json    registry written by hermes-manager
-/etc/hermes/                           Hermes managed scope, rendered from site.toml
-/etc/hermes-manager/hermes-manager.nft our own nft table, regenerated from the registry
+/etc/hermes-manager/site.toml           admin-edited settings
+/var/lib/hermes-manager/people.json     registry: name, port, container address, access, URL, state
+/var/lib/hermes-manager/release         "<tag> <commit>": the Hermes release everyone runs
+/etc/hermes/                            Hermes managed scope, rendered from site.toml
+/etc/hermes-manager/hermes-manager.nft  our nft table for the containers
+/etc/systemd/system/incus.service.d/hermes-manager.conf, /etc/sysctl.d/90-hermes-manager.conf
+Incus                                   pool `default` (btrfs, sparse file), profile `hm-person`,
+                                        one container per person, named after them
 ```
 
-- Registry per person: Linux account, uid, Webapp port, access method, URL, state
-  (`pending`, `active`, `disabled`). Uids and ports are never reused.
-- Our nft table holds the per-person loopback rules (section 4, Webapp) and the blocked
-  networks. It uses numeric uids, is checked with `nft -c`, is loaded with `nft -f` by our
-  unit at boot (`PartOf=nftables.service`) and by a `user@.service` drop-in, and never
-  touches the admin's tables. `check` verifies it is loaded.
-- Root never writes inside a person's home: everything there runs as the person
-  (`runuser`), so a planted symlink cannot redirect a root write.
+- Names, ports and container addresses (`10.78.0.0/24`) are never reused; states `pending`,
+  `active`, `disabled`.
+- Profile `hm-person`: root disk with the `disk_gb` quota, `/dev/net/tun`,
+  `security.idmap.isolated`, `security.nesting`, `limits.cpu`, `limits.memory`,
+  `limits.processes=2000`, `boot.autostart`. Per container: a routed NIC `hm-<port>`,
+  `/etc/hermes` and model-guard as read-only disks (`shift=true`), and a proxy device from
+  host `127.0.0.1:<port>` to the same port inside.
+- Our nft table: forward from `hm-*` only out of `network.interface`, not to private, CGNAT
+  (tailnet), link-local, multicast or blocked networks, no IPv6, nothing new into `hm-*`;
+  input: nothing new from `hm-*`; masquerade. Loaded by `apply` and by the incus.service
+  drop-in (`ExecStartPre`, `PartOf=nftables.service`), so incusd never starts without it.
+  The admin's tables stay untouched; their forward chain must accept `hm-*`.
+- Everything in a container runs through `incus exec`; the person's commands run as them
+  (`runuser`, clean environment), and files in their home are read and written as them.
+  Output is bounded in size and time: the person controls every program in their container.
 - `hermes-manager` and the nightly update share one lock.
 
 ### 6.3 Prerequisites (the admin's)
 
-Documented in the README, verified by `check` with the exact fix:
-- warnings: SSH key-only and on a private network, firewall input policy, unattended
-  upgrades with a reboot window after the update window;
-- **FAIL** (they are part of person isolation): `/proc` hidepid, root-only Tailscale socket
-  when Tailscale is installed (without it other accounts read the tailnet and everyone's
-  URLs).
+In the README, verified by `check` with the exact fix, all warnings: SSH key-only and on a
+private network, an input firewall with policy drop, unattended upgrades with a reboot window
+after the update window. The forward chain is a requirement: without it containers have no
+internet, and `check` fails per person with the two lines to add. hidepid and a root-only
+Tailscale socket are no longer needed: the host has no person accounts.
 
 ### 6.4 `install.sh`
 
-Idempotent; a rerun repairs and never destroys data or updates Hermes:
-packages (podman, uidmap, passt, fuse-overlayfs, git, curl, python3; Caddy when an access
-method needs it), the official Hermes installer pinned by version into `/opt/hermes` only
-when no checkout exists (with a separate `HOME`), permissions fixed, the Webapp built as
-root, `HERMES_HOME_MODE=0711` for root's `hermes`, launchers, wrappers,
-model-guard + language pack (pinned sha) + git excludes, nightly timer, `hermes-manager`
-itself, then `hermes-manager apply` renders `/etc/hermes` and the rest.
+Idempotent; a rerun repairs and never destroys data or updates Hermes: packages
+(`incus-base`, `btrfs-progs`, `nftables`, `curl`, `python3`; Caddy later when LAN access needs
+it), the tool, `site.toml` from the example on the first run, then `hermes-manager install`:
+the storage pool once (80% of the free space under `/var/lib`; no Incus network), then
+`apply`: firewall first, units, sysctl, profile, `/etc/hermes`, Webapp settings, access,
+remembered restarts. No Hermes on the host.
 
 ### 6.5 `hermes-manager`
 
 ```
-hermes-manager add-person <name> [--access lan|tailscale|url=<URL>|local]
-                                     account, linger, home, venv, port, Webapp password,
-                                     language, look, gateway, access, firewall
-hermes-manager access <name> [...]   change the access method (restarts the gateway)
-hermes-manager login <name>          ChatGPT device login (before the hand-over)
-hermes-manager remove-person <name>  disable: gateway stopped, linger off, account locked,
-                                     access removed, firewall regenerated, sandboxes removed
-hermes-manager list                  people, ports, URLs, gateway state
-hermes-manager check                 isolation and health checks (section 7)
-hermes-manager apply                 re-render /etc/hermes, firewall, access; restart
-                                     gateways one by one where needed
+add-person <name> [--access ...]  port, address, container, packages, account (uid 1000, sudo,
+                                  linger), Hermes at the recorded release, Webapp build,
+                                  language pack, model-guard, Webapp password, language, look,
+                                  access, gateway
+access | login | password <name>  access method, ChatGPT device login, new Webapp password
+remove-person <name>              autostart off, container stopped (forced after 60 s), access
+                                  removed; container and data stay
+list | check | apply              people; checks (section 7); re-render and restart where needed
+update | restart                  nightly update (6.8); one-by-one gateway restarts
 ```
 
-- Names: lowercase ASCII, validated (Linux account and URL safe).
+- Names: lowercase ASCII (Linux account and URL safe), not an account on the host (the
+  container has Debian's system accounts too) and not an existing container.
 - `add-person` records `pending` first and can be rerun to finish after a failure.
 - Gateway restarts happen only where unavoidable, and are announced.
+- The admin's shell in a container: `incus exec <name> -- runuser -l <name>`.
 
 ### 6.6 Access per person
 
-`add-person` asks (or takes `--access`; `site.toml` holds the default):
+`add-person` asks for one method per person (`--access`, default from `site.toml`), since a
+Webapp accepts only its own `public_url`. The Webapp listens on `127.0.0.1:<port>` inside the
+container; the proxy device publishes it on the same host loopback port, and every method
+points there: **LAN** a Caddy site with its local CA (`tls internal`); **Tailscale**
+`tailscale serve --bg --https=<port>`, offered only when Tailscale runs; **own address** the
+URL entered, the admin points a proxy at the port; **local** `http://<name>.localhost:<port>/`
+through `ssh -L <port>:127.0.0.1:<port> root@<server>`.
 
-```
-How will alice open her Webapp?
-  1) Office network (LAN)  https://<lan-ip>:<port>/   built-in HTTPS proxy
-  2) Tailscale             https://<machine>.<tailnet>.ts.net:<port>/
-  3) Own address           you enter the URL (Cloudflare, your proxy, ...)
-  4) Local only            no network access; open via an SSH tunnel
-Choice [1]:
-```
+### 6.7 Settings (`site.toml`)
 
-- **LAN:** a Caddy site on the LAN address and the person's port with Caddy's local CA
-  (`tls internal`); `public_url` set. The README explains trusting the CA on office PCs.
-- **Tailscale:** `tailscale serve --bg --https=<port> http://127.0.0.1:<port>`; offered only
-  when Tailscale is installed.
-- **Own address:** `public_url` = the URL entered; asks which account runs the proxy (root by
-  default) for the firewall; prints "forward to `http://127.0.0.1:<port>`".
-- **Local only:** `public_url = http://<name>.localhost:<port>/`; the admin opens
-  `ssh -L <port>:127.0.0.1:<port> root@<server>` and browses to that URL.
-- One method per person (a Webapp accepts only its own `public_url` address).
-
-### 6.7 Settings (`site.toml`, sketch)
-
-```toml
-[hermes]
-min_release_age_hours = 48
-auto_update = true
-update_time = "03:00"
-
-[policy]
-model_provider = "openai-codex"
-model = "<model id>"
-allowed_models = ["<model id>"]
-reasoning_effort = "high"
-approvals = "smart"
-browser = true
-language = "cs"
-language_pack = { name = "<plugin>", sha = "<commit>" }
-
-[sandbox]
-image = "docker.io/nousresearch/hermes-sandbox:desktop"
-cpu = 2
-memory_mb = 4096
-
-[webapp]
-port_range = [9120, 9199]
-
-[access]
-default = "lan"                  # lan | tailscale | url | local
-lan_address = "<server LAN IP>"
-proxy_users = []                 # extra accounts allowed to reach Webapp ports
-
-[network]
-blocked_networks = []            # e.g. the office LAN; tailnet blocked when Tailscale is used
-```
+`[hermes]` update timing, `[policy]` provider, models, effort, approvals, language and
+`language_pack` (a catalog plugin name), `[container]` `cpu`, `memory_mb`, `disk_gb`,
+`[webapp]` port range and the look for new people (`text_scale` 110), `[access]` `default`,
+`lan_address`, `[network]` `interface` (`eth0`) and `blocked_networks` (public networks;
+private ones and the tailnet are always blocked). `site.example.toml` lists every key.
 
 ### 6.8 Nightly update
 
-Ported from the prototype with these changes:
-- `auto_update = false` only checks and writes the status file.
-- People from the registry, not from unit files.
-- Not implemented: waiting for that night's snapshot (it runs off the server, so the server
-  cannot see it); the README says the snapshot is the only way back.
-- After `hermes update`: fix permissions, restore plugins, rebuild the Webapp, `hermes pm
-  install --extra all` as each person, then `gateway restart --yes` one by one with the
-  checks; stop at the first failure.
-- Pull the sandbox image per person and recreate idle sandboxes.
-- After the update: model-guard and the language pack still enabled.
-- Report when the OS needs a reboot (`/run/reboot-required`); never reboot.
+- The latest stable release once it is `min_release_age_hours` old; `auto_update = false`
+  only reports it.
+- Exact target: the tag's commit from the GitHub API. `hermes update` cannot pin one, so for
+  each active person not at the commit, one at a time: the official installer again with
+  `--commit <sha>` (the same path as add-person), `hermes webapp --build-only`, the language
+  pack (`hermes plugins install --force`), `hermes pm gc`, then `gateway restart --yes` with
+  the checks. Stop at the first failure.
+- `update-unfinished` holds tag and commit; a later run finishes the rollout without asking
+  GitHub, whatever its age, skipping people already at the commit. The recorded release
+  moves only when everyone runs it; add-person installs it (the latest stable release when
+  none is recorded yet).
+- No pre-update backup: `/etc/hermes`, model-guard and the language pack can all be
+  recreated. The snapshot (off the server, not awaited) is the only way back.
+- Inside the containers, `unattended-upgrades` with Debian's defaults updates the OS.
+- Report when the host needs a reboot (`/run/reboot-required`); never reboot.
 
 ## 7. Checks (`hermes-manager check`)
 
-- Install: `/opt/hermes` 711, launchers present, model-guard + language pack enabled for
-  every person, nightly timer enabled, last update status.
-- Per person: gateway active, `public_url` set and the Webapp answering at it, Webapp port
-  refused for another account, no bypass (`HERMES_MANAGED_DIR`/`HERMES_BUNDLED_PLUGINS` in
-  `.env`, own `model-guard`, changed gateway unit), unexpected loopback listeners.
-- Sandboxes: running ones reach the internet, `pasta` in a `run-*.scope` under
-  `hermes-sandboxes.slice`; blocked networks unreachable.
-- Firewall: our table loaded.
-- Prerequisites (section 6.3) with fixes.
+- Install: Incus pool `default` and profile `hm-person`, the incus.service drop-in, IPv4
+  forwarding (FAIL); `/etc/hermes` matches `site.toml` (WARN); the recorded release; nightly
+  timer enabled (WARN); last update status (FAIL when failed, WARN when missing or older than
+  48 h).
+- Prerequisites (section 6.3), all WARN.
+- Firewall: our table loaded (FAIL); its file is what `site.toml` renders (WARN).
+- Office network: Caddy active when anyone uses LAN access (FAIL).
+- Per person: container running and reaching the internet (FAIL; the fix shows the
+  forward-chain lines); gateway active and Webapp answering (FAIL), `public_url` as recorded
+  (WARN); Hermes at the recorded commit (WARN); no bypass (WARN): `HERMES_MANAGED_DIR`,
+  `HERMES_BUNDLED_PLUGINS` or `HERMES_ENABLE_PROJECT_PLUGINS` in `.env` or the gateway unit,
+  their own `model-guard` in `~/.hermes/plugins`, a gateway unit that does not start their
+  own `hermes`.
+- A check that crashes is reported as FAIL; the others still run.
 
 ## 8. Rounds
 
 Each round ends with a stop for review and a commit.
 
-0. **Spike on the test server** (done; findings in section 4): loopback isolation
-   between accounts; a real update from an older release with person
-   accounts; our own nft table at boot, on `user@` restart and nftables restart; the
-   Tailscale socket; sandbox reach to host ports; access option 4; Caddy's certificate
-   warning in a real browser; `HERMES_HOME_MODE` on v0.23.1; a reboot.
-1. Skeleton, `site.example.toml`, settings + registry code, rendering (managed config, nft
-   table, Caddy, units), unit tests, README section "what is and is not protected".
-2. `hermes-manager` add/access/login/remove/list/check/apply and the thin `install.sh`,
-   tested on the test server from a clean-base snapshot.
-3. Nightly update, tested with a real update.
-4. Full run from the clean base: install twice, 2-3 people, every access method, `check`,
-   isolation, update, reboot.
-5. README, LICENSE (MIT), extras without personal data, final scan for leaked site data.
+Shared-install design (done, 2026-11-12): 0 spike on the test server (loopback isolation,
+a real update, nft table at boot and restarts, Tailscale socket, sandbox reach, access
+option 4, Caddy's warning, a reboot); 1 settings, registry, rendering; 2 commands and
+`install.sh`; 3 nightly update; 4 full run from a clean-base snapshot; 5 README, LICENSE,
+extras, leak scan.
 
-Test server: Hermes removed down to a "clean base" (Tailscale, SSH, monitoring and the
-prerequisites stay), snapshotted, and restored before each installer test.
+Container switch (2026-11-12/13):
+
+0. **Server spike** (done; section 4, Incus containers): installer `--commit`, model-guard
+   mount through an update, language pack, limits, incus drop-in, anti-spoofing, reboot.
+1. Settings, registry, rendering: `[container]`, `network.interface`, text scale 110,
+   container addresses, firewall, profile, networkd file, local terminal backend (done).
+2. People as containers: add, resume, remove, bounded commands as the person (done).
+3. Install and apply: storage pool, profile, units, sysctl, firewall first (done).
+4. Versions: the recorded release, the per-person rollout, resume (done).
+5. Checks for containers; shared install, hermes-podman and sandboxes removed (done).
+6. README and this file (done).
+7. Server test from a rebuilt playground (pending): install twice, 2-3 people with every
+   access method, isolation from inside a container, browser sign-in, device login, an
+   update with one person a release behind, interrupt and resume, `apt` packages surviving
+   restart and update, Docker and Tailscale in one container, reboot, `check`, remove.
 
 ## 9. Open questions
 
-- Report upstream: `refuse_foreign_owned_venv` refusing the borrowed resync although it
-  writes only to the person's home; `pm gc` failing for borrowers.
+- Package drift: `render.PACKAGES` copies the official image's Dockerfile lists (v0.23.1).
+  When Hermes adds a system dependency the list must follow; containers get the list at
+  add-person and before each Hermes update.
+- The hermes-3310 phone plugin needs to be in the managed `plugins.enabled` (it replaces the
+  person's list) and Docker in the person's container; neither is wired up.
+- Per-person SSH and Tailscale are left to the person; SSH needs the host as jump host.
+- Not tested: `systemctl restart nftables` with containers running (do Incus's per-NIC
+  anti-spoofing rules come back without restarting the containers?).
+- The storage pool is sized once at install; growing it is manual.
 - Alerting from the server itself (no mail sender today; the watchdog runs off-server).
-- A shared read-only image store for rootless Podman if disk becomes a problem.
 - Per-person ChatGPT seats versus one API account per organisation (a local proxy such as
   CLIProxyAPI is parked).
