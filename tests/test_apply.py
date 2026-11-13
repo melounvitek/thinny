@@ -63,3 +63,11 @@ def test_turning_the_model_lock_on_first_removes_the_model_instances_started_wit
     unset = [f"{name}: hermes config unset {key}" for name in ("alice", "bob")
              for key in ("model.provider", "model.default", "agent.reasoning_effort")]
     assert done == (unset if model_lock else []) + ["policy"]
+
+
+@pytest.mark.parametrize("tunnel_port, hint", [(0, False), (8080, True)])
+def test_setup_ends_with_where_the_tunnel_goes(monkeypatch, capsys, tunnel_port, hint):
+    monkeypatch.setattr(host, "init_incus", lambda: None)
+    monkeypatch.setattr(apply, "apply", lambda s: None)
+    apply.setup(dataclasses.replace(S, tunnel_port=tunnel_port))
+    assert ("Point your tunnel at http://127.0.0.1:8080" in capsys.readouterr().out) == hint

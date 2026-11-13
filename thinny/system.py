@@ -203,3 +203,9 @@ def http_status(url: str, timeout: float = 5) -> str:
     res = run(["curl", "-s", "-o", "/dev/null", "-m", str(timeout), "-w", "%{http_code}", url],
               check=False, timeout=timeout + 10)
     return res.stdout.strip() or "000"
+
+
+def default_route() -> tuple[str, str]:
+    """The interface and source address the server reaches the internet with ("" when unknown)."""
+    words = run(["ip", "-4", "route", "get", "1.1.1.1"], check=False, timeout=10).stdout.split()
+    return tuple(words[words.index(key) + 1] if key in words[:-1] else "" for key in ("dev", "src"))

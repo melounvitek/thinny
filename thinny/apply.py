@@ -12,6 +12,8 @@ from .system import log
 def setup(s: Settings) -> None:
     host.init_incus()
     apply(s)
+    if s.tunnel_port:
+        print(f"Point your tunnel at http://127.0.0.1:{s.tunnel_port} (see README, Access).")
     print("Ready. Add instances with: thinny instance add <name>")
 
 

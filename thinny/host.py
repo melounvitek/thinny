@@ -23,6 +23,7 @@ SYSCTL_FILE = Path("/etc/sysctl.d/90-thinny.conf")
 SYSTEMD = Path("/etc/systemd/system")
 REPO_API = "https://api.github.com/repos/NousResearch/hermes-agent"
 INSTALLER_URL = "https://hermes-agent.nousresearch.com/install.sh"
+CATALOG_URL = "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/plugin-catalog/{}.yaml"
 RELEASE_FILE = STATE_DIR / "release"   # "<tag> <commit>": the Hermes release all instances run
 
 

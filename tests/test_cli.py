@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from thinny import apply, cli, instances, render, settings, system, update
+from thinny import apply, cli, host, instances, render, settings, system, update
 from thinny.registry import Registry
 
 VALID = '[policy]\nmodel = "m1"\nallowed_models = ["m1"]\n\n[access]\nlan_address = "192.168.1.10"\n'
@@ -38,6 +38,73 @@ def editor(monkeypatch, *texts, code=0):
         return subprocess.CompletedProcess(cmd, code)
     monkeypatch.setattr(cli.subprocess, "run", run)
     return started
+
+
+@pytest.fixture
+def new_server(server, monkeypatch):
+    """A server without site.toml, on a terminal. It reaches the internet through enp1s0 from
+    192.168.1.5, Hermes's catalog has a Czech language pack, and Tailscale is off."""
+    site, _ = server
+    site.unlink()
+    monkeypatch.setattr(system, "default_route", lambda: ("enp1s0", "192.168.1.5"))
+    monkeypatch.setattr(system, "http_status",
+                        lambda url, timeout: "200" if url.endswith("/hermes-lang-cs.yaml") else "404")
+    monkeypatch.setattr(host, "tailscale_status", lambda: None)
+    monkeypatch.setattr(cli.sys, "stdin", type("Terminal", (), {"isatty": lambda self: True})())
+    return site
+
+
+def answering(monkeypatch, *answers):
+    """The terminal gives `answers` in turn ("" is Enter), then ends."""
+    answers = list(answers)
+
+    def answer(prompt=""):
+        if not answers:
+            raise EOFError
+        return answers.pop(0)
+    monkeypatch.setattr("builtins.input", answer)
+
+
+def test_init_writes_the_answers_into_the_commented_example(new_server, monkeypatch, capsys):
+    # provider, model (asked again after Enter), language, interface, own addresses, tunnel port, write
+    answering(monkeypatch, "", "", "gpt-5.5", "cs", "", "2", "", "")
+    assert cli.main(["init"]) == 0
+    s = settings.load(new_server)
+    assert (s.model_provider, s.model, s.language, s.language_pack, s.network_interface) == \
+        ("openai-codex", "gpt-5.5", "cs", "hermes-lang-cs", "enp1s0")
+    assert (s.access_default, s.lan_address, s.tunnel_port) == ("url", "", 8080)
+    assert "# default model" in new_server.read_text()
+    assert "one tunnel at http://127.0.0.1:8080" in capsys.readouterr().out
+
+
+def test_init_offers_the_detected_lan_address(new_server, monkeypatch):
+    # provider, model, language (no pack in the catalog), interface, LAN (the default), its address, write
+    answering(monkeypatch, "anthropic", "claude", "de", "eth1", "", "", "y")
+    assert cli.main(["init"]) == 0
+    s = settings.load(new_server)
+    assert (s.model_provider, s.model, s.language, s.language_pack, s.network_interface) == \
+        ("anthropic", "claude", "de", "", "eth1")
+    assert (s.access_default, s.lan_address, s.tunnel_port) == ("lan", "192.168.1.5", 0)
+
+
+@pytest.mark.parametrize("answers, message", [
+    (("", "gpt-5.5", "", "", "", "", "n"), "nothing written"),
+    (("", "gpt-5.5", "", "", "2", "9150"), "tunnel_port"),   # in the Webapp port range
+    (("", "gpt-5.5", "", "", "2", "lots"), "'lots' is not a port"),
+    (("",), "nothing written"),                                # the terminal ends (Ctrl-D)
+])
+def test_init_writes_nothing_without_a_valid_confirmed_answer(new_server, monkeypatch, capsys, answers, message):
+    answering(monkeypatch, *answers)
+    assert cli.main(["init"]) == 1
+    assert not new_server.exists()
+    assert message in capsys.readouterr().err
+
+
+def test_init_leaves_an_existing_site_toml_alone(server, capsys):
+    site, _ = server
+    assert cli.main(["init"]) == 1
+    assert site.read_text() == VALID
+    assert "thinny config edit" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("args, auto_update, kw, thinny", [

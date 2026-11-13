@@ -11,7 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import apply, checks, host, instances, settings, update
+from . import apply, checks, host, instances, settings, system, update
 from .registry import Registry, RegistryError
 from .settings import SettingsError, load
 from .system import CommandError, lock, write_file
@@ -33,6 +33,7 @@ def at_least_1(value: str) -> int:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="thinny", description="Shared Hermes Agent server, one isolated container per instance.")
     sub = ap.add_subparsers(dest="command", required=True, metavar="command")
+    sub.add_parser("init", help="ask for the main settings and write site.toml (on a new server)")
     sub.add_parser("setup", help="set up the server, then apply site.toml")
     sub.add_parser("status", help="quick look: release, last update, containers, gateways")
     sub.add_parser("doctor", help="every isolation and health check, with fixes")
@@ -76,6 +77,9 @@ def main(argv: list[str] | None = None) -> int:
         print("thinny must run as root", file=sys.stderr)
         return 2
     try:
+        if command == "init":
+            init_config()
+            return 0
         if command == "config edit":
             with lock():  # before editing: a running update says so now, not after the edit
                 if edit_config():
@@ -101,7 +105,8 @@ def main(argv: list[str] | None = None) -> int:
             elif command == "update":
                 return update.run(s, reg, dry_run=a.dry_run, now=not a.scheduled)
             elif command == "instance add":
-                access, url = parse_access(a.access) if a.access else (ask_access(s, a.name), "")
+                access, url = parse_access(a.access) if a.access else (
+                    ask_access(f"How will users open {a.name}'s Webapp?", s.lan_address, s.access_default), "")
                 if access == "url" and not url:
                     url = input("Address users will open (https://...): ").strip()
                 instances.add(s, reg, a.name, access, url, cpu=a.cpu, memory_mb=a.memory_mb, disk_gb=a.disk_gb)
@@ -166,20 +171,74 @@ def edit_config() -> bool:
         copy.unlink(missing_ok=True)
 
 
-def ask_access(s, name: str) -> str:
-    """The access question of `instance add` (default from site.toml when not on a terminal)."""
+def init_config() -> None:
+    """Ask for what a new server needs and write it into the commented site.example.toml."""
+    path = settings.SITE_TOML
+    if path.exists():
+        raise CommandError(f"{path} exists; change it with: thinny config edit")
     if not sys.stdin.isatty():
-        return s.access_default
+        raise CommandError(f"no terminal to ask on; copy {host.LIB / 'site.example.toml'} to {path} and edit it")
+    interface, address = system.default_route()
+    print(f"thinny needs a few settings for {path}. Enter takes the [suggestion].\n"
+          "Everything else keeps its default; change any of it later with: thinny config edit\n")
+    try:
+        provider = ask("Model provider", "openai-codex")
+        model = ask("Model id, e.g. gpt-5.5")
+        language = ask("Webapp language (en, cs, de, ...)", "en")
+        interface = ask("Internet interface, containers go out through it", interface or "eth0")
+        print()
+        access = ask_access("How will users open the Webapps? (default for new instances)", address, "lan")
+        lan_address = ask("Server address office PCs open", address or None) if access == "lan" else ""
+        port = ask("Port of one tunnel to every instance (0: none)", "8080") if access == "url" else "0"
+        if not port.isdigit():
+            raise CommandError(f"{port!r} is not a port; nothing written")
+        # A language Hermes lacks comes as a catalog plugin.
+        pack = f"hermes-lang-{language}"
+        found = system.http_status(host.CATALOG_URL.format(pack), timeout=20) if language != "en" else ""
+        pack = pack if found == "200" else ""
+        text = settings.fill((host.LIB / "site.example.toml").read_text(encoding="utf-8"), {
+            ("policy", "model_provider"): provider, ("policy", "model"): model, ("policy", "language"): language,
+            ("policy", "language_pack"): pack, ("network", "interface"): interface, ("access", "default"): access,
+            ("access", "lan_address"): lan_address, ("access", "tunnel_port"): int(port)})
+        settings.parse(text, source=str(path))
+        where = {"lan": f"office network, https://{lan_address}:<port>/", "tailscale": "Tailscale",
+                 "url": "own addresses" + (f", one tunnel at http://127.0.0.1:{port}" if int(port) else ""),
+                 "local": "local only, through an SSH tunnel"}[access]
+        pack_note = {"200": f", with the language pack {pack}",
+                     "000": " (Hermes's plugin catalog did not answer; set policy.language_pack if needed)"}
+        print(f"\n  model      {provider} / {model}\n  language   {language}{pack_note.get(found, '')}\n"
+              f"  interface  {interface}\n  access     {where}\n")
+        if input(f"Write {path}? [Y/n] ").strip().lower().startswith("n"):
+            raise CommandError("nothing written")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        raise CommandError("nothing written") from None
+    write_file(path, text)
+    print(f"Wrote {path}.")
+
+
+def ask(question: str, default: str | None = None) -> str:
+    """The answer, or `default` on Enter; without a default, asks until answered."""
+    while True:
+        answer = input(f"{question}{f' [{default}]' if default else ''}: ").strip() or default
+        if answer is not None:
+            return answer
+
+
+def ask_access(question: str, lan_address: str, default: str) -> str:
+    """The access question (`default` when not on a terminal)."""
+    if not sys.stdin.isatty():
+        return default
     tailscale = host.tailscale_status() is not None
-    options = [("lan", f"Office network (LAN)  https://{s.lan_address or '<lan_address>'}:<port>/  built-in HTTPS proxy"),
+    options = [("lan", f"Office network (LAN)  https://{lan_address or '<lan_address>'}:<port>/  built-in HTTPS proxy"),
                ("tailscale", "Tailscale             https://<machine>.<tailnet>.ts.net:<port>/") if tailscale else None,
                ("url", "Own address           you enter the URL (Cloudflare, your proxy, ...)"),
                ("local", "Local only            no network access; open via an SSH tunnel")]
     options = [o for o in options if o]
-    print(f"How will users open {name}'s Webapp?")
+    print(question)
     for i, (_, text) in enumerate(options, 1):
         print(f"  {i}) {text}")
-    default = next((i for i, (m, _) in enumerate(options, 1) if m == s.access_default), 1)
+    default = next((i for i, (m, _) in enumerate(options, 1) if m == default), 1)
     answer = input(f"Choice [{default}]: ").strip() or str(default)
     if not answer.isdigit() or not 1 <= int(answer) <= len(options):
         raise CommandError("no such choice")
