@@ -138,6 +138,22 @@ def test_a_resume_redoes_the_person_it_stopped_at_although_their_checkout_moved(
                             "packages bob", "install bob c2", "restart bob"]
 
 
+def test_the_person_it_stopped_at_comes_first_even_when_others_changed_their_hermes(server):
+    server.stops_after_checkout.add("bob")
+    assert update.run(S, registry()) == 1
+    server.stops_after_checkout.clear()
+    server.commits["alice"] = "her own"   # alice moved her Hermes herself meanwhile
+    server.broken.add("alice")
+    server.calls.clear()
+    assert update.run(S, registry()) == 1
+    assert server.calls == ["packages bob", "install bob c2", "restart bob", "packages alice"]
+
+    server.broken.clear()
+    server.calls.clear()
+    assert update.run(S, registry()) == 0
+    assert server.calls == ["packages alice", "install alice c2", "restart alice"]
+
+
 def test_nobody_else_is_touched_while_a_restart_keeps_failing(server, monkeypatch):
     def broken(p):
         raise CommandError(f"{p.name}: gateway not active")

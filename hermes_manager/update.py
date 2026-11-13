@@ -69,7 +69,8 @@ def rollout(s: Settings, reg: Registry, tag: str, commit: str, current: str = ""
     at the first failure. A repeat starts with the person it stopped at (their checkout may be at
     the commit while the rest of their update is not), then skips the people already done. New
     people get the release once everyone runs it."""
-    for p in [p for p in reg.current() if p.state == "active"]:
+    active = [p for p in reg.current() if p.state == "active"]
+    for p in sorted(active, key=lambda p: p.name != current):  # the person it stopped at first
         if p.name != current and people.installed_commit(p.name) == commit:
             continue
         log(f"{p.name}: Hermes {tag}")

@@ -484,7 +484,7 @@ private ones and the tailnet are always blocked). `site.example.toml` lists ever
   timer enabled (WARN); last update status (FAIL when failed, WARN when missing or older than
   48 h).
 - Prerequisites (section 6.3), all WARN.
-- Firewall: the loaded table has every rule and blocked network `site.toml` renders (FAIL).
+- Firewall: the loaded table is exactly what `site.toml` renders, chain by chain (FAIL).
 - Office network: Caddy active when anyone uses LAN access (FAIL).
 - Per person: container running and reaching the internet (FAIL; the fix shows the
   forward-chain lines); gateway active and Webapp answering (FAIL), `public_url` as recorded

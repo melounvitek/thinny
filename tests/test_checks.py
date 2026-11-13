@@ -45,15 +45,21 @@ LISTED = """table inet hermes_manager {
 """
 
 
-def test_the_loaded_firewall_must_have_every_rendered_rule():
+INPUT_DROP = '\t\tiifname "hm-*" ct state != { established, related } drop\n'
+
+
+@pytest.mark.parametrize("listed, matches", [
+    (LISTED, True),
+    (LISTED[LISTED.index("\tchain postrouting"):], False),                    # NAT only
+    (LISTED.replace(INPUT_DROP, '\t\tiifname "hm-*" accept\n' + INPUT_DROP), False),  # an early accept
+    (LISTED.replace(INPUT_DROP, "").replace("\tchain postrouting", "\tchain spare {\n" + INPUT_DROP
+                                             + "\t}\n\tchain postrouting"), False),  # the drop moved away
+    (LISTED.replace("203.0.113.0/24", "198.51.100.0/24"), False),            # stale blocked networks
+    ("", False),                                                             # not loaded
+])
+def test_the_loaded_firewall_must_be_the_rendered_one(listed, matches):
     rendered = render.firewall("eth0", ["203.0.113.0/24"])
-    assert checks.missing_rules(rendered, LISTED) == []
-    nat_only = LISTED[LISTED.index("\tchain postrouting"):]
-    assert len(checks.missing_rules(rendered, nat_only)) == 8   # 2 hooks, 5 filter rules, the networks
-    assert checks.missing_rules(render.firewall("eth0", ["198.51.100.0/24"]), LISTED) == [
-        "elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, "
-        "192.168.0.0/16, 198.51.100.0/24, 224.0.0.0/3 }"]
-    assert checks.missing_rules(render.firewall("ens3", []), "") != []
+    assert (checks.table_parts(listed) == checks.table_parts(rendered)) is matches
 
 
 @pytest.mark.parametrize("status, level", [

@@ -481,8 +481,8 @@ helps. It exits with status 1 when anything fails, so you can use it from monito
   - the last nightly update result: `FAIL` if it failed, `WARN` if it is missing or older
     than 48 h.
 - **Prerequisites:** everything in [Prerequisites](#prerequisites-your-part).
-- **Firewall:** the loaded `inet hermes_manager` table has every rule and blocked network that
-  `site.toml` gives (`FAIL` if not).
+- **Firewall:** the loaded `inet hermes_manager` table is exactly the one `site.toml` gives,
+  chain by chain and rule by rule (`FAIL` if not).
 - **Office network:** Caddy is running when anyone uses LAN access.
 - **Per person:**
   - the container is running and reaches the internet. If it does not, the fix shows the

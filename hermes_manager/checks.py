@@ -122,18 +122,26 @@ def unattended_upgrades(apt_dump: str, update_time: str):
 
 def firewall(s: Settings, reg: Registry):
     listed = system.run(["nft", "list", "table", "inet", "hermes_manager"], check=False).stdout
-    missing = missing_rules(render.firewall(s.network_interface, list(s.blocked_networks)), listed)
-    yield (ok("firewall table inet hermes_manager loaded as site.toml says") if not missing
-           else fail(f"firewall table inet hermes_manager lacks {len(missing)} of its rules: containers may reach "
+    rendered = render.firewall(s.network_interface, list(s.blocked_networks))
+    yield (ok("firewall table inet hermes_manager loaded as site.toml says")
+           if table_parts(listed) == table_parts(rendered)
+           else fail("firewall table inet hermes_manager is missing or not as site.toml says: containers may reach "
                      "each other, the host or blocked networks", "hermes-manager apply"))
 
 
-def missing_rules(rendered: str, listed: str) -> list[str]:
-    """The rules and blocked networks of the rendered table that `nft list table` does not show."""
-    wanted = [line for line in rendered.splitlines() if line.startswith("\t\t")]
-    wanted += re.findall(r"elements = \{[^}]*\}", rendered)
-    live = " ".join(listed.split())
-    return [w for w in wanted if " ".join(w.split()) not in live]
+def table_parts(text: str) -> tuple[dict[str, list[str]], list[str]]:
+    """The chains (name -> statements, in order) and set elements of an nft table, as we render it
+    or as `nft list table` prints it."""
+    chains, chain = {}, None
+    for line in text.splitlines():
+        words = line.split()
+        if words[:1] == ["chain"]:
+            chain = chains.setdefault(words[1], [])
+        elif words == ["}"]:
+            chain = None
+        elif chain is not None and words:
+            chain.append(" ".join(words))
+    return chains, [" ".join(e.split()) for e in re.findall(r"elements = \{[^}]*\}", text)]
 
 
 def lan_access(s: Settings, reg: Registry):
