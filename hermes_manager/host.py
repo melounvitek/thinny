@@ -1,34 +1,25 @@
-"""The shared install and the host-wide pieces: Hermes in /opt/hermes, plugins, managed scope,
-firewall, units and the proxies that publish Webapps."""
+"""The host-wide pieces: Incus storage and profile, firewall, units, the managed scope, the
+Hermes release everyone runs, and the proxies that publish Webapps."""
 
 from __future__ import annotations
 
 import datetime as dt
-import fcntl
-import io
 import json
-import re
 import shutil
-import tarfile
-import tempfile
 import urllib.request
 from pathlib import Path
 
 from . import render
 from .registry import Registry
 from .settings import Settings
-from .system import (ROOT_HERMES_HOME_DIR, STATE_DIR, CommandError, hermes_root, log, run, slice_uids,
-                     tailscale_status, uid_of, write_file)
+from .system import STATE_DIR, log, run, tailscale_status, write_file
 
-INSTALL = Path(render.INSTALL)
-CHECKOUT = Path(render.CHECKOUT)
 MANAGED = Path("/etc/hermes")
 LIB = Path(__file__).resolve().parent.parent      # this repository, installed to /usr/local/lib/hermes-manager
 FILES = LIB / "files"
-WEBAPP_INDEX = CHECKOUT / "apps/desktop/dist-webapp/index.html"
 CADDYFILE = Path("/etc/caddy/Caddyfile")
-FIREWALL_FILE = Path("/etc/hermes-manager/hermes-manager.nft")
-FIREWALL_LOCK = Path("/run/hermes-manager-firewall.lock")
+FIREWALL_FILE = Path(render.FIREWALL_FILE)
+SYSCTL_FILE = Path("/etc/sysctl.d/90-hermes-manager.conf")
 SYSTEMD = Path("/etc/systemd/system")
 REPO_API = "https://api.github.com/repos/NousResearch/hermes-agent"
 INSTALLER_URL = "https://hermes-agent.nousresearch.com/install.sh"
@@ -72,89 +63,6 @@ def installer() -> str:
         return r.read().decode()
 
 
-def installed_tags() -> set[str]:
-    return set(run(["git", "-C", str(CHECKOUT), "tag", "--points-at", "HEAD"], check=False).stdout.split())
-
-
-def install_hermes() -> None:
-    """The official installer into /opt/hermes, only when there is no install yet: rerunning it
-    would update Hermes outside the careful nightly update."""
-    if (CHECKOUT / ".git").exists():
-        return
-    log(f"installing the latest stable Hermes into {INSTALL} (takes a few minutes)")
-    with urllib.request.urlopen(INSTALLER_URL, timeout=60) as r:
-        script = r.read()
-    ROOT_HERMES_HOME_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-    installer = ROOT_HERMES_HOME_DIR / "hermes-install.sh"
-    installer.write_bytes(script)
-    env = {"PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C.UTF-8",
-           "HOME": str(ROOT_HERMES_HOME_DIR), "HERMES_HOME": str(INSTALL), "HERMES_HOME_MODE": "0711"}
-    run(["bash", str(installer), "--channel", "stable", "--non-interactive"], env=env,
-        cwd=ROOT_HERMES_HOME_DIR, timeout=3600)
-
-
-def fix_permissions() -> None:
-    """People borrow the install read-only; root's Hermes runs and updates tighten it."""
-    INSTALL.chmod(0o711)
-    for sub in ("hermes-agent", "tools", "installs"):
-        if (INSTALL / sub).is_dir():
-            run(["chmod", "-R", "a+rX", str(INSTALL / sub)])
-
-
-def install_files() -> None:
-    write_file(Path("/usr/local/bin/hermes"), render.launcher(), 0o755)
-    write_file(Path("/usr/local/bin/hermes-podman"), (FILES / "hermes-podman").read_text(), 0o755)
-
-
-def ensure_plugins(s: Settings) -> None:
-    """model-guard and the language pack in the install's bundled plugins, hidden from git."""
-    shutil.copytree(FILES / "model-guard", CHECKOUT / "plugins" / "model-guard", dirs_exist_ok=True)
-    names = ["model-guard"]
-    if s.language_pack:
-        _ensure_catalog_plugin(s.language_pack)
-        names.append(s.language_pack)
-    exclude = CHECKOUT / ".git/info/exclude"
-    lines = exclude.read_text().splitlines() if exclude.exists() else []
-    missing = [f"/plugins/{n}/" for n in names if f"/plugins/{n}/" not in lines]
-    if missing:
-        exclude.write_text("\n".join(lines + missing) + "\n")
-
-
-def _ensure_catalog_plugin(name: str) -> None:
-    """A catalog plugin at the commit the installed Hermes catalog pins."""
-    entry = CHECKOUT / "plugin-catalog" / f"{name}.yaml"
-    if not entry.exists():
-        raise CommandError(f"language pack {name!r} is not in the Hermes plugin catalog")
-    text = entry.read_text()
-    repo = re.search(r"^repo:\s*(\S+)", text, re.M).group(1)
-    sha = re.search(r"^sha:\s*([0-9a-f]{40})", text, re.M).group(1)
-    target = CHECKOUT / "plugins" / name
-    marker = target / ".catalog-sha"
-    if marker.exists() and marker.read_text().strip() == sha:
-        return
-    match = re.fullmatch(r"https://github\.com/([^/]+/[^/]+?)(\.git)?/?", repo)
-    if not match:
-        raise CommandError(f"language pack {name!r}: unsupported repository {repo}")
-    log(f"installing plugin {name} at {sha[:10]}")
-    with urllib.request.urlopen(f"https://codeload.github.com/{match.group(1)}/tar.gz/{sha}", timeout=120) as r:
-        data = r.read()
-    with tempfile.TemporaryDirectory(dir=CHECKOUT / "plugins") as tmp, \
-            tarfile.open(fileobj=io.BytesIO(data)) as tar:
-        tar.extractall(tmp, filter="data")
-        (top,) = Path(tmp).iterdir()
-        (top / ".catalog-sha").write_text(sha + "\n")
-        shutil.rmtree(target, ignore_errors=True)
-        top.rename(target)
-
-
-def build_webapp(force: bool = False) -> None:
-    """The official installer does not build the Webapp, and people cannot build into the
-    root-owned checkout."""
-    if force or not WEBAPP_INDEX.exists():
-        log("building the Hermes Webapp (takes a few minutes)")
-        hermes_root(["webapp", "--build-only"], timeout=3600)
-
-
 def managed_files(s: Settings) -> dict[Path, str]:
     return {MANAGED / "config.yaml": render.managed_config(s),
             MANAGED / ".env": render.managed_env(),
@@ -171,40 +79,42 @@ def write_managed_scope(s: Settings) -> None:
         write_file(path, text)
 
 
+def init_incus() -> None:
+    """Incus storage: a btrfs pool in a sparse file (instant copies and snapshots, a disk quota per
+    container), sized once to most of the free space. No Incus network: containers get routed NICs."""
+    if run(["incus", "storage", "show", render.POOL], check=False).returncode == 0:
+        return
+    size = int(shutil.disk_usage("/var/lib").free * 0.8) // 2**30
+    log(f"creating the Incus storage pool ({size} GiB at most; it takes space as people use it)")
+    run(["incus", "storage", "create", render.POOL, "btrfs", f"size={size}GiB"], timeout=600)
+
+
+def ensure_profile(s: Settings) -> None:
+    """The profile of every person container; changed limits apply to running containers too."""
+    if run(["incus", "profile", "show", render.PROFILE], check=False).returncode != 0:
+        run(["incus", "profile", "create", render.PROFILE])
+    run(["incus", "profile", "edit", render.PROFILE], input=render.profile(s))
+
+
 def install_units(s: Settings) -> None:
     changed = [
-        write_file(SYSTEMD / "hermes-manager-firewall.service", render.FIREWALL_UNIT),
-        write_file(SYSTEMD / "user@.service.d/hermes-manager.conf", render.USER_MANAGER_DROPIN),
+        write_file(SYSTEMD / "incus.service.d/hermes-manager.conf", render.INCUS_DROPIN),
         write_file(SYSTEMD / "hermes-manager-update.service", render.UPDATE_SERVICE),
         write_file(SYSTEMD / "hermes-manager-update.timer", render.update_timer(s)),
     ]
     if any(changed):
         run(["systemctl", "daemon-reload"])
-    run(["systemctl", "enable", "--now", "hermes-manager-firewall.service", "hermes-manager-update.timer"])
-
-
-def proxy_uids(s: Settings, reg: Registry) -> list[int]:
-    """Accounts allowed to connect to people's Webapps besides root; never a person."""
-    people = {p.uid for p in reg.people.values()}
-    return sorted(uid for uid in map(uid_of, [*s.proxy_users, "caddy"]) if uid is not None and uid not in people)
+    run(["systemctl", "enable", "--now", "hermes-manager-update.timer"])
+    write_file(SYSCTL_FILE, render.SYSCTL)
+    run(["sysctl", "-q", "-p", str(SYSCTL_FILE)])
 
 
 def firewall(s: Settings) -> None:
-    """Load the person-isolation table from the registry and the user slices as they are now.
-    Several user managers start at once at boot, so loads are serialised: a load with an older
-    snapshot must not replace a newer one. Never restart nftables.service: on Debian that
-    flushes every table, Tailscale's included."""
-    with FIREWALL_LOCK.open("w") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
-        reg = Registry.load()
-        text = render.firewall(people=[(p.uid, p.port) for p in reg.people.values() if p.uid is not None],
-                               slice_uids=slice_uids(), proxy_uids=proxy_uids(s, reg),
-                               blocked_networks=list(s.blocked_networks),
-                               # installed, not running: at boot the table loads before tailscaled is up
-                               tailscale=shutil.which("tailscale") is not None)
-        write_file(FIREWALL_FILE, text, 0o644)
-        run(["nft", "-c", "-f", str(FIREWALL_FILE)])
-        run(["nft", "-f", str(FIREWALL_FILE)])
+    """Load the containers' firewall table (incus.service loads the same file before it starts).
+    Never restart nftables.service: on Debian that flushes every table, Tailscale's included."""
+    write_file(FIREWALL_FILE, render.firewall(s.network_interface, list(s.blocked_networks)))
+    run(["nft", "-c", "-f", str(FIREWALL_FILE)])
+    run(["nft", "-f", str(FIREWALL_FILE)])
 
 
 def reconcile_access(s: Settings, reg: Registry) -> None:
@@ -216,7 +126,6 @@ def reconcile_access(s: Settings, reg: Registry) -> None:
             log("installing Caddy for office-network access")
             run(["apt-get", "install", "-y", "-q", "caddy"], env={"DEBIAN_FRONTEND": "noninteractive",
                                                                 "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}, timeout=900)
-            firewall(s)  # the new caddy account may now reach people's Webapps
         if write_file(CADDYFILE, render.caddyfile(s, lan)):
             run(["caddy", "validate", "--config", str(CADDYFILE), "--adapter", "caddyfile"], check=False)
             run(["systemctl", "restart", "caddy"])  # no admin API, so no reload

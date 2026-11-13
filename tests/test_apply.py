@@ -17,7 +17,7 @@ def test_a_policy_change_restarts_everyone_even_after_a_failed_apply(tmp_path, m
     scope = {"current": False}
     monkeypatch.setattr(host, "managed_scope_current", lambda s: scope["current"])
     monkeypatch.setattr(host, "write_managed_scope", lambda s: scope.update(current=True))
-    for step in ("install_units", "ensure_plugins", "fix_permissions", "reconcile_access"):
+    for step in ("install_units", "ensure_profile", "reconcile_access"):
         monkeypatch.setattr(host, step, lambda *a: None)
     monkeypatch.setattr(people, "url_for", lambda s, p: p.url)
     monkeypatch.setattr(people, "configure_webapp", lambda s, p: False)

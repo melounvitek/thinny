@@ -1,6 +1,7 @@
 #!/bin/sh
 # hermes-manager bootstrap: packages, the tool itself, then `hermes-manager install`.
 # Safe to rerun: it repairs and never updates Hermes or removes data.
+# incus-base: containers only (no virtual machines).
 set -eu
 
 LIB=/usr/local/lib/hermes-manager
@@ -14,7 +15,7 @@ SRC=$(cd "$(dirname "$0")" && pwd)
 echo "Installing packages"
 apt-get update -q >/dev/null
 DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
-	podman uidmap passt fuse-overlayfs git curl python3 nftables >/dev/null
+	incus-base btrfs-progs nftables curl python3 >/dev/null
 
 echo "Installing hermes-manager into $LIB"
 mkdir -p "$LIB"

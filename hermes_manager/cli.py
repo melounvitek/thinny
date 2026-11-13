@@ -18,9 +18,9 @@ def parse_access(value: str) -> tuple[str, str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="hermes-manager", description="Shared Hermes Agent server, one isolated account per person.")
+    ap = argparse.ArgumentParser(prog="hermes-manager", description="Shared Hermes Agent server, one isolated container per person.")
     sub = ap.add_subparsers(dest="command", required=True, metavar="command")
-    sub.add_parser("install", help="install Hermes and everything around it, then apply")
+    sub.add_parser("install", help="set up Incus and everything around the people, then apply")
     sub.add_parser("apply", help="bring the server in line with site.toml")
     add = sub.add_parser("add-person", help="add a person (or finish an interrupted add)")
     add.add_argument("name")
@@ -30,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     acc.add_argument("access", help="lan | tailscale | url=<URL> | local")
     for name, text in (("login", "sign a person in to the model provider (device code)"),
                        ("password", "give a person a new Webapp password"),
-                       ("remove-person", "disable a person: stop everything, lock the account, keep the data")):
+                       ("remove-person", "disable a person: stop their container for good, keep the data")):
         sub.add_parser(name, help=text).add_argument("name")
     sub.add_parser("list", help="people, ports, URLs, gateway state")
     sub.add_parser("check", help="isolation and health checks")
@@ -40,7 +40,6 @@ def main(argv: list[str] | None = None) -> int:
                      help="update now: ignore the minimum release age and auto_update = false")
     rst = sub.add_parser("restart", help="restart gateways one by one (all, or the named people)")
     rst.add_argument("names", nargs="*")
-    sub.add_parser("firewall", help=argparse.SUPPRESS)  # run by systemd units
     a = ap.parse_args(argv)
 
     if os.geteuid() != 0:
@@ -52,9 +51,6 @@ def main(argv: list[str] | None = None) -> int:
             return checks.run(s, Registry.load())
         if a.command == "list":
             people.list_people(Registry.load())
-            return 0
-        if a.command == "firewall":  # no lock: runs while other commands wait for a user manager
-            host.firewall(s)
             return 0
         with lock():
             reg = Registry.load()

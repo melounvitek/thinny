@@ -20,7 +20,6 @@ AUTH_PREFIX = "HERMES_DASHBOARD_BASIC_AUTH_"
 RESTART_TIMEOUT = 45 * 60  # a restart waits for a running reply (up to 30 min by default)
 RESTART_PENDING = STATE_DIR / "restart-pending"
 IMAGE = "images:debian/13"
-PROFILE = "hm-person"
 
 
 def hermes(name: str, args: list[str], **kw):
@@ -65,7 +64,7 @@ def ensure_container(p: Person) -> None:
     """The person's container from the plain Debian image, running, with its network, the
     read-only policy and the Webapp published on the host's loopback (each step repeatable)."""
     if container_state(p.name) is None:
-        run(["incus", "init", IMAGE, p.name, "--profile", PROFILE], timeout=1800)
+        run(["incus", "init", IMAGE, p.name, "--profile", render.PROFILE], timeout=1800)
     add_device(p.name, "eth0", "nic", "nictype=routed", f"ipv4.address={p.address}", f"host_name=hm-{p.port}")
     add_device(p.name, "policy", "disk", f"source={host.MANAGED}", f"path={host.MANAGED}", "readonly=true", "shift=true")
     add_device(p.name, "webapp", "proxy", f"listen=tcp:127.0.0.1:{p.port}", f"connect=tcp:127.0.0.1:{p.port}")
@@ -116,6 +115,12 @@ def install_hermes(s: Settings, name: str, commit: str) -> None:
 
 def hermes_installed(name: str) -> bool:
     return as_user(name, ["test", "-d", str(home(name) / "hermes-agent/.git")], check=False).returncode == 0
+
+
+def installed_commit(name: str) -> str:
+    """The commit of the person's Hermes, as their container reports it."""
+    return as_user(name, ["git", "-C", str(home(name) / "hermes-agent"), "rev-parse", "HEAD"],
+                   check=False).stdout.strip()
 
 
 def ensure_model_guard(name: str) -> None:
