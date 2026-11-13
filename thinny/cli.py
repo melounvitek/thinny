@@ -22,6 +22,12 @@ def parse_access(value: str) -> tuple[str, str]:
     return method, url
 
 
+def at_least_1(value: str) -> int:
+    if not value.isdigit() or int(value) < 1:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a whole number of at least 1")
+    return int(value)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="thinny", description="Shared Hermes Agent server, one isolated container per instance.")
     sub = ap.add_subparsers(dest="command", required=True, metavar="command")
@@ -39,9 +45,17 @@ def main(argv: list[str] | None = None) -> int:
     inst = sub.add_parser("instance", help="instances, one container each")
     inst = inst.add_subparsers(dest="action", required=True, metavar="action")
     inst.add_parser("list", help="instances, ports, URLs, gateway state")
-    add = inst.add_parser("add", help="add an instance (or finish an interrupted add)")
+    add = inst.add_parser("add", help="add an instance (or finish an interrupted add)",
+                          description="Limits not given follow [container] in site.toml.")
     add.add_argument("name")
     add.add_argument("--access", help="lan | tailscale | url=<URL> | local (default: asked)")
+    lim = inst.add_parser("limits", help="change an instance's CPU, memory or disk limits",
+                          description="Limits not given stay as they are.")
+    lim.add_argument("name")
+    for parser in (add, lim):
+        parser.add_argument("--cpu", type=at_least_1, help="CPUs")
+        parser.add_argument("--memory-mb", type=at_least_1, help="memory in MiB")
+        parser.add_argument("--disk-gb", type=at_least_1, help="disk in GiB")
     acc = inst.add_parser("access", help="change how users open an instance's Webapp")
     acc.add_argument("name")
     acc.add_argument("access", help="lan | tailscale | url=<URL> | local")
@@ -85,7 +99,9 @@ def main(argv: list[str] | None = None) -> int:
                 access, url = parse_access(a.access) if a.access else (ask_access(s, a.name), "")
                 if access == "url" and not url:
                     url = input("Address users will open (https://...): ").strip()
-                instances.add(s, reg, a.name, access, url)
+                instances.add(s, reg, a.name, access, url, cpu=a.cpu, memory_mb=a.memory_mb, disk_gb=a.disk_gb)
+            elif command == "instance limits":
+                instances.limits(reg, a.name, a.cpu, a.memory_mb, a.disk_gb)
             elif command == "instance access":
                 instances.change_access(s, reg, a.name, *parse_access(a.access))
             elif command == "instance login":

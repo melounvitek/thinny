@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from thinny import apply, cli, render, settings, system, update
+from thinny import apply, cli, instances, render, settings, system, update
 from thinny.registry import Registry
 
 VALID = '[policy]\nmodel = "m1"\nallowed_models = ["m1"]\n\n[access]\nlan_address = "192.168.1.10"\n'
@@ -46,6 +46,28 @@ def test_a_manual_update_runs_now_and_only_the_timer_waits(server, args, kw):
     assert cli.main(["update", *args]) == 0
     assert calls == [("update", kw)]
     assert "thinny update --scheduled\n" in render.UPDATE_SERVICE
+
+
+def test_instance_add_takes_the_limits_of_the_new_instance(server, monkeypatch):
+    added = []
+    monkeypatch.setattr(instances, "add", lambda s, reg, name, access, url, **limits: added.append((name, limits)))
+    assert cli.main(["instance", "add", "alice", "--access", "local", "--cpu", "4", "--memory-mb", "8192",
+                     "--disk-gb", "50"]) == 0
+    assert cli.main(["instance", "add", "bob", "--access", "local"]) == 0
+    assert added == [("alice", {"cpu": 4, "memory_mb": 8192, "disk_gb": 50}),
+                     ("bob", {"cpu": None, "memory_mb": None, "disk_gb": None})]   # the site's [container]
+    with pytest.raises(SystemExit):
+        cli.main(["instance", "add", "carol", "--access", "local", "--cpu", "0"])
+    assert len(added) == 2
+
+
+def test_instance_limits_changes_only_the_given_limits(server, monkeypatch):
+    changed = []
+    monkeypatch.setattr(instances, "limits", lambda reg, *args: changed.append(args))
+    assert cli.main(["instance", "limits", "alice", "--disk-gb", "60"]) == 0
+    assert changed == [("alice", None, None, 60)]
+    with pytest.raises(SystemExit):
+        cli.main(["instance", "limits", "alice", "--memory-mb", "lots"])
 
 
 def test_config_edit_applies_a_valid_change_even_to_a_broken_site_toml(server, monkeypatch):

@@ -18,7 +18,7 @@ language = "en"                 # Hermes UI language (display.language) for new 
 language_pack = ""              # catalog plugin for that language, e.g. "hermes-lang-cs"
 model_guard_message = "Model {model} is not allowed on this server. Allowed: {allowed}."  # with model_lock
 
-[container]                     # limits of each instance's container
+[container]                     # limits of instances without their own (instance add/limits)
 cpu = 2
 memory_mb = 4096
 disk_gb = 30

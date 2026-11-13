@@ -146,6 +146,7 @@ thinny instance login alice             # sign in to the model provider with a d
 thinny instance login alice --claude    # or to a Claude Pro or Max subscription
 thinny instance list
 thinny instance access alice tailscale  # lan | tailscale | url=<URL> | local
+thinny instance limits alice --cpu 4 --memory-mb 8192 --disk-gb 50
 thinny instance reset-password alice
 thinny instance disable alice           # stop it for good, keep its data
 thinny instance restart [alice ...]
@@ -159,6 +160,9 @@ thinny instance restart [alice ...]
   `model_provider = "claude-subscription-directsdk-experimental"`).
 - The phone plugin stays idle until it is set up in the Webapp (Messaging → Hermes 3310), then
   with `~/.hermes/plugins/hermes-3310/install-asterisk.sh` and a gateway restart. See its README.
+- `add` takes the same `--cpu`, `--memory-mb` and `--disk-gb`. Limits an instance was not given
+  follow `[container]` in `site.toml`, also when it changes. `limits` applies at once, even to a
+  running instance.
 - Names are 2-32 lowercase letters, digits and `-`, starting with a letter. Names and ports are
   never reused, and a disabled instance cannot be re-enabled.
 - Shell in a container: `incus exec alice -- runuser -l alice` (or `-- bash` for root).

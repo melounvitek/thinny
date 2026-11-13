@@ -99,7 +99,7 @@ class Incus:
                                        "unit": False}
         elif cmd[:4] == ["incus", "config", "device", "list"]:
             return "\n".join(sorted(self.containers[cmd[4]]["devices"])), 0
-        elif cmd[:4] == ["incus", "config", "device", "add"]:
+        elif cmd[:4] in (["incus", "config", "device", "add"], ["incus", "config", "device", "override"]):
             self.containers[cmd[4]]["devices"].add(cmd[5])
         elif cmd[:2] == ["incus", "start"]:
             self.containers[cmd[2]]["state"] = "RUNNING"
@@ -109,6 +109,11 @@ class Incus:
             self.containers[cmd[2]]["state"] = "STOPPED"
         elif cmd[:2] == ["incus", "exec"]:
             return self.inside(self.containers[cmd[2]], cmd[cmd.index("--") + 1:])
+        elif cmd[:3] == ["btrfs", "qgroup", "show"]:   # what the instance's disk quota counts
+            name = cmd[-1].rsplit("/", 1)[1]
+            used = self.containers[name].get("used", 2**29) // (1 if "--sync" in cmd else 4)   # or stale
+            return ("Qgroupid    Referenced    Exclusive   Path \n--------    ----------    ---------   ---- \n"
+                    f"0/257       {used}   {used // 2}   containers/{name}\n"), 0
         return "", 0
 
     def inside(self, c, cmd):
@@ -203,6 +208,43 @@ def test_a_new_instance_gets_its_own_container_with_hermes(incus):
     # git ignores the read-only mount before it appears (the installer stashes untracked files)
     assert next(i for i, c in enumerate(incus.calls) if "grep -qx /plugins/model-guard/" in c) \
         < incus.index("incus config device add alice model-guard")
+
+
+def test_an_instance_can_get_its_own_limits_instead_of_the_sites(incus):
+    reg = Registry()
+    instances.add(S, reg, "alice", "local", cpu=4, memory_mb=8192, disk_gb=50)
+    assert incus.ran("incus config set alice limits.cpu=4 limits.memory=8192MiB")
+    assert incus.ran("incus config device override alice root size=50GiB")   # the profile's root, resized
+    assert incus.index("incus config device override alice root") \
+        < incus.index("incus exec alice -- sh -c export DEBIAN_FRONTEND")   # before the packages fill it
+
+    instances.add(S, reg, "bob", "local")
+    assert not any(c.startswith(("incus config set bob", "incus config device override bob")) for c in incus.calls)
+
+
+def test_the_limits_of_a_running_instance_change_without_a_restart(incus):
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {"eth0", "policy", "webapp"}}
+    instances.limits(reg, "alice", None, 2048, 40)
+    instances.limits(reg, "alice", 3, None, 60)
+    assert [c for c in incus.calls if c.startswith(("incus config set", "incus config device o", "incus config device s"))] \
+        == ["incus config set alice limits.memory=2048MiB", "incus config device override alice root size=40GiB",
+            "incus config set alice limits.cpu=3", "incus config device set alice root size=60GiB"]
+    assert incus.containers["alice"]["state"] == "RUNNING"
+    with pytest.raises(CommandError, match="--cpu, --memory-mb or --disk-gb"):
+        instances.limits(reg, "alice", None, None, None)
+
+
+def test_a_disk_limit_too_close_to_what_the_instance_uses_is_refused(incus):
+    # btrfs would set the quota, fail halfway, and leave the instance unable to write for good. Its
+    # quota counts data shared with the image or a snapshot too, which Incus's usage figure leaves out.
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {"eth0"}, "used": int(5.7 * 2**30)}
+    with pytest.raises(CommandError, match="alice uses 5.7 GiB of disk; give it at least 7 GiB"):
+        instances.limits(reg, "alice", 4, None, 6)
+    assert not incus.ran("incus config set") and not incus.ran("incus config device override")
+    instances.limits(reg, "alice", None, None, 7)
+    assert incus.ran("incus config device override alice root size=7GiB")
 
 
 def test_with_the_model_lock_the_policy_sets_the_model_and_the_guard_must_be_on(incus):

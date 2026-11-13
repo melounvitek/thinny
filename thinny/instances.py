@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 import secrets
 import time
 from pathlib import PurePosixPath
@@ -59,6 +60,28 @@ def devices(name: str) -> set[str]:
 def add_device(name: str, device: str, *args: str) -> None:
     if device not in devices(name):
         run(["incus", "config", "device", "add", name, device, *args])
+
+
+def set_limits(name: str, cpu: int | None, memory_mb: int | None, disk_gb: int | None) -> None:
+    """The instance's own limits instead of the profile's (site.toml's [container]); None keeps
+    the current one. A running container gets them at once."""
+    if disk_gb:
+        # btrfs's quota counts data shared with the image or a snapshot too, unlike Incus's usage, and
+        # its counters lag behind writes until synced. A quota below that half-applies and leaves the
+        # instance unable to write, even to raise the quota again.
+        out = run(["btrfs", "qgroup", "show", "--sync", "--raw", "-f",
+                   f"/var/lib/incus/storage-pools/{render.POOL}/containers/{name}"]).stdout
+        used = int(out.splitlines()[-1].split()[1])   # the Referenced column
+        needed = math.ceil(used / 2**30 + 1)   # and a GiB of room to work in
+        if disk_gb < needed:
+            raise CommandError(f"{name} uses {used / 2**30:.1f} GiB of disk; give it at least {needed} GiB")
+    config = ([f"limits.cpu={cpu}"] if cpu else []) + ([f"limits.memory={memory_mb}MiB"] if memory_mb else [])
+    if config:
+        run(["incus", "config", "set", name, *config])
+    if disk_gb:
+        # The root disk is the profile's until the instance gets its own copy of it.
+        action = "set" if "root" in devices(name) else "override"
+        run(["incus", "config", "device", action, name, "root", f"size={disk_gb}GiB"])
 
 
 def ensure_container(inst: Instance) -> None:
@@ -286,7 +309,8 @@ def restart_all(s: Settings, instances: list[Instance], reg: Registry) -> None:
 
 # ---------- commands ----------
 
-def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = "") -> None:
+def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = "", *, cpu: int | None = None,
+        memory_mb: int | None = None, disk_gb: int | None = None) -> None:
     access = access or s.access_default
     if access not in ACCESS_METHODS:
         raise CommandError(f"access must be one of {', '.join(ACCESS_METHODS)}")
@@ -312,6 +336,7 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
 
     log(f"{name}: container {inst.address} (packages take a few minutes)")
     ensure_container(inst)
+    set_limits(name, cpu, memory_mb, disk_gb)
     ensure_packages(name)
     ensure_account(name)
     tag, commit = host.release() or host.first_release()
@@ -368,6 +393,13 @@ def change_access(s: Settings, reg: Registry, name: str, access: str, url: str =
     start_or_restart_gateway(s, inst)
     print(f"{name}: {inst.url}")
     _print_access_hint(inst)
+
+
+def limits(reg: Registry, name: str, cpu: int | None, memory_mb: int | None, disk_gb: int | None) -> None:
+    _active(reg, name)
+    if not (cpu or memory_mb or disk_gb):
+        raise CommandError("give --cpu, --memory-mb or --disk-gb")
+    set_limits(name, cpu, memory_mb, disk_gb)
 
 
 def login(s: Settings, reg: Registry, name: str, claude: bool = False) -> None:
