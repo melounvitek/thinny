@@ -72,6 +72,18 @@ def test_config_edit_offers_another_try_and_can_discard(server, monkeypatch, cap
     assert "unknown setting nonsense.key" in capsys.readouterr().out
 
 
+def test_config_edit_discards_an_invalid_change_when_nobody_can_answer(server, monkeypatch):
+    site, calls = server
+    editor(monkeypatch, VALID + "[nonsense]\nkey = 1\n")
+
+    def no_terminal(prompt):
+        raise EOFError
+    monkeypatch.setattr("builtins.input", no_terminal)
+    assert cli.main(["config", "edit"]) == 0
+    assert site.read_text() == VALID
+    assert calls == []
+
+
 @pytest.mark.parametrize("text, code, exit", [(VALID, 0, 0),           # nothing changed
                                               ("[policy]\n", 1, 1)])  # the editor quit with an error
 def test_config_edit_changes_nothing_without_a_saved_change(server, monkeypatch, text, code, exit):

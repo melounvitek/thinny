@@ -129,7 +129,11 @@ def edit_config() -> bool:
                 settings.parse(text, source=str(path))
             except SettingsError as e:
                 print(e)
-                if input("Edit again or discard the changes? [E/d] ").strip().lower().startswith("d"):
+                try:
+                    answer = input("Edit again or discard the changes? [E/d] ")
+                except EOFError:  # nobody to answer
+                    answer = "d"
+                if answer.strip().lower().startswith("d"):
                     print("Discarded; site.toml is unchanged.")
                     return False
                 continue
