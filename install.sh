@@ -9,7 +9,7 @@ LIB=/usr/local/lib/thinny
 SITE=/etc/thinny/site.toml
 SRC=$(cd "$(dirname "$0")" && pwd)
 
-[ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
+[ "$(id -u)" = 0 ] || { echo "run as root or with sudo" >&2; exit 1; }
 # thinny update pulls the clone and runs it as root, and git refuses a clone of another user.
 [ "$(stat -c %u "$SRC")" = 0 ] || { echo "$SRC must belong to root" >&2; exit 1; }
 . /etc/os-release

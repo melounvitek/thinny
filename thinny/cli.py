@@ -74,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
     command = " ".join(filter(None, (a.command, getattr(a, "action", None))))
 
     if os.geteuid() != 0:
-        print("thinny must run as root", file=sys.stderr)
+        print("thinny must run as root or with sudo", file=sys.stderr)
         return 2
     try:
         if command == "init":
