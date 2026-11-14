@@ -10,8 +10,8 @@ Status: in development. Design notes: [`PLAN.md`](PLAN.md).
 - **Isolated instances:** one container each (Debian 13 with systemd), with CPU, memory,
   process and disk limits. A firewall lets it reach the internet and nothing else. Its users
   have `sudo` in it.
-- **One central policy** in `/etc/hermes` (Hermes "managed scope"), mounted read-only: approvals
-  and the agent kept in its container. The optional **model lock** (`policy.model_lock`) also pins
+- **One central policy** from `site.toml`, mounted read-only as each container's `/etc/hermes`
+  (Hermes "managed scope"): approvals and the agent kept in its container. The optional **model lock** (`policy.model_lock`) also pins
   the provider, model, reasoning effort and plugins, and allows only `allowed_models`. Without it,
   users choose their own.
 - **Built into every instance:** [Claude Code](https://code.claude.com/) with the Claude

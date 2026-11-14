@@ -1,8 +1,9 @@
 import dataclasses
 
 import pytest
+from test_instances import incus  # noqa: F401 - the fake Incus fixture
 
-from thinny import apply, host, instances, system
+from thinny import apply, host, instances, render, system
 from thinny.registry import Instance, Registry
 from thinny.settings import Settings
 from thinny.system import CommandError
@@ -10,15 +11,23 @@ from thinny.system import CommandError
 S = Settings(model="m1", allowed_models=("m1",), access_default="local")
 
 
-def test_a_policy_change_restarts_every_instance_even_after_a_failed_apply(tmp_path, monkeypatch):
+@pytest.fixture
+def policies(monkeypatch):
+    """Every instance has a container; records which instances' policies are written."""
+    written = []
+    monkeypatch.setattr(instances, "container_state", lambda name: "RUNNING")
+    monkeypatch.setattr(instances, "ensure_device", lambda *a: None)
+    monkeypatch.setattr(host, "write_policy", lambda s, name: written.append(name))
+    return written
+
+
+def test_a_policy_change_restarts_every_instance_even_after_a_failed_apply(tmp_path, monkeypatch, policies):
     reg = Registry({n: Instance(n, 9120 + i, "local", state="active") for i, n in enumerate(["alice", "bob"])})
     monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
     monkeypatch.setattr(Registry, "save", lambda self, path=None: None)
     monkeypatch.setattr(instances, "RESTART_PENDING", tmp_path / "restart-pending")
     monkeypatch.setattr(system, "LOG_FILE", tmp_path / "log")
-    scope = {"current": False}
-    monkeypatch.setattr(host, "managed_scope_current", lambda s: scope["current"])
-    monkeypatch.setattr(host, "write_managed_scope", lambda s: scope.update(current=True))
+    monkeypatch.setattr(host, "policy_current", lambda s, name: name in policies)
     for step in ("install_units", "ensure_profile"):
         monkeypatch.setattr(host, step, lambda *a: None)
     monkeypatch.setattr(instances, "url_for", lambda s, inst: inst.url)
@@ -33,7 +42,7 @@ def test_a_policy_change_restarts_every_instance_even_after_a_failed_apply(tmp_p
     monkeypatch.setattr(host, "reconcile_access", tailscale_down)
     with pytest.raises(CommandError):
         apply.apply(S)          # the new policy is written, but no instance was restarted
-    assert scope["current"] and restarted == []
+    assert policies == ["alice", "bob"] and restarted == []
 
     monkeypatch.setattr(host, "reconcile_access", lambda s, reg: None)
     apply.apply(S)              # nothing changes any more, yet the restarts are still owed
@@ -41,7 +50,8 @@ def test_a_policy_change_restarts_every_instance_even_after_a_failed_apply(tmp_p
 
 
 @pytest.mark.parametrize("model_lock", [True, False])
-def test_turning_the_model_lock_on_first_removes_the_model_instances_started_with(tmp_path, monkeypatch, model_lock):
+def test_turning_the_model_lock_on_first_removes_the_model_instances_started_with(tmp_path, monkeypatch, policies,
+                                                                                 model_lock):
     reg = Registry({"alice": Instance("alice", 9120, "local", state="active"),
                     "bob": Instance("bob", 9121, "local", state="pending")})   # an add that stopped halfway
     monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
@@ -53,16 +63,42 @@ def test_turning_the_model_lock_on_first_removes_the_model_instances_started_wit
     monkeypatch.setattr(instances, "url_for", lambda s, inst: inst.url)
     monkeypatch.setattr(instances, "configure_webapp", lambda s, inst: False)
     monkeypatch.setattr(instances, "_gateway_up", lambda s, inst: None)
-    monkeypatch.setattr(host, "managed_scope_current", lambda s: False)
-    done = []
-    monkeypatch.setattr(host, "write_managed_scope", lambda s: done.append("policy"))
+    monkeypatch.setattr(host, "policy_current", lambda s, name: False)
+    done = policies
     monkeypatch.setattr(instances, "hermes", lambda name, args, **kw: done.append(f"{name}: hermes {' '.join(args)}"))
 
     apply.apply(dataclasses.replace(S, model_lock=model_lock))
     # Hermes would drop them from the instance's config once pinned, and can leave it unreadable.
-    unset = [f"{name}: hermes config unset {key}" for name in ("alice", "bob")
-             for key in ("model.provider", "model.default", "agent.reasoning_effort")]
-    assert done == (unset if model_lock else []) + ["policy"]
+    keys = ("model.provider", "model.default", "agent.reasoning_effort") if model_lock else ()
+    assert done == [step for name in ("alice", "bob")
+                    for step in [f"{name}: hermes config unset {key}" for key in keys] + [name]]
+
+
+def test_apply_moves_every_container_to_a_policy_of_its_own(incus, tmp_path, monkeypatch):
+    # alice and carol from before, on the policy all instances shared; bob's add stopped before his container
+    shared = {"type": "disk", "source": "/etc/hermes", "path": "/etc/hermes", "readonly": "true", "shift": "true"}
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="active"),
+                    "bob": Instance("bob", 9121, "local", state="pending"),
+                    "carol": Instance("carol", 9122, "local", state="disabled")})
+    for name in ("alice", "carol"):
+        incus.containers[name] = {"state": "RUNNING", "devices": {"policy": dict(shared)}}
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
+    for step in ("firewall", "install_units", "ensure_profile"):
+        monkeypatch.setattr(host, step, lambda *a: None)
+    monkeypatch.setattr(instances, "url_for", lambda s, inst: inst.url)
+    monkeypatch.setattr(instances, "configure_webapp", lambda s, inst: False)
+    restarted = []
+    monkeypatch.setattr(instances, "_gateway_up", lambda s, inst: restarted.append(inst.name))
+
+    apply.apply(S)
+    assert incus.containers["alice"]["devices"]["policy"] == shared | {"source": str(host.POLICIES / "alice")}
+    assert (host.POLICIES / "alice/config.yaml").read_text() == render.managed_config(S)
+    assert restarted == ["alice"]
+    assert incus.containers["carol"]["devices"]["policy"] == shared and sorted(host.POLICIES.iterdir()) == \
+        [host.POLICIES / "alice"]   # bob's add writes his
+
+    apply.apply(S)
+    assert restarted == ["alice"]
 
 
 @pytest.mark.parametrize("tunnel_port, hint", [(0, False), (8080, True)])

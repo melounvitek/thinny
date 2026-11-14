@@ -60,8 +60,9 @@ def install(s: Settings, reg: Registry):
         yield (ok("AppArmor lets instances create user namespaces") if userns.read_text().strip() == "0"
                else fail("AppArmor keeps instances from creating user namespaces: their browser cannot start",
                          "thinny config apply"))
-    yield (ok(f"{host.MANAGED} matches site.toml") if host.managed_scope_current(s)
-           else warn(f"{host.MANAGED} is not as site.toml says", "thinny config apply"))
+    stale = [inst.name for inst in active(reg) if not host.policy_current(s, inst.name)]
+    yield (warn(f"policy not as site.toml says: {', '.join(stale)}", "thinny config apply") if stale
+           else ok(f"instance policies in {host.POLICIES} match site.toml"))
     if host.RELEASE_FILE.exists():
         yield ok(f"Hermes release of all instances: {host.RELEASE_FILE.read_text().split()[0]}")
     state = system.run(["systemctl", "is-enabled", "thinny-update.timer"], check=False).stdout.strip()

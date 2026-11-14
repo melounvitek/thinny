@@ -193,6 +193,7 @@ def incus(tmp_path, monkeypatch):
     monkeypatch.setattr(host, "release", lambda: ("v2", "c0ffee"))
     monkeypatch.setattr(host, "installer", lambda: "#!/bin/sh\n")
     monkeypatch.setattr(host, "reconcile_access", lambda s, reg: None)
+    monkeypatch.setattr(host, "POLICIES", tmp_path / "policies")
     monkeypatch.setattr(Registry, "save", lambda self, path=None: None)
     monkeypatch.setattr(instances, "RESTART_PENDING", tmp_path / "restart-pending")
     monkeypatch.setattr(system, "LOG_FILE", tmp_path / "log")
@@ -206,7 +207,11 @@ def test_a_new_instance_gets_its_own_container_with_hermes(incus):
     assert reg.get("alice").built_ins == render.BUILT_INS
     assert incus.ran("incus init images:debian/13 alice --profile thinny-instance")   # nothing from the default profile
     assert incus.ran("incus config device add alice eth0 nic nictype=routed ipv4.address=10.78.0.1 host_name=thinny-9120")
-    assert incus.ran("incus config device add alice policy disk source=/etc/hermes path=/etc/hermes readonly=true")
+    # its own policy, read-only, before the container first starts
+    assert incus.ran(f"incus config device add alice policy disk source={host.POLICIES}/alice path=/etc/hermes "
+                     "readonly=true")
+    assert incus.index("incus config device add alice policy") < incus.index("incus start alice")
+    assert (host.POLICIES / "alice/config.yaml").read_text() == render.managed_config(S)
     assert incus.ran("incus config device add alice webapp proxy listen=tcp:127.0.0.1:9120 connect=tcp:127.0.0.1:9120")
     assert incus.ran("useradd --create-home --shell /bin/bash --uid 1000 --groups sudo alice")
     assert incus.ran("bash /tmp/hermes-install.sh --channel stable --commit c0ffee --non-interactive")

@@ -14,7 +14,8 @@ from .registry import Registry
 from .settings import Settings
 from .system import STATE_DIR, log, run, tailscale_status, write_file
 
-MANAGED = Path("/etc/hermes")
+MANAGED = Path("/etc/hermes")   # Hermes's managed scope in each container (on the host, the one they once shared)
+POLICIES = STATE_DIR / "policies"   # each instance's managed scope, in a folder of its own
 LIB = Path(__file__).resolve().parent.parent      # this repository, installed to /usr/local/lib/thinny
 THINNY = "/usr/local/sbin/thinny"
 FILES = LIB / "files"
@@ -72,19 +73,20 @@ def installer() -> str:
         return r.read().decode()
 
 
-def managed_files(s: Settings) -> dict[Path, str]:
-    return {MANAGED / "config.yaml": render.managed_config(s),
-            MANAGED / ".env": render.managed_env(),
-            MANAGED / "allowed-models.txt": render.allowed_models(s),
-            MANAGED / "model-guard-message.txt": render.model_guard_message(s)}
+def policy_files(s: Settings, name: str) -> dict[Path, str]:
+    return {POLICIES / name / "config.yaml": render.managed_config(s),
+            POLICIES / name / ".env": render.managed_env(),
+            POLICIES / name / "allowed-models.txt": render.allowed_models(s),
+            POLICIES / name / "model-guard-message.txt": render.model_guard_message(s)}
 
 
-def managed_scope_current(s: Settings) -> bool:
-    return all(path.is_file() and path.read_text(encoding="utf-8") == text for path, text in managed_files(s).items())
+def policy_current(s: Settings, name: str) -> bool:
+    return all(path.is_file() and path.read_text(encoding="utf-8") == text
+               for path, text in policy_files(s, name).items())
 
 
-def write_managed_scope(s: Settings) -> None:
-    for path, text in managed_files(s).items():
+def write_policy(s: Settings, name: str) -> None:
+    for path, text in policy_files(s, name).items():
         write_file(path, text)
 
 

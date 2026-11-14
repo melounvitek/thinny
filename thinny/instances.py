@@ -64,6 +64,13 @@ def devices(name: str) -> dict[str, dict[str, str]]:
     return json.loads(run(["incus", "query", f"/1.0/instances/{name}"]).stdout)["devices"]
 
 
+def ensure_policy(s: Settings, inst: Instance) -> None:
+    """The instance's own policy, read-only as Hermes's managed scope in its container."""
+    host.write_policy(s, inst.name)
+    ensure_device(inst.name, "policy", "disk", f"source={host.POLICIES / inst.name}", f"path={host.MANAGED}",
+                  "readonly=true", "shift=true")
+
+
 def ensure_device(name: str, device: str, kind: str, *props: str) -> None:
     """The container's own `device` with these "key=value" properties, added or updated (an imported
     container comes with its old server's)."""
@@ -103,8 +110,7 @@ def ensure_container(s: Settings, inst: Instance) -> None:
         run(["incus", "init", IMAGE, inst.name, "--profile", render.PROFILE], timeout=1800)
     ensure_device(inst.name, "eth0", "nic", "nictype=routed", f"ipv4.address={inst.address}",
                   f"host_name=thinny-{inst.port}")
-    ensure_device(inst.name, "policy", "disk", f"source={host.MANAGED}", f"path={host.MANAGED}",
-                  "readonly=true", "shift=true")
+    ensure_policy(s, inst)
     ensure_device(inst.name, "webapp", "proxy", f"listen=tcp:127.0.0.1:{inst.port}",
                   f"connect=tcp:127.0.0.1:{inst.port}")
     if inst.moved:  # its old server turned autostart off for the move; the profile's applies again

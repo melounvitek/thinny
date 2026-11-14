@@ -28,7 +28,7 @@ In priority order.
    sharing between instances through Hermes.
 2. **One release and one policy.** One Hermes release for all instances, installed in every
    container with the official installer at the recorded commit, and one config
-   (`/etc/hermes`, Hermes "managed scope") mounted read-only into every container. One
+   (Hermes "managed scope") mounted read-only as every container's `/etc/hermes`. One
    nightly update for all instances, one instance at a time.
 3. **Central policy:** approvals mode and terminal backend; with the model lock
    (`policy.model_lock`, off by default) also pinned model and reasoning effort, model
@@ -425,7 +425,8 @@ extras/, tests/     netcup snapshot and nightly watch (run off the server); pyte
                                 the built-ins (render.BUILT_INS) its container last got,
                                 whether it moved here from another server
 /var/lib/thinny/release         "<tag> <commit>": the Hermes release all instances run
-/etc/hermes/                            Hermes managed scope, rendered from site.toml
+/var/lib/thinny/policies/<name>/        its Hermes managed scope, rendered from site.toml; a
+                                        folder per instance (before, all shared /etc/hermes/)
 /etc/thinny/thinny.nft  our nft table for the containers
 /etc/systemd/system/incus.service.d/thinny.conf, /etc/sysctl.d/90-thinny.conf
 Incus                                   pool `default` (btrfs, sparse file), profile `thinny-instance`,
@@ -436,9 +437,9 @@ Incus                                   pool `default` (btrfs, sparse file), pro
   `active`, `disabled`.
 - Profile `thinny-instance`: root disk with the `disk_gb` quota, `/dev/net/tun`,
   `security.idmap.isolated`, `security.nesting`, `limits.cpu`, `limits.memory`,
-  `limits.processes=2000`, `boot.autostart`. Per container: a routed NIC `thinny-<port>`,
-  `/etc/hermes` and model-guard as read-only disks (`shift=true`), and a proxy device from
-  host `127.0.0.1:<port>` to the same port inside.
+  `limits.processes=2000`, `boot.autostart`. Per container: a routed NIC `thinny-<port>`, its
+  policy folder at `/etc/hermes` and model-guard as read-only disks (`shift=true`), and a proxy
+  device from host `127.0.0.1:<port>` to the same port inside.
 - Our nft table: forward from `thinny-*` only out of `network.interface`, not to private, CGNAT
   (tailnet), link-local, multicast or blocked networks, no IPv6, nothing new into `thinny-*`;
   input: nothing new from `thinny-*`; masquerade. Loaded by `config apply` and by the incus.service
@@ -464,7 +465,7 @@ Idempotent; a rerun repairs and never destroys data or updates Hermes: packages
 Caddy later when LAN access needs it), the tool and the path of the clone it ran from,
 `site.toml` from the example on the first run, then `thinny setup` and the commit it set up:
 the storage pool once (80% of the free space under `/var/lib`; no Incus network), then
-`config apply`: firewall first, units, sysctl, profile, `/etc/hermes`, Webapp settings, access,
+`config apply`: firewall first, units, sysctl, profile, instance policies, Webapp settings, access,
 remembered restarts. No Hermes on the host.
 
 `bin/install` is the one-line install (`curl ... | bash`, as root or through sudo): on a first
@@ -577,7 +578,7 @@ private ones and the tailnet are always blocked). `site.example.toml` lists ever
 ## 7. Checks (`thinny doctor`)
 
 - Install: Incus pool `default` and profile `thinny-instance`, the incus.service drop-in, IPv4
-  forwarding (FAIL); `/etc/hermes` matches `site.toml` (WARN); the recorded release; nightly
+  forwarding (FAIL); instance policies match `site.toml` (WARN); the recorded release; nightly
   timer enabled (WARN); last update status (FAIL when failed, WARN when missing or older than
   48 h).
 - Prerequisites (section 6.3), all WARN.
