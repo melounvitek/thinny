@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime as dt
 import http.client
 import json
+import re
 import shlex
 import subprocess
 import sys
@@ -19,6 +20,8 @@ from .system import INTERNAL, STATE_DIR, CommandError, write_file
 DIR = STATE_DIR / "trace"   # an instance's admin-access.log in DIR/<name>
 IN_CONTAINER = "/var/log/thinny"   # DIR/<name>, as the instance's container sees it
 UNSENT = STATE_DIR / "trace-unsent"   # rows an instance's sheet has not taken yet, as JSON lines in UNSENT/<name>
+# A sheet's Apps Script as a web app. Nothing else: the server would post the trace wherever an URL points.
+SHEET_URL = re.compile(r"https://script\.google\.com/macros/s/[\w-]+/exec")
 MONITOR = ["incus", "monitor", "--project", "default", "--type", "lifecycle", "--format", "json"]
 
 
@@ -76,6 +79,31 @@ def deliver(name: str, url: str, row: dict | None = None) -> None:
         path.unlink()
     elif sent:
         write_file(path, "".join(raw + "\n" for raw in rows[sent:]), 0o600)
+
+
+def connect_sheet(reg: Registry, name: str, url: str) -> None:
+    """The Google Sheet that gets the instance's access trace too, by its Apps Script's URL; "off": none. A
+    sheet is told when it starts and when it stops getting it."""
+    inst = reg.get(name)
+    if inst.state != "active":
+        raise RegistryError(f"{name} is {inst.state}")
+    if url != "off" and not SHEET_URL.fullmatch(url):
+        raise CommandError(f"{url} is not the URL of a sheet's script: https://script.google.com/macros/s/<id>/exec "
+                           "(see README, Access trace)")
+
+    def row(entry: str) -> dict:
+        return {"time": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "instance": name, "entry": entry}
+    if url != "off":
+        send(url, row("thinny sends this instance's access trace here from now on"))
+    if inst.trace_sheet and inst.trace_sheet != url:
+        try:
+            send(inst.trace_sheet, row("thinny stopped sending this instance's access trace here"))
+        except CommandError as e:
+            print(f"Could not tell {name}'s previous sheet: {e}", file=sys.stderr)
+    inst.trace_sheet = "" if url == "off" else url
+    reg.save()
+    if url == "off":
+        (UNSENT / name).unlink(missing_ok=True)
 
 
 def run() -> int:

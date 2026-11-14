@@ -1,13 +1,18 @@
+import contextlib
 import datetime as dt
 import http.server
 import json
+import re
 import sys
 import threading
 
 import pytest
 
 from thinny import system, trace
-from thinny.registry import Instance, Registry
+from thinny.registry import Instance, Registry, RegistryError
+from thinny.system import CommandError
+
+GOOGLE = trace.SHEET_URL   # before any test replaces it
 
 
 def event(action, name="alice", **context):
@@ -93,15 +98,23 @@ class Script(http.server.BaseHTTPRequestHandler):
         pass
 
 
-@pytest.fixture
-def sheet():
+@contextlib.contextmanager
+def google_sheet():
     """A Google Sheet with its script (README): `rows` it got; `answer` other than "ok" plays a broken one."""
     server = http.server.HTTPServer(("127.0.0.1", 0), Script)
     url = f"http://127.0.0.1:{server.server_port}/exec"
     server.sheet = type("Sheet", (), {"rows": [], "answer": "ok", "url": url})()
     threading.Thread(target=server.serve_forever, args=(0.01,), daemon=True).start()
-    yield server.sheet
-    server.shutdown()
+    try:
+        yield server.sheet
+    finally:
+        server.shutdown()
+
+
+@pytest.fixture
+def sheet():
+    with google_sheet() as found:
+        yield found
 
 
 def test_an_instance_with_a_sheet_gets_each_entry_as_a_row(traced, tmp_path, sheet):
@@ -137,3 +150,64 @@ def test_a_restarted_trace_sends_the_rows_that_wait(traced, sheet):
     sheet.answer = "ok"
     traced()   # e.g. after a reboot, with nothing new
     assert [row["entry"] for row in sheet.rows] == ["incus exec alice -- true"]
+
+
+@pytest.fixture
+def sheets(tmp_path, monkeypatch):
+    """Two sheets thinny accepts (only Apps Script URLs in production), and the registry of alice and bob."""
+    with google_sheet() as first, google_sheet() as second:
+        monkeypatch.setattr(trace, "SHEET_URL", re.compile(f"{re.escape(first.url)}|{re.escape(second.url)}"))
+        monkeypatch.setattr(trace, "UNSENT", tmp_path / "unsent")
+        monkeypatch.setattr(Registry, "save", lambda self, path=None: None)
+        reg = Registry({"alice": Instance("alice", 9120, "local", state="active"),
+                        "bob": Instance("bob", 9121, "local", state="disabled")})
+        yield reg, first, second
+
+
+def entries(sheet):
+    return [(row["instance"], row["entry"]) for row in sheet.rows]
+
+
+def test_a_sheet_is_connected_only_once_it_took_a_test_row(sheets):
+    reg, first, _ = sheets
+    first.answer = "<!DOCTYPE html><title>Sign in</title>"   # not open to anyone
+    with pytest.raises(CommandError, match="is it open to anyone"):
+        trace.connect_sheet(reg, "alice", first.url)
+    assert reg.get("alice").trace_sheet == ""
+
+    first.answer = "ok"
+    trace.connect_sheet(reg, "alice", first.url)
+    assert reg.get("alice").trace_sheet == first.url
+    assert entries(first) == [("alice", "thinny sends this instance's access trace here from now on")]
+
+
+@pytest.mark.parametrize("url", ["http://192.168.1.1/exec", "https://script.google.com.example.org/macros/s/x/exec",
+                                 "https://script.google.com/macros/s/x/exec/../../../../a", "https://example.org/"])
+def test_only_a_google_apps_script_url_is_taken(sheets, monkeypatch, url):
+    reg, _, _ = sheets
+    monkeypatch.setattr(trace, "SHEET_URL", GOOGLE)
+    with pytest.raises(CommandError, match="https://script.google.com/macros/s/"):
+        trace.connect_sheet(reg, "alice", url)
+    assert reg.get("alice").trace_sheet == ""
+    assert trace.SHEET_URL.fullmatch("https://script.google.com/macros/s/AKfycbx-1_Z/exec")
+
+
+def test_a_sheet_that_stops_getting_the_trace_is_told(sheets, tmp_path):
+    reg, first, second = sheets
+    trace.connect_sheet(reg, "alice", first.url)
+    trace.connect_sheet(reg, "alice", second.url)
+    assert entries(first)[-1] == ("alice", "thinny stopped sending this instance's access trace here")
+    assert entries(second) == [("alice", "thinny sends this instance's access trace here from now on")]
+
+    (tmp_path / "unsent").mkdir()
+    (tmp_path / "unsent/alice").write_text("{}\n")   # a row that waits
+    trace.connect_sheet(reg, "alice", "off")
+    assert reg.get("alice").trace_sheet == "" and not (tmp_path / "unsent/alice").exists()
+    assert entries(second)[-1] == ("alice", "thinny stopped sending this instance's access trace here")
+
+
+def test_a_disabled_instance_gets_no_sheet(sheets):
+    reg, first, _ = sheets
+    with pytest.raises(RegistryError, match="bob is disabled"):
+        trace.connect_sheet(reg, "bob", first.url)
+    assert first.rows == []

@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 
-from thinny import checks, host, instances, render, system
+from thinny import checks, host, instances, render, system, trace
 from thinny.registry import Instance, Registry
 from thinny.settings import Settings
 
@@ -167,11 +167,22 @@ def test_caddy_must_answer_the_tunnel_of_url_instances(monkeypatch, answer, expe
     ("disabled", "active", "WARN"),      # gone after the next reboot
     ("", "inactive", "WARN"),             # missing
 ])
-def test_doctor_warns_when_admins_access_is_not_traced(monkeypatch, enabled, running, level):
+def test_doctor_warns_when_admins_access_is_not_traced(monkeypatch, tmp_path, enabled, running, level):
     answers = {"is-enabled": enabled + "\n", "is-active": running + "\n"}
     monkeypatch.setattr(system, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, answers[cmd[1]], ""))
+    monkeypatch.setattr(trace, "UNSENT", tmp_path / "unsent")
     [(found, _, fix)] = checks.access_trace(S, Registry())
     assert found == level and fix == ("" if level == "OK" else "thinny config apply")
+
+
+def test_doctor_warns_while_rows_wait_for_a_sheet(monkeypatch, tmp_path):
+    monkeypatch.setattr(system, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "enabled\n", ""))
+    monkeypatch.setattr(trace, "UNSENT", tmp_path)
+    (tmp_path / "alice").write_text('{"entry": "a"}\n{"entry": "b"}\n')
+    results = list(checks.access_trace(S, Registry()))
+    assert results[1] == ("WARN", "alice: 2 rows of its access trace wait for its Google Sheet",
+                          "systemctl restart thinny-trace.service, once the server reaches script.google.com "
+                          "(the journal of thinny-trace.service says why they wait)")
 
 
 def test_a_crashing_check_fails_without_stopping_the_others(monkeypatch, capsys):
