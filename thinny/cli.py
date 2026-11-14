@@ -75,6 +75,9 @@ def main(argv: list[str] | None = None) -> int:
     lck.add_argument("models", nargs="*", help="model ids it allows, the first by default (default: the one it uses)")
     inst.add_parser("unlock", help="let an instance's users choose their models, whatever the site's lock") \
         .add_argument("name")
+    trc = inst.add_parser("trace-sheet", help="send an instance's access trace to its users' Google Sheet too")
+    trc.add_argument("name")
+    trc.add_argument("url", metavar="URL|off", help="the URL of the sheet's script (see README, Access trace)")
     for name, text in (("reset-password", "give an instance a new Webapp password"),
                        ("disable", "stop an instance's container for good, keep its data")):
         inst.add_parser(name, help=text).add_argument("name")
@@ -160,6 +163,8 @@ def main(argv: list[str] | None = None) -> int:
                 instances.lock(s, reg, a.name, a.models)
             elif command == "instance unlock":
                 instances.unlock(s, reg, a.name)
+            elif command == "instance trace-sheet":
+                trace.connect_sheet(reg, a.name, a.url)
             elif command == "instance reset-password":
                 instances.password(s, reg, a.name)
             elif command == "instance disable":

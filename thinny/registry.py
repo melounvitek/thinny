@@ -35,6 +35,7 @@ class Instance:
     moved: bool = False   # from another server: a resumed add keeps its users' settings
     lock: list[str] | None = None   # its own model lock, the models it allows ([]: unlocked); None: the site's
     lock_provider: str = ""         # the provider of its own lock
+    trace_sheet: str = ""           # the Apps Script URL of the Google Sheet that gets its access trace too
 
 
 def validate_name(name: str) -> None:

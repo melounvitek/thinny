@@ -275,6 +275,14 @@ def test_instance_limits_changes_only_the_given_limits(server, monkeypatch):
         cli.main(["instance", "limits", "alice", "--memory-mb", "lots"])
 
 
+def test_instance_trace_sheet_takes_a_url_or_off(server, monkeypatch):
+    connected = []
+    monkeypatch.setattr(trace, "connect_sheet", lambda reg, name, url: connected.append((name, url)))
+    assert cli.main(["instance", "trace-sheet", "alice", "https://script.google.com/macros/s/x/exec"]) == 0
+    assert cli.main(["instance", "trace-sheet", "alice", "off"]) == 0
+    assert connected == [("alice", "https://script.google.com/macros/s/x/exec"), ("alice", "off")]
+
+
 def test_instance_move_takes_names_or_all(server, monkeypatch, capsys):
     moved = []
     monkeypatch.setattr(move, "move", lambda s, reg, names, to: moved.append((names, to)))
