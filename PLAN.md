@@ -493,7 +493,7 @@ instance add <name> [--access ...]
                                   model-guard, Webapp password, language, look, without the
                                   model lock the starting model, access, gateway
 instance access | login [--provider] | reset-password <name>
-                                  access method, device login to any provider, new Webapp
+                                  access method, OpenAI or Claude device login, new Webapp
                                   password
 instance lock <name> [model ...] | unlock <name>
                                   its own model lock (the provider it uses, these models or the

@@ -17,7 +17,8 @@ from .registry import Registry, RegistryError
 from .settings import SettingsError, load
 from .system import CommandError, lock, write_file
 
-# The providers the questions offer by name: name -> (Hermes provider id, suggested model, text).
+# The providers thinny offers by name: name -> (Hermes provider id, suggested model, text). Users set up
+# others in Hermes itself.
 PROVIDERS = {"openai": ("openai-codex", "gpt-5.5", "OpenAI      a ChatGPT subscription"),
              "anthropic": (instances.CLAUDE_PROVIDER, "claude-opus-5-5",
                            "Anthropic   a Claude Pro or Max subscription")}
@@ -68,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     acc.add_argument("access", help="lan | tailscale | url=<URL> | local")
     lgn = inst.add_parser("login", help="sign an instance in to a model provider (device code)")
     lgn.add_argument("name")
-    lgn.add_argument("--provider", help="openai | anthropic | <Hermes provider id> (default: asked)")
+    lgn.add_argument("--provider", choices=PROVIDERS, help="(default: asked)")
     lck = inst.add_parser("lock", help="lock an instance to models of the provider it uses, whatever the site's lock")
     lck.add_argument("name")
     lck.add_argument("models", nargs="*", help="model ids it allows, the first by default (default: the one it uses)")
@@ -146,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
                 instances.change_access(s, reg, a.name, *parse_access(a.access))
             elif command == "instance login":
                 if a.provider:
-                    provider = PROVIDERS.get(a.provider, (a.provider,))[0]
+                    provider = PROVIDERS[a.provider][0]
                 else:
                     provider, _ = instances.model_of(s, reg, a.name)
                     if not instances.settings_for(s, reg.get(a.name)).model_lock:
@@ -272,19 +273,16 @@ def ask(question: str, default: str | None = None) -> str:
 
 
 def ask_provider(question: str, default: str) -> str:
-    """The Hermes provider id of OpenAI, Anthropic or another (`default` when not on a terminal)."""
+    """The Hermes provider id of OpenAI or Anthropic (`default` when not on a terminal)."""
     if not sys.stdin.isatty():
         return default
-    known = [p for p, _, _ in PROVIDERS.values()]
-    picked = choose(question, [(p, text) for p, _, text in PROVIDERS.values()] +
-                    [("other", "Other       another Hermes provider")], default if default in known else "other")
-    return picked if picked != "other" else ask("Hermes provider id", None if default in known else default)
+    return choose(question, [(p, text) for p, _, text in PROVIDERS.values()], default)
 
 
 def ask_model(question: str, provider: str, model: str) -> tuple[str, str]:
     """A provider and model id; Enter keeps `provider` and `model`, or takes the suggestion for another provider."""
     picked = ask_provider(question, provider)
-    suggested = model if picked == provider else next((m for p, m, _ in PROVIDERS.values() if p == picked), None)
+    suggested = model if picked == provider else next(m for p, m, _ in PROVIDERS.values() if p == picked)
     return picked, ask("Model id", suggested)
 
 

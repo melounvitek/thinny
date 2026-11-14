@@ -81,19 +81,19 @@ def test_init_writes_the_answers_into_the_commented_example(new_server, monkeypa
 
 
 def test_init_offers_the_detected_lan_address(new_server, monkeypatch):
-    # another provider, its id, model, language (no pack in the catalog), interface, LAN (the default),
-    # its address, write
-    answering(monkeypatch, "3", "anthropic", "claude", "de", "eth1", "", "", "y")
+    # Anthropic, another model, language (no pack in the catalog), interface, LAN (the default), its address,
+    # write
+    answering(monkeypatch, "2", "claude", "de", "eth1", "", "", "y")
     assert cli.main(["init"]) == 0
     s = settings.load(new_server)
     assert (s.model_provider, s.model, s.language, s.language_pack, s.network_interface) == \
-        ("anthropic", "claude", "de", "", "eth1")
+        ("claude-subscription-directsdk-experimental", "claude", "de", "", "eth1")
     assert (s.access_default, s.lan_address, s.tunnel_port) == ("lan", "192.168.1.5", 0)
 
 
 def test_init_suggests_a_model_of_the_claude_subscription(new_server, monkeypatch):
     # no such provider (asked again), Anthropic, its model, language, interface, LAN, its address, write
-    answering(monkeypatch, "4", "2", "", "", "", "", "", "")
+    answering(monkeypatch, "3", "2", "", "", "", "", "", "")
     assert cli.main(["init"]) == 0
     s = settings.load(new_server)
     assert (s.model_provider, s.model) == ("claude-subscription-directsdk-experimental", "claude-opus-5-5")
@@ -196,7 +196,6 @@ def added(monkeypatch):
 @pytest.mark.parametrize("answers, model", [
     (["", ""], ("openai-codex", "m1")),   # the site's
     (["2", ""], ("claude-subscription-directsdk-experimental", "claude-opus-5-5")),
-    (["3", "nous", "hermes-4"], ("nous", "hermes-4")),
 ])
 def test_instance_add_asks_for_the_instances_provider_and_model(server, terminal, added, monkeypatch, answers, model):
     answering(monkeypatch, *answers)
@@ -214,22 +213,20 @@ def test_instance_add_leaves_the_model_to_the_lock(server, terminal, added, monk
 
 @pytest.fixture
 def login(server, terminal, monkeypatch):
-    """`instance login` on a terminal, for alice who uses the provider nous; records the logins."""
+    """`instance login` on a terminal, for alice who uses the Claude subscription; records the logins."""
     alice = Instance("alice", 9120, "local", state="active")
     monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: Registry({"alice": alice})))
-    monkeypatch.setattr(instances, "model_of", lambda s, reg, name: ("nous", "hermes-4"))
+    monkeypatch.setattr(instances, "model_of", lambda s, reg, name: (instances.CLAUDE_PROVIDER, "claude-opus-5-5"))
     logins = []
     monkeypatch.setattr(instances, "login", lambda reg, name, provider: logins.append((name, provider)))
     return logins, alice
 
 
 @pytest.mark.parametrize("args, answers, provider", [
-    ([], ["", ""], "nous"),   # Other, then its id: both as the instance has them
-    ([], ["2"], "claude-subscription-directsdk-experimental"),
-    ([], ["3", "openrouter"], "openrouter"),
+    ([], [""], "claude-subscription-directsdk-experimental"),   # the one it uses
+    ([], ["1"], "openai-codex"),
     (["--provider", "openai"], [], "openai-codex"),
     (["--provider", "anthropic"], [], "claude-subscription-directsdk-experimental"),
-    (["--provider", "openrouter"], [], "openrouter"),
 ])
 def test_instance_login_signs_in_to_the_chosen_provider(login, monkeypatch, args, answers, provider):
     answering(monkeypatch, *answers)
@@ -237,17 +234,26 @@ def test_instance_login_signs_in_to_the_chosen_provider(login, monkeypatch, args
     assert login[0] == [("alice", provider)]
 
 
-@pytest.mark.parametrize("site_lock, own_lock", [(True, None), (False, ["hermes-4"])])
+def test_instance_login_offers_only_openai_and_anthropic(login, monkeypatch):
+    # others are set up in Hermes itself
+    answering(monkeypatch, "3", "1")
+    assert cli.main(["instance", "login", "alice"]) == 0
+    with pytest.raises(SystemExit):
+        cli.main(["instance", "login", "alice", "--provider", "nous"])
+    assert login[0] == [("alice", "openai-codex")]
+
+
+@pytest.mark.parametrize("site_lock, own_lock", [(True, None), (False, ["gpt-5.5"])])
 def test_instance_login_signs_a_locked_instance_in_to_its_provider_unasked(server, login, monkeypatch, site_lock,
                                                                          own_lock):
     site, _ = server
     logins, alice = login
     if site_lock:
         site.write_text(VALID.replace('model = "m1"', 'model = "m1"\nmodel_lock = true'))
-    alice.lock, alice.lock_provider = own_lock, "nous"
+    alice.lock, alice.lock_provider = own_lock, instances.CLAUDE_PROVIDER
     answering(monkeypatch)
     assert cli.main(["instance", "login", "alice"]) == 0
-    assert logins == [("alice", "nous")]
+    assert logins == [("alice", "claude-subscription-directsdk-experimental")]
 
 
 def test_instance_lock_takes_the_models_and_unlock_the_name(server, monkeypatch):

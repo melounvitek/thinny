@@ -547,8 +547,8 @@ def login(reg: Registry, name: str, provider: str) -> None:
         cmd = ["claude", "auth", "login"]
     else:
         print(f"Signing {name} in to {provider}. Give the code below to whoever uses {name}; it expires "
-              "in about 15 minutes. A provider without one asks for their API key instead.")
-        cmd = ["hermes", "auth", "add", provider, "--no-browser"]  # Hermes picks OAuth or an API key
+              "in about 15 minutes.")
+        cmd = ["hermes", "auth", "add", provider, "--no-browser"]
     if as_user_interactive(name, cmd):
         raise CommandError("the login did not finish")
 

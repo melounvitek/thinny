@@ -325,9 +325,9 @@ def test_an_instance_signs_in_with_the_admins_terminal(incus, monkeypatch):
     monkeypatch.setattr(instances, "as_user_interactive", lambda name, cmd: started.append((name, cmd)) or 0)
     reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
     instances.login(reg, "alice", "claude-subscription-directsdk-experimental")
-    instances.login(reg, "alice", "nous")
+    instances.login(reg, "alice", "openai-codex")
     assert started == [("alice", ["claude", "auth", "login"]),
-                       ("alice", ["hermes", "auth", "add", "nous", "--no-browser"])]   # Hermes knows OAuth or API key
+                       ("alice", ["hermes", "auth", "add", "openai-codex", "--no-browser"])]
 
 
 def test_an_instance_uses_its_own_model_or_the_locked_one(incus):
