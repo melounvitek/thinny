@@ -13,7 +13,6 @@ import shlex
 import subprocess
 import sys
 import threading
-import time
 import urllib.request
 
 from .registry import Registry, RegistryError
@@ -21,7 +20,7 @@ from .system import INTERNAL, STATE_DIR, CommandError, write_file
 
 DIR = STATE_DIR / "trace"   # an instance's admin-access.log in DIR/<name>
 IN_CONTAINER = "/var/log/thinny"   # DIR/<name>, as the instance's container sees it
-UNSENT = STATE_DIR / "trace-unsent"   # each row for an instance's sheet as a file in UNSENT/<name> until sent
+UNSENT = STATE_DIR / "trace-unsent"   # each row for an instance's sheet as UNSENT/<name>/<number>.json until sent
 RETRY = 300   # seconds between tries to send the rows a sheet did not take
 # A sheet's Apps Script as a web app. Nothing else: the server would post the trace wherever an URL points.
 SHEET_URL = re.compile(r"https://script\.google\.com/macros/s/[\w-]+/exec")
@@ -64,12 +63,13 @@ def sheet_of(name: str) -> str | None:
 
 
 def send_waiting(name: str) -> None:
-    """The instance's rows to its sheet, oldest first, until one fails; without a sheet, they go."""
-    url = sheet_of(name)
-    if url is None:
-        return
+    """The instance's rows, oldest first, each to the sheet the registry names once it is found, until one
+    fails (`instance trace-sheet` may change it meanwhile). Without a sheet, a row goes."""
     rows = sorted((UNSENT / name).glob("*.json"))
     for i, path in enumerate(rows):
+        url = sheet_of(name)
+        if url is None:
+            return
         if url:
             try:
                 send(url, json.loads(path.read_text(encoding="utf-8")))
@@ -141,8 +141,10 @@ def run() -> int:
                         f.write(f"{now} {text}\n")
                 except OSError as e:
                     print(f"{path}: {e}", file=sys.stderr, flush=True)
-                try:   # for its sheet, if it has one: the sender knows
-                    write_file(UNSENT / name / f"{time.time_ns()}.json",
+                try:   # for its sheet, if it has one: the sender knows. Numbered, as the clock may step back.
+                    rows = (UNSENT / name).glob("*.json")
+                    number = max((int(row.stem) for row in rows if row.stem.isdigit()), default=0) + 1
+                    write_file(UNSENT / name / f"{number:012}.json",
                                json.dumps({"time": now, "instance": name, "entry": text}), 0o600)
                     wake.set()
                 except OSError as e:

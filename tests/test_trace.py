@@ -5,6 +5,7 @@ import json
 import re
 import sys
 import threading
+import time
 
 import pytest
 
@@ -164,6 +165,38 @@ def test_rows_wait_while_the_registry_cannot_be_read(traced, tmp_path, sheet, mo
     monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
     traced()
     assert [row["entry"] for row in sheet.rows] == ["incus exec alice -- true"]
+
+
+def test_rows_keep_their_order_when_the_clock_steps_back(traced, sheet, monkeypatch):
+    Registry.load().get("alice").trace_sheet = sheet.url
+    sheet.answer = ""   # they wait, so their order is the files'
+    clock = iter(range(2 * 10**18, 10**18, -10**9))   # a second back at every reading
+    monkeypatch.setattr(time, "time_ns", lambda: next(clock))
+    traced(event("instance-exec", command=["true"]), event("instance-exec", command=["false"]))
+    sheet.answer = "ok"
+    traced()
+    assert [row["entry"] for row in sheet.rows] == ["incus exec alice -- true", "incus exec alice -- false"]
+
+
+def test_the_sheet_decides_for_each_row_as_the_registry_is_then(tmp_path, sheet, monkeypatch):
+    """`instance trace-sheet` may change the registry while the trace sends."""
+    monkeypatch.setattr(trace, "UNSENT", tmp_path)
+    connected = Registry({"alice": Instance("alice", 9120, "local", state="active", trace_sheet=sheet.url)})
+    states = iter([Registry(connected.instances | {"alice": Instance("alice", 9120, "local", state="active")}),
+                   connected, Registry({"alice": Instance("alice", 9120, "local", state="active")})])
+
+    def load(cls, path=None):
+        reg = next(states)
+        if reg is connected:   # a row written after its sheet was connected
+            (tmp_path / "alice/3.json").write_text(json.dumps({"entry": "after"}))
+        return reg
+    monkeypatch.setattr(Registry, "load", classmethod(load))
+    (tmp_path / "alice").mkdir()
+    for row, entry in (("1", "before"), ("2", "connected")):
+        (tmp_path / "alice" / f"{row}.json").write_text(json.dumps({"entry": entry}))
+    trace.send_waiting("alice")   # no sheet yet for 1, its sheet for 2, off again for 3
+    assert [row["entry"] for row in sheet.rows] == ["connected"]
+    assert sorted(path.name for path in (tmp_path / "alice").iterdir()) == ["3.json"]   # not listed this round
 
 
 def test_the_trace_goes_on_when_rows_for_sheets_cannot_be_kept(traced, tmp_path, capsys):

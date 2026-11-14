@@ -477,10 +477,10 @@ Incus                                   pool `default` (btrfs, sparse file), pro
   with `env THINNY=1`. Transparency, not a guard: the admin is root. An instance with a Google
   Sheet gets each entry as a row too, posted to the sheet's Apps Script web app (only
   `https://script.google.com/macros/s/<id>/exec`, so the server can add rows and nothing else).
-  The trace writes each instance entry as a file there, and a thread of its own sends them, oldest
-  first: at once, every 5 minutes while some wait, and a last time when the trace ends. Without a
-  sheet they go; while the registry cannot be read they wait. A failing sheet never holds up the
-  trace.
+  The trace writes each instance entry as a numbered file there (the clock may step back), and a
+  thread of its own sends them, oldest first, each to the sheet the registry names then: at once,
+  every 5 minutes while some wait, and a last time when the trace ends. Without a sheet they go;
+  while the registry cannot be read they wait. A failing sheet never holds up the trace.
 - Our nft table: forward from `thinny-*` only out of `network.interface`, not to private, CGNAT
   (tailnet), link-local, multicast or blocked networks, no IPv6, nothing new into `thinny-*`;
   input: nothing new from `thinny-*`; masquerade. Loaded by `config apply` and by the incus.service
