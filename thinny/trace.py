@@ -12,6 +12,8 @@ import re
 import shlex
 import subprocess
 import sys
+import threading
+import time
 import urllib.request
 
 from .registry import Registry, RegistryError
@@ -19,7 +21,8 @@ from .system import INTERNAL, STATE_DIR, CommandError, write_file
 
 DIR = STATE_DIR / "trace"   # an instance's admin-access.log in DIR/<name>
 IN_CONTAINER = "/var/log/thinny"   # DIR/<name>, as the instance's container sees it
-UNSENT = STATE_DIR / "trace-unsent"   # rows an instance's sheet has not taken yet, as JSON lines in UNSENT/<name>
+UNSENT = STATE_DIR / "trace-unsent"   # each row for an instance's sheet as a file in UNSENT/<name> until sent
+RETRY = 300   # seconds between tries to send the rows a sheet did not take
 # A sheet's Apps Script as a web app. Nothing else: the server would post the trace wherever an URL points.
 SHEET_URL = re.compile(r"https://script\.google\.com/macros/s/[\w-]+/exec")
 MONITOR = ["incus", "monitor", "--project", "default", "--type", "lifecycle", "--format", "json"]
@@ -50,35 +53,46 @@ def send(url: str, row: dict) -> None:
         raise CommandError(f"the sheet's script answered {answer[:60]!r}, not ok (is it open to anyone?)")
 
 
-def sheet_of(name: str) -> str:
+def sheet_of(name: str) -> str | None:
+    """The URL of the instance's sheet, "" without one; None while the registry cannot be read."""
     try:
         inst = Registry.load().instances.get(name)
-    except (OSError, ValueError, TypeError, RegistryError) as e:
+    except Exception as e:  # noqa: BLE001 - its rows wait until it can be read again
         print(f"cannot read the registry: {e}", file=sys.stderr, flush=True)
-        return ""
+        return None
     return inst.trace_sheet if inst else ""
 
 
-def deliver(name: str, url: str, row: dict | None = None) -> None:
-    """Add `row` to the rows that wait for the instance's sheet, then send them, oldest first, until one fails."""
-    path = UNSENT / name
-    if row is not None:
-        UNSENT.mkdir(mode=0o700, parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(row) + "\n")
-    rows = path.read_text(encoding="utf-8").splitlines()
-    sent = 0
-    for raw in rows:
-        try:
-            send(url, json.loads(raw))
-        except CommandError as e:
-            print(f"{name}: {e}; rows waiting for its sheet: {len(rows) - sent}", file=sys.stderr, flush=True)
-            break
-        sent += 1
-    if sent == len(rows):
-        path.unlink()
-    elif sent:
-        write_file(path, "".join(raw + "\n" for raw in rows[sent:]), 0o600)
+def send_waiting(name: str) -> None:
+    """The instance's rows to its sheet, oldest first, until one fails; without a sheet, they go."""
+    url = sheet_of(name)
+    if url is None:
+        return
+    rows = sorted((UNSENT / name).glob("*.json"))
+    for i, path in enumerate(rows):
+        if url:
+            try:
+                send(url, json.loads(path.read_text(encoding="utf-8")))
+            except CommandError as e:
+                print(f"{name}: {e}; rows waiting for its sheet: {len(rows) - i}", file=sys.stderr, flush=True)
+                return
+        path.unlink(missing_ok=True)
+
+
+def sender(wake: threading.Event, stop: threading.Event) -> None:
+    """Send what waits for the sheets at once, then whenever the trace adds a row, every RETRY seconds, and a
+    last time once stopped. On its own thread: a slow or failing sheet must not hold up the trace."""
+    while True:
+        last = stop.is_set()   # before the round: one that began earlier may miss the latest rows
+        for folder in sorted(UNSENT.glob("*")):
+            try:
+                send_waiting(folder.name)
+            except Exception as e:  # noqa: BLE001 - the next round tries again
+                print(f"{folder.name}: {e}", file=sys.stderr, flush=True)
+        if last:
+            return
+        wake.wait(RETRY)
+        wake.clear()
 
 
 def connect_sheet(reg: Registry, name: str, url: str) -> None:
@@ -102,15 +116,13 @@ def connect_sheet(reg: Registry, name: str, url: str) -> None:
             print(f"Could not tell {name}'s previous sheet: {e}", file=sys.stderr)
     inst.trace_sheet = "" if url == "off" else url
     reg.save()
-    if url == "off":
-        (UNSENT / name).unlink(missing_ok=True)
 
 
 def run() -> int:
     """Trace until the monitor ends (incusd stopped or restarted); systemd then starts the trace again."""
-    for path in sorted(UNSENT.glob("*")):   # what an outage kept from a sheet
-        if url := sheet_of(path.name):
-            deliver(path.name, url)
+    wake, stop = threading.Event(), threading.Event()
+    sending = threading.Thread(target=sender, args=(wake, stop), daemon=True)
+    sending.start()
     with subprocess.Popen(MONITOR, stdout=subprocess.PIPE, encoding="utf-8", errors="replace") as monitor:
         for raw in monitor.stdout:
             if not raw.strip():   # every event ends with an empty line
@@ -123,12 +135,19 @@ def run() -> int:
             name = event["metadata"]["name"]
             path = DIR / name
             if path.is_dir():   # an instance's
-                time = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+                now = dt.datetime.now().astimezone().isoformat(timespec="seconds")
                 try:
                     with (path / "admin-access.log").open("a", encoding="utf-8") as f:
-                        f.write(f"{time} {text}\n")
+                        f.write(f"{now} {text}\n")
                 except OSError as e:
                     print(f"{path}: {e}", file=sys.stderr, flush=True)
-                if url := sheet_of(name):
-                    deliver(name, url, {"time": time, "instance": name, "entry": text})
+                try:   # for its sheet, if it has one: the sender knows
+                    write_file(UNSENT / name / f"{time.time_ns()}.json",
+                               json.dumps({"time": now, "instance": name, "entry": text}), 0o600)
+                    wake.set()
+                except OSError as e:
+                    print(f"{name}: its sheet misses this entry: {e}", file=sys.stderr, flush=True)
+    stop.set()
+    wake.set()
+    sending.join(5)   # what is left goes now, or when the trace starts again
     return 1

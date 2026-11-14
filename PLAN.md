@@ -458,7 +458,7 @@ extras/, tests/     netcup snapshot and nightly watch (run off the server); pyte
 /etc/systemd/system/incus.service.d/thinny.conf, /etc/sysctl.d/90-thinny.conf
 /var/lib/thinny/trace/<name>/admin-access.log  the instance's access trace, written by
                                 thinny-trace.service (also to the journal)
-/var/lib/thinny/trace-unsent/<name>  rows of it its Google Sheet has not taken yet (JSON lines)
+/var/lib/thinny/trace-unsent/<name>/  each row for its Google Sheet as a file, until sent
 Incus                                   pool `default` (btrfs, sparse file), profile `thinny-instance`,
                                         one container per instance, named after it
 ```
@@ -476,8 +476,11 @@ Incus                                   pool `default` (btrfs, sparse file), pro
   `instance-console` that is not thinny's own: every command thinny runs in a container starts
   with `env THINNY=1`. Transparency, not a guard: the admin is root. An instance with a Google
   Sheet gets each entry as a row too, posted to the sheet's Apps Script web app (only
-  `https://script.google.com/macros/s/<id>/exec`, so the server can add rows and nothing else);
-  rows it does not take wait and go first at the next entry or start of the trace.
+  `https://script.google.com/macros/s/<id>/exec`, so the server can add rows and nothing else).
+  The trace writes each instance entry as a file there, and a thread of its own sends them, oldest
+  first: at once, every 5 minutes while some wait, and a last time when the trace ends. Without a
+  sheet they go; while the registry cannot be read they wait. A failing sheet never holds up the
+  trace.
 - Our nft table: forward from `thinny-*` only out of `network.interface`, not to private, CGNAT
   (tailnet), link-local, multicast or blocked networks, no IPv6, nothing new into `thinny-*`;
   input: nothing new from `thinny-*`; masquerade. Loaded by `config apply` and by the incus.service
@@ -727,7 +730,9 @@ rsyslog forwarding. Then thinny f0a81ee restored.
 
 Google Sheet per instance (2026-11-14): 1 rows to the sheet and the rows that wait, against a
 local stand-in for Apps Script (a POST answered with a redirect to the script's answer, as
-Google does); 2 `instance trace-sheet`, the `doctor` check; 3 README and this file.
+Google does); 2 `instance trace-sheet`, the `doctor` check; 3 README and this file. A bound
+script deployed as a web app has no active spreadsheet (Google's docs), so it opens its sheet
+by ID.
 
 ## 9. Open questions
 

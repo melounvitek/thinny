@@ -323,12 +323,13 @@ When someone enters an instance's container by hand, with `incus exec`, `incus s
   version history (File → Version history). See below.
 
 **A Google Sheet per instance.** The instance's users create a sheet, open Extensions → Apps
-Script, replace the code with this, and save:
+Script, replace the code with this, put in the sheet's ID (the part of its address between `/d/`
+and `/edit`), and save:
 
 ```js
 function doPost(e) {
   const row = JSON.parse(e.postData.contents);
-  SpreadsheetApp.getActive().getSheets()[0].appendRow([row.time, row.instance, row.entry]);
+  SpreadsheetApp.openById("SHEET_ID").getSheets()[0].appendRow([row.time, row.instance, row.entry]);
   return ContentService.createTextOutput("ok");
 }
 ```
@@ -346,8 +347,9 @@ thinny instance trace-sheet alice off   # stop
   or another URL) gets a last row saying so.
 - The URL only lets the server add rows. Keep yourself out of the sheet's editors: whoever can
   edit it can delete rows, and only its version history would show it.
-- Rows the sheet cannot take wait on the server and go first next time; `doctor` warns while they
-  wait. A Google Workspace that allows no access from outside it refuses them all.
+- Rows the sheet cannot take wait on the server, and go again every 5 minutes, oldest first;
+  `doctor` warns while they wait. A Google Workspace that allows no access from outside it
+  refuses them all.
 - A moved instance needs its sheet connected again on the new server.
 
 It is a trace, not a lock: root on the server can stop it or change its files. It does not see

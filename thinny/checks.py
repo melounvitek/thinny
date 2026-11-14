@@ -78,11 +78,12 @@ def access_trace(s: Settings, reg: Registry):
     yield (ok("thinny-trace.service traces admins' access to containers") if (enabled, running) == ("enabled", "active")
            else warn(f"thinny-trace.service is {enabled or 'missing'} and {running}: admins' access to containers is "
                      "not traced", "thinny config apply"))
-    for path in sorted(trace.UNSENT.glob("*")):
-        rows = len(path.read_text(encoding="utf-8").splitlines())
-        yield warn(f"{path.name}: {rows} rows of its access trace wait for its Google Sheet",
-                   "systemctl restart thinny-trace.service, once the server reaches script.google.com "
-                   "(the journal of thinny-trace.service says why they wait)")
+    for folder in sorted(trace.UNSENT.glob("*")):
+        rows = len(list(folder.glob("*.json")))
+        if rows and folder.name in reg.instances and reg.get(folder.name).trace_sheet:   # others' rows just go
+            yield warn(f"{folder.name}: {rows} rows of its access trace wait for its Google Sheet",
+                       "check that the server reaches script.google.com: the trace tries again every 5 minutes, "
+                       "and its journal (journalctl -u thinny-trace) says why they wait")
 
 
 def update_status(path: Path, now: dt.datetime):

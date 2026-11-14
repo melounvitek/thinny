@@ -83,6 +83,7 @@ class Script(http.server.BaseHTTPRequestHandler):
         row = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         if sheet.answer == "ok":
             sheet.rows.append(row)
+        sheet.tries += 1
         self.send_response(302)
         self.send_header("Location", f"/echo?answer={sheet.answer}")
         self.end_headers()
@@ -100,10 +101,11 @@ class Script(http.server.BaseHTTPRequestHandler):
 
 @contextlib.contextmanager
 def google_sheet():
-    """A Google Sheet with its script (README): `rows` it got; `answer` other than "ok" plays a broken one."""
+    """A Google Sheet with its script (README): `rows` it took, `tries` to add one; `answer` other than "ok"
+    plays a broken one."""
     server = http.server.HTTPServer(("127.0.0.1", 0), Script)
     url = f"http://127.0.0.1:{server.server_port}/exec"
-    server.sheet = type("Sheet", (), {"rows": [], "answer": "ok", "url": url})()
+    server.sheet = type("Sheet", (), {"rows": [], "tries": 0, "answer": "ok", "url": url})()
     threading.Thread(target=server.serve_forever, args=(0.01,), daemon=True).start()
     try:
         yield server.sheet
@@ -117,39 +119,58 @@ def sheet():
         yield found
 
 
+def waiting(tmp_path, name):
+    return sorted((tmp_path / "unsent" / name).glob("*.json"))
+
+
 def test_an_instance_with_a_sheet_gets_each_entry_as_a_row(traced, tmp_path, sheet):
     Registry.load().get("alice").trace_sheet = sheet.url
     traced(event("instance-exec", command=["su", "-l"]), event("instance-console", type="console"),
            event("instance-exec", "bob", command=["su", "-l"]))   # bob has no sheet
+    assert not waiting(tmp_path, "alice") and not waiting(tmp_path, "bob")
     assert [(row["instance"], row["entry"]) for row in sheet.rows] == \
         [("alice", "incus exec alice -- su -l"), ("alice", "incus console alice")]
     # the same time as in its file
     assert [f"{row['time']} {row['entry']}" for row in sheet.rows] == \
         (tmp_path / "alice/admin-access.log").read_text().splitlines()
-    assert not (tmp_path / "unsent/alice").exists()
 
 
 @pytest.mark.parametrize("answer", ["", "<!DOCTYPE html><title>Sign in</title>"])   # down; not open to anyone
-def test_rows_a_sheet_did_not_take_wait_and_go_first_next_time(traced, tmp_path, sheet, capsys, answer):
+def test_rows_a_sheet_did_not_take_wait_and_go_first(traced, tmp_path, sheet, answer):
     Registry.load().get("alice").trace_sheet = sheet.url
     sheet.answer = answer
     traced(event("instance-exec", command=["true"]), event("instance-exec", command=["false"]))
-    assert sheet.rows == [] and "rows waiting for its sheet: 2" in capsys.readouterr().err
+    assert sheet.tries and sheet.rows == [] and len(waiting(tmp_path, "alice")) == 2
 
     sheet.answer = "ok"
-    traced(event("instance-exec", command=["id"]))
+    traced(event("instance-exec", command=["id"]))   # or the trace's start, or its next try
     assert [row["entry"] for row in sheet.rows] == \
         ["incus exec alice -- true", "incus exec alice -- false", "incus exec alice -- id"]
-    assert not (tmp_path / "unsent/alice").exists()
+    assert not waiting(tmp_path, "alice")
 
 
-def test_a_restarted_trace_sends_the_rows_that_wait(traced, sheet):
-    Registry.load().get("alice").trace_sheet = sheet.url
-    sheet.answer = ""
+def test_rows_wait_while_the_registry_cannot_be_read(traced, tmp_path, sheet, monkeypatch):
+    reg = Registry.load()
+    reg.get("alice").trace_sheet = sheet.url
+    tried = []
+
+    def broken(cls, path=None):
+        tried.append(True)
+        raise ValueError("Expecting value: line 1 column 1 (char 0)")
+    monkeypatch.setattr(Registry, "load", classmethod(broken))
     traced(event("instance-exec", command=["true"]))
-    sheet.answer = "ok"
-    traced()   # e.g. after a reboot, with nothing new
+    assert tried and len(waiting(tmp_path, "alice")) == 1
+
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
+    traced()
     assert [row["entry"] for row in sheet.rows] == ["incus exec alice -- true"]
+
+
+def test_the_trace_goes_on_when_rows_for_sheets_cannot_be_kept(traced, tmp_path, capsys):
+    (tmp_path / "unsent").write_text("")   # not a directory: no row can be kept there
+    traced(event("instance-exec", command=["true"]), event("instance-exec", command=["false"]))
+    assert (tmp_path / "alice/admin-access.log").read_text().count("incus exec alice") == 2
+    assert "alice: its sheet misses this entry" in capsys.readouterr().err
 
 
 @pytest.fixture
@@ -199,10 +220,8 @@ def test_a_sheet_that_stops_getting_the_trace_is_told(sheets, tmp_path):
     assert entries(first)[-1] == ("alice", "thinny stopped sending this instance's access trace here")
     assert entries(second) == [("alice", "thinny sends this instance's access trace here from now on")]
 
-    (tmp_path / "unsent").mkdir()
-    (tmp_path / "unsent/alice").write_text("{}\n")   # a row that waits
     trace.connect_sheet(reg, "alice", "off")
-    assert reg.get("alice").trace_sheet == "" and not (tmp_path / "unsent/alice").exists()
+    assert reg.get("alice").trace_sheet == ""
     assert entries(second)[-1] == ("alice", "thinny stopped sending this instance's access trace here")
 
 

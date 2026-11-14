@@ -178,11 +178,16 @@ def test_doctor_warns_when_admins_access_is_not_traced(monkeypatch, tmp_path, en
 def test_doctor_warns_while_rows_wait_for_a_sheet(monkeypatch, tmp_path):
     monkeypatch.setattr(system, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "enabled\n", ""))
     monkeypatch.setattr(trace, "UNSENT", tmp_path)
-    (tmp_path / "alice").write_text('{"entry": "a"}\n{"entry": "b"}\n')
-    results = list(checks.access_trace(S, Registry()))
-    assert results[1] == ("WARN", "alice: 2 rows of its access trace wait for its Google Sheet",
-                          "systemctl restart thinny-trace.service, once the server reaches script.google.com "
-                          "(the journal of thinny-trace.service says why they wait)")
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="active", trace_sheet="https://script..."),
+                    "bob": Instance("bob", 9121, "local", state="active")})   # no sheet: its rows go
+    for name in ("alice", "bob"):
+        (tmp_path / name).mkdir()
+        for row in ("1.json", "2.json"):
+            (tmp_path / name / row).write_text("{}")
+    results = list(checks.access_trace(S, reg))
+    assert results[1:] == [("WARN", "alice: 2 rows of its access trace wait for its Google Sheet",
+                            "check that the server reaches script.google.com: the trace tries again every 5 "
+                            "minutes, and its journal (journalctl -u thinny-trace) says why they wait")]
 
 
 def test_a_crashing_check_fails_without_stopping_the_others(monkeypatch, capsys):
