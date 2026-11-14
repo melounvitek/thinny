@@ -277,6 +277,23 @@ so allow exactly these two without a password, with `sudo visudo -f /etc/sudoers
 <you> ALL=(root) NOPASSWD: /usr/local/sbin/thinny status, /usr/local/sbin/thinny doctor
 ```
 
+## Uninstall
+
+```sh
+thinny uninstall
+```
+
+It lists the instances and asks you to type the server's hostname. Then it deletes every
+instance's container with all its data, and everything thinny set up: the update timer,
+`tailscale serve` of the instances' ports, thinny's Caddyfile (Caddy is disabled), the Incus profile
+and storage pool, the firewall table, `/etc/thinny`, `/etc/hermes`, `/var/lib/thinny`, the log,
+`/etc/sudoers.d/thinny-checks`, the clone in `/usr/local/src/thinny` and thinny itself. **There is
+no undo.** If a step fails, fix the cause and run it again: it continues.
+
+A storage pool that something else uses stays; the output says so. The packages stay installed:
+`apt purge` removes those nothing else uses. IP forwarding and user namespaces stay on until the
+next reboot.
+
 ## Extras
 
 Optional tools, off unless you set them up:

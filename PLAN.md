@@ -494,6 +494,8 @@ instance access | login [--claude] | reset-password <name>
 instance disable <name>           autostart off, container stopped (forced after 60 s), access
                                   removed; container and data stay
 instance list | restart           instances; one-by-one gateway restarts
+uninstall                         after the hostname is typed: every container, then everything
+                                  thinny set up, thinny itself last; packages stay
 ```
 
 - Names: lowercase ASCII (Linux account and URL safe), not an account on the host (the

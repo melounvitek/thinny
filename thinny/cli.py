@@ -11,7 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import apply, checks, host, instances, settings, system, update
+from . import apply, checks, host, instances, settings, system, uninstall, update
 from .registry import Registry, RegistryError
 from .settings import SettingsError, load
 from .system import CommandError, lock, write_file
@@ -70,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
         inst.add_parser(name, help=text).add_argument("name")
     rst = inst.add_parser("restart", help="restart gateways one by one (all, or the named instances)")
     rst.add_argument("names", nargs="*")
+    sub.add_parser("uninstall", help="remove thinny and every instance, with all their data")
     a = ap.parse_args(argv)
     command = " ".join(filter(None, (a.command, getattr(a, "action", None))))
 
@@ -79,6 +80,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if command == "init":
             init_config()
+            return 0
+        if command == "uninstall":
+            with lock(update.SELF_UPDATE_LOCK), lock():
+                uninstall.run()
             return 0
         if command == "config edit":
             with lock():  # before editing: a running update says so now, not after the edit
