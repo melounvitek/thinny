@@ -20,6 +20,8 @@ LOG_FILE = Path("/var/log/thinny.log")
 LOCK_FILE = Path("/run/thinny.lock")
 INSTANCE_UID = 1000        # every instance's account inside its container
 OUTPUT_LIMIT = 4_000_000   # bytes per output stream of one command
+# Leads every command thinny runs in a container, so the trace of admins' access (trace.py) leaves it out.
+INTERNAL = ["env", "THINNY=1"]
 
 
 class CommandError(Exception):
@@ -140,7 +142,7 @@ def user_env(name: str) -> dict[str, str]:
 def as_user_cmd(name: str, cmd: list[str]) -> list[str]:
     """`cmd` as the instance's account in its container, from its home, in a clean environment.
     (`incus exec --user` would leave out its groups.)"""
-    return ["incus", "exec", name, "--cwd", f"/home/{name}", "--", "runuser", "-u", name, "--", "env", "-i",
+    return ["incus", "exec", name, "--cwd", f"/home/{name}", "--", *INTERNAL, "runuser", "-u", name, "--", "env", "-i",
             *[f"{k}={v}" for k, v in user_env(name).items()], *cmd]
 
 
@@ -150,7 +152,7 @@ def as_user(name: str, cmd: list[str], **kw) -> subprocess.CompletedProcess:
 
 def in_container(name: str, cmd: list[str], **kw) -> subprocess.CompletedProcess:
     """`cmd` as root inside the instance's container."""
-    return run(["incus", "exec", name, "--", *cmd], **kw)
+    return run(["incus", "exec", name, "--", *INTERNAL, *cmd], **kw)
 
 
 def as_user_interactive(name: str, cmd: list[str]) -> int:

@@ -12,7 +12,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import apply, checks, host, instances, move, settings, system, uninstall, update
+from . import apply, checks, host, instances, move, settings, system, trace, uninstall, update
 from .registry import Registry, RegistryError
 from .settings import SettingsError, load
 from .system import CommandError, lock, write_file
@@ -92,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     rcv.add_argument("--built-ins", required=True)
     rcv.add_argument("--check", action="store_true")
     sub.add_parser("uninstall", help="remove thinny and every instance, with all their data")
+    sub.add_parser("trace")  # without help, so not listed: thinny-trace.service runs it
     a = ap.parse_args(argv)
     command = " ".join(filter(None, (a.command, getattr(a, "action", None))))
 
@@ -102,6 +103,8 @@ def main(argv: list[str] | None = None) -> int:
         if command == "init":
             init_config()
             return 0
+        if command == "trace":  # without site.toml: a broken one must not stop the trace
+            return trace.run()
         if command == "uninstall":
             with lock(update.SELF_UPDATE_LOCK), lock():
                 uninstall.run()

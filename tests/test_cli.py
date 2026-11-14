@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from thinny import apply, cli, host, instances, move, render, settings, system, update
+from thinny import apply, cli, host, instances, move, render, settings, system, trace, update
 from thinny.registry import Instance, Registry
 
 VALID = '[policy]\nmodel = "m1"\nallowed_models = ["m1"]\n\n[access]\nlan_address = "192.168.1.10"\n'
@@ -297,6 +297,13 @@ def test_the_other_server_takes_the_archive_from_stdin_or_only_checks(server, mo
     assert cli.main([*args, "--check"]) == 0
     assert received == [("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", "the archive"),
                         ("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", None)]
+
+
+def test_the_trace_runs_even_with_a_broken_site_toml(server, monkeypatch):
+    site, _ = server
+    site.write_text("[policy]\nmodel = \n")
+    monkeypatch.setattr(trace, "run", lambda: 1)
+    assert cli.main(["trace"]) == 1
 
 
 def test_config_edit_applies_a_valid_change_even_to_a_broken_site_toml(server, monkeypatch):

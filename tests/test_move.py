@@ -86,7 +86,7 @@ def test_on_a_server_with_the_model_lock_the_model_it_had_goes_at_once(target, i
     # starts with the container, so before waiting for the boot to finish.
     def unsets():
         return [i for i, c in enumerate(incus.calls) if 'HERMES_MANAGED_DIR="$d" hermes config unset' in c]
-    wait = "incus exec alice -- systemctl is-system-running --wait"
+    wait = "incus exec alice -- env THINNY=1 systemctl is-system-running --wait"
     monkeypatch.setattr(instances.time, "sleep", lambda s: None)
     with pytest.raises(CommandError, match="cannot reach the internet"):
         move.receive(LOCKED, target, "alice", "local", "", RELEASE, render.BUILT_INS, archive(internet=False))
