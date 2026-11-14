@@ -260,6 +260,26 @@ Nice=10
 """
 
 
+# Started again at once, without systemd's limit on restarts: the trace must not end for good.
+# authpriv: syslog files these with logins and sudo.
+TRACE_SERVICE = f"""# {HEADER}
+[Unit]
+Description=thinny trace of admins' access to containers
+After=incus.service
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/local/sbin/thinny trace
+Restart=always
+RestartSec=2
+SyslogIdentifier=thinny-trace
+SyslogFacility=authpriv
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+
 def update_timer(s: Settings) -> str:
     return f"""# {HEADER}
 [Unit]

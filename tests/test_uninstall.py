@@ -8,7 +8,7 @@ from thinny import cli, host, instances, render, settings, system, uninstall, up
 from thinny.registry import Instance, Registry
 from thinny.system import CommandError
 
-UNITS = ("thinny-update.service", "thinny-update.timer", "incus.service.d/thinny.conf")
+UNITS = ("thinny-update.service", "thinny-update.timer", "thinny-trace.service", "incus.service.d/thinny.conf")
 
 
 def write(path, text="x"):
@@ -139,7 +139,8 @@ def test_uninstall_deletes_every_instance_and_everything_thinny_set_up(server, c
     out = capsys.readouterr().out
     assert all(f"{name} ({state})" in out for name, state in
                (("alice", "active"), ("bob", "disabled"), ("carol", "pending"), ("dave", "pending")))
-    assert srv.calls[:2] == ["systemctl disable --now thinny-update.timer", "systemctl stop thinny-update.service"]
+    assert srv.calls[:3] == ["systemctl disable --now thinny-update.timer", "systemctl stop thinny-update.service",
+                            "systemctl disable --now thinny-trace.service"]
     assert [c for c in srv.calls if c.startswith("incus delete")] == \
         ["incus delete --force alice", "incus delete --force bob", "incus delete --force carol"]
     assert srv.index("incus delete --force carol") < srv.index("incus profile delete thinny-instance") \

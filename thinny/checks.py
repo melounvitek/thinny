@@ -72,6 +72,14 @@ def install(s: Settings, reg: Registry):
     yield update_status(UPDATE_STATUS, dt.datetime.now(dt.UTC))
 
 
+def access_trace(s: Settings, reg: Registry):
+    enabled, running = (system.run(["systemctl", query, "thinny-trace.service"], check=False).stdout.strip()
+                        for query in ("is-enabled", "is-active"))
+    yield (ok("thinny-trace.service traces admins' access to containers") if (enabled, running) == ("enabled", "active")
+           else warn(f"thinny-trace.service is {enabled or 'missing'} and {running}: admins' access to containers is "
+                     "not traced", "thinny config apply"))
+
+
 def update_status(path: Path, now: dt.datetime):
     """The last nightly update, from its status file: {"time": ISO time, "result": ..., "detail": ...}."""
     if not path.exists():
@@ -278,7 +286,7 @@ def running(s: Settings, inst: Instance):
 
 # ---------- runner ----------
 
-CHECKS = [install, prerequisites, firewall, caddy]
+CHECKS = [install, access_trace, prerequisites, firewall, caddy]
 INSTANCE_CHECKS = [container, webapp, version, built_ins, bypass]
 
 

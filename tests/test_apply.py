@@ -3,7 +3,7 @@ import dataclasses
 import pytest
 from test_instances import LOCKED, incus  # noqa: F401 - incus: the fake Incus fixture
 
-from thinny import apply, host, instances, render, system
+from thinny import apply, host, instances, render, system, trace
 from thinny.registry import Instance, Registry
 from thinny.settings import Settings
 from thinny.system import CommandError
@@ -31,6 +31,7 @@ def test_a_policy_change_restarts_every_instance_even_after_a_failed_apply(tmp_p
     monkeypatch.setattr(host, "policy_current", lambda s, name: name in policies)
     for step in ("install_units", "ensure_profile"):
         monkeypatch.setattr(host, step, lambda *a: None)
+    monkeypatch.setattr(instances, "ensure_trace", lambda name: None)
     monkeypatch.setattr(instances, "url_for", lambda s, inst: inst.url)
     monkeypatch.setattr(instances, "configure_webapp", lambda s, inst: False)
     restarted = []
@@ -61,6 +62,7 @@ def test_turning_the_model_lock_on_first_removes_the_model_instances_started_wit
     monkeypatch.setattr(system, "LOG_FILE", tmp_path / "log")
     for step in ("firewall", "install_units", "ensure_profile", "reconcile_access"):
         monkeypatch.setattr(host, step, lambda *a: None)
+    monkeypatch.setattr(instances, "ensure_trace", lambda name: None)
     monkeypatch.setattr(instances, "url_for", lambda s, inst: inst.url)
     monkeypatch.setattr(instances, "configure_webapp", lambda s, inst: False)
     monkeypatch.setattr(instances, "_gateway_up", lambda s, inst: None)
@@ -128,11 +130,12 @@ def test_apply_takes_the_shift_off_the_disks_containers_have(server, incus):
                             "readonly": "true", "shift": "true"}}}
     del incus.containers["carol"]["devices"]["model-guard"]
     apply.apply(S)
-    assert {name: {device: props["shift"] for device, props in c["devices"].items()}
-            for name, c in incus.containers.items()} == {"alice": {"policy": "false", "model-guard": "false"},
-                                                          "bob": {"policy": "false", "model-guard": "false"},
-                                                          "carol": {"policy": "false"},
-                                                          "dave": {"policy": "false", "model-guard": "false"}}
+    shifts = {name: {device: props["shift"] for device, props in c["devices"].items()}
+              for name, c in incus.containers.items()}
+    assert shifts == {"alice": {"policy": "false", "model-guard": "false", "trace": "false"},   # active: its trace
+                      "bob": {"policy": "false", "model-guard": "false"},
+                      "carol": {"policy": "false"},
+                      "dave": {"policy": "false", "model-guard": "false"}}
 
 
 def test_apply_keeps_the_locks_instances_have_on_their_own(server, incus):
@@ -146,6 +149,21 @@ def test_apply_keeps_the_locks_instances_have_on_their_own(server, incus):
     assert host.policy_current(dataclasses.replace(LOCKED, model_provider="nous", model="m2", allowed_models=("m2",)),
                                "alice")
     assert host.policy_current(S, "bob") and host.policy_current(LOCKED, "carol")
+
+
+def test_running_instances_get_their_trace(server, incus):
+    reg, _ = server
+    reg.instances.update(alice=Instance("alice", 9120, "local", state="active"),
+                         bob=Instance("bob", 9121, "local", state="disabled"))
+    for name, state in (("alice", "RUNNING"), ("bob", "STOPPED")):
+        incus.containers[name] = {"state": state, "devices": {}}
+
+    apply.apply(S)
+    assert incus.containers["alice"]["devices"]["trace"] == {
+        "type": "disk", "source": str(trace.DIR / "alice"), "path": "/var/log/thinny", "readonly": "true",
+        "shift": "false", "required": "false"}
+    assert (trace.DIR / "alice").is_dir()
+    assert incus.containers["bob"]["devices"] == {}
 
 
 @pytest.mark.parametrize("tunnel_port, hint", [(0, False), (8080, True)])

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from thinny import host, instances, render, system
+from thinny import host, instances, render, system, trace
 from thinny.registry import Instance, Registry
 from thinny.settings import Settings
 from thinny.system import CommandError
@@ -203,6 +203,7 @@ def incus(tmp_path, monkeypatch):
     monkeypatch.setattr(Registry, "save", lambda self, path=None: None)
     monkeypatch.setattr(instances, "RESTART_PENDING", tmp_path / "restart-pending")
     monkeypatch.setattr(system, "LOG_FILE", tmp_path / "log")
+    monkeypatch.setattr(trace, "DIR", tmp_path / "trace")
     return fake
 
 
@@ -219,6 +220,10 @@ def test_a_new_instance_gets_its_own_container_with_hermes(incus):
     assert incus.index("incus config device add alice policy") < incus.index("incus start alice")
     assert (host.POLICIES / "alice/config.yaml").read_text() == render.managed_config(S)
     assert incus.ran("incus config device add alice webapp proxy listen=tcp:127.0.0.1:9120 connect=tcp:127.0.0.1:9120")
+    # its trace, read-only, and without it the container still starts
+    assert incus.ran(f"incus config device add alice trace disk source={trace.DIR / 'alice'} path=/var/log/thinny "
+                     "readonly=true shift=false required=false")
+    assert (trace.DIR / "alice").stat().st_mode & 0o777 == 0o755   # for its account too
     assert incus.ran("useradd --create-home --shell /bin/bash --uid 1000 --groups sudo alice")
     assert incus.ran("bash /tmp/hermes-install.sh --channel stable --commit c0ffee --non-interactive")
     assert incus.ran("hermes plugins install hermes-lang-cs --force --yes-deps --enable")
@@ -389,7 +394,8 @@ def test_an_instance_unlocked_on_its_own_starts_with_the_model_it_was_locked_to(
 def test_an_interrupted_add_resumes_where_it_stopped(incus):
     reg = Registry()
     reg.add("alice", "local", (9120, 9199))
-    incus.containers["alice"] = {"state": "STOPPED", "devices": {d: {} for d in ("eth0", "policy", "webapp", "model-guard")},
+    incus.containers["alice"] = {"state": "STOPPED",
+                                 "devices": {d: {} for d in ("eth0", "policy", "webapp", "trace", "model-guard")},
                                  "account": True, "hermes": True, "unit": False}
     instances.add(S, reg, "alice", "local")
     assert reg.get("alice").state == "active"

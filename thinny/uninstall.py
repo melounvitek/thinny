@@ -30,8 +30,8 @@ def run() -> None:
     print("This deletes every instance, with all its data:")
     print("\n".join(f"  {inst.name} ({inst.state})" for inst in reg.instances.values()) or "  (none)")
     print("It also removes what thinny set up: the Incus profile and storage pool (unless something else\n"
-          "uses the pool), the firewall table, the nightly update, the Webapps' Caddy and Tailscale sites,\n"
-          f"{settings.SITE_TOML.parent}, {host.MANAGED}, {system.STATE_DIR} and thinny itself.")
+          "uses the pool), the firewall table, the nightly update, the access trace, the Webapps' Caddy and\n"
+          f"Tailscale sites, {settings.SITE_TOML.parent}, {host.MANAGED}, {system.STATE_DIR} and thinny itself.")
     hostname = socket.gethostname()
     try:
         answer = input(f"Type this server's hostname ({hostname}) to remove it all: ")
@@ -44,6 +44,8 @@ def run() -> None:
     if (host.SYSTEMD / "thinny-update.timer").exists():
         system.run(["systemctl", "disable", "--now", "thinny-update.timer"])
         system.run(["systemctl", "stop", "thinny-update.service"])
+    if (host.SYSTEMD / "thinny-trace.service").exists():
+        system.run(["systemctl", "disable", "--now", "thinny-trace.service"])
     for inst in reg.instances.values():
         if instances.container_state(inst.name) is not None:
             log(f"deleting {inst.name}'s container")
@@ -71,7 +73,7 @@ def run() -> None:
             if image["cached"]:
                 system.run(["incus", "image", "delete", image["fingerprint"]], check=False)
         pool_kept = system.run(["incus", "storage", "delete", render.POOL], check=False).returncode != 0
-    for unit in ("thinny-update.service", "thinny-update.timer", "incus.service.d/thinny.conf"):
+    for unit in ("thinny-update.service", "thinny-update.timer", "thinny-trace.service", "incus.service.d/thinny.conf"):
         (host.SYSTEMD / unit).unlink(missing_ok=True)
     with contextlib.suppress(OSError):  # gone, or with the admin's own drop-ins
         (host.SYSTEMD / "incus.service.d").rmdir()

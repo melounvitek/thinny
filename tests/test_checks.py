@@ -161,6 +161,19 @@ def test_caddy_must_answer_the_tunnel_of_url_instances(monkeypatch, answer, expe
     assert [(level, message) for level, message, _ in results] == [("OK", "caddy active"), expected]
 
 
+@pytest.mark.parametrize("enabled, running, level", [
+    ("enabled", "active", "OK"),
+    ("enabled", "activating", "WARN"),   # waiting to restart
+    ("disabled", "active", "WARN"),      # gone after the next reboot
+    ("", "inactive", "WARN"),             # missing
+])
+def test_doctor_warns_when_admins_access_is_not_traced(monkeypatch, enabled, running, level):
+    answers = {"is-enabled": enabled + "\n", "is-active": running + "\n"}
+    monkeypatch.setattr(system, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, answers[cmd[1]], ""))
+    [(found, _, fix)] = checks.access_trace(S, Registry())
+    assert found == level and fix == ("" if level == "OK" else "thinny config apply")
+
+
 def test_a_crashing_check_fails_without_stopping_the_others(monkeypatch, capsys):
     def broken(s, reg):
         yield checks.ok("before the crash")

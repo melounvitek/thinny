@@ -14,7 +14,7 @@ import time
 from pathlib import PurePosixPath
 from urllib.parse import urlsplit
 
-from . import host, render
+from . import host, render, trace
 from .registry import Instance, Registry, RegistryError
 from .settings import ACCESS_METHODS, Settings
 from .system import (INSTANCE_UID, STATE_DIR, CommandError, as_user, as_user_interactive, gateway_active, http_status,
@@ -144,6 +144,7 @@ def ensure_container(s: Settings, inst: Instance) -> None:
     ensure_policy(s, inst)
     ensure_device(inst.name, "webapp", "proxy", f"listen=tcp:127.0.0.1:{inst.port}",
                   f"connect=tcp:127.0.0.1:{inst.port}")
+    ensure_trace(inst.name)
     if inst.moved:  # its old server turned autostart off for the move; the profile's applies again
         run(["incus", "config", "unset", inst.name, "boot.autostart"], check=False)  # 1 when unset already
     if container_state(inst.name) != "RUNNING":
@@ -158,6 +159,15 @@ def ensure_container(s: Settings, inst: Instance) -> None:
     in_container(inst.name, ["systemctl", "is-system-running", "--wait"], check=False, timeout=300)
     in_container(inst.name, ["sh", "-c", "cat > /etc/systemd/network/eth0.network && systemctl restart systemd-networkd"],
                  input=render.network_file(inst.address))
+
+
+def ensure_trace(name: str) -> None:
+    """The instance's trace of admins' access (trace.py), read-only in its container. Not required: without
+    its directory the container still starts, and an import of it still works."""
+    path = trace.DIR / name
+    path.mkdir(parents=True, exist_ok=True)
+    path.chmod(0o755)   # for its account too, whatever the umask
+    ensure_device(name, "trace", "disk", f"source={path}", f"path={trace.IN_CONTAINER}", *READ_ONLY, "required=false")
 
 
 def ensure_packages(name: str) -> None:

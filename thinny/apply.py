@@ -31,6 +31,7 @@ def apply(s: Settings) -> None:
             if "model-guard" in instances.devices(inst.name):   # added before READ_ONLY, it had shift
                 instances.ensure_device(inst.name, "model-guard", "disk", *instances.READ_ONLY)
     for inst in active:
+        instances.ensure_trace(inst.name)   # instances added before the trace get it too
         inst.url = instances.url_for(s, inst)
         instances.configure_webapp(s, inst)  # remembers the restart when it changes something
     reg.save()
