@@ -170,8 +170,8 @@ users chose.
 
 ```sh
 thinny instance add alice               # about 7 minutes; asks how users open the Webapp
-thinny instance login alice             # sign in to the model provider with a device code
-thinny instance login alice --claude    # or to a Claude Pro or Max subscription
+thinny instance login alice             # sign in to a model provider; asks which
+thinny instance login alice --provider anthropic   # or name it: openai | anthropic | <Hermes provider id>
 thinny instance list
 thinny instance access alice tailscale  # lan | tailscale | url=<URL> | local
 thinny instance limits alice --cpu 4 --memory-mb 8192 --disk-gb 50
@@ -183,11 +183,11 @@ thinny instance move alice bob --to admin@new-server   # or --all; experimental
 
 - `add` prints the Webapp address, username and password. **The password is shown only
   once.** If `add` fails, fix the cause and run it again: it continues where it stopped.
-- Run `login` before the hand-over. Whoever uses `alice` opens the link and signs in with their
-  own account within about 15 minutes. With `--claude`, they then choose *Claude Subscription
-  DirectSDK (Experimental)* in the Webapp's model picker (with the model lock, only if
-  `model_provider = "claude-subscription-directsdk-experimental"`). With that `model_provider`
-  (Anthropic in the installer), `login` signs in to Claude without `--claude`.
+- Run `login` before the hand-over. Enter takes the provider `alice` uses; with the model lock,
+  `login` signs in to the lock's provider without asking. Whoever uses `alice` opens the link and
+  signs in with their own account within about 15 minutes; a provider without such a sign-in asks
+  for their API key instead. Signed in to another provider, they choose its models in the
+  Webapp's model picker (Anthropic: *Claude Subscription DirectSDK (Experimental)*).
 - The phone plugin stays idle until it is set up in the Webapp (Messaging → Hermes 3310), then
   with `~/.hermes/plugins/hermes-3310/install-asterisk.sh` and a gateway restart. See its README.
 - `add` takes the same `--cpu`, `--memory-mb` and `--disk-gb`. Limits an instance was not given

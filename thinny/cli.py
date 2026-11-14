@@ -16,6 +16,11 @@ from .registry import Registry, RegistryError
 from .settings import SettingsError, load
 from .system import CommandError, lock, write_file
 
+# The providers the questions offer by name: name -> (Hermes provider id, suggested model, text).
+PROVIDERS = {"openai": ("openai-codex", "gpt-5.5", "OpenAI      a ChatGPT subscription"),
+             "anthropic": (instances.CLAUDE_PROVIDER, "claude-opus-5-5",
+                           "Anthropic   a Claude Pro or Max subscription")}
+
 
 def parse_access(value: str) -> tuple[str, str]:
     method, _, url = value.partition("=")
@@ -60,9 +65,9 @@ def main(argv: list[str] | None = None) -> int:
     acc = inst.add_parser("access", help="change how users open an instance's Webapp")
     acc.add_argument("name")
     acc.add_argument("access", help="lan | tailscale | url=<URL> | local")
-    lgn = inst.add_parser("login", help="sign an instance in to the model provider (device code)")
+    lgn = inst.add_parser("login", help="sign an instance in to a model provider (device code)")
     lgn.add_argument("name")
-    lgn.add_argument("--claude", action="store_true", help="sign it in to a Claude subscription instead")
+    lgn.add_argument("--provider", help="openai | anthropic | <Hermes provider id> (default: asked)")
     for name, text in (("reset-password", "give an instance a new Webapp password"),
                        ("disable", "stop an instance's container for good, keep its data")):
         inst.add_parser(name, help=text).add_argument("name")
@@ -130,7 +135,13 @@ def main(argv: list[str] | None = None) -> int:
             elif command == "instance access":
                 instances.change_access(s, reg, a.name, *parse_access(a.access))
             elif command == "instance login":
-                instances.login(s, reg, a.name, claude=a.claude)
+                if a.provider:
+                    provider = PROVIDERS.get(a.provider, (a.provider,))[0]
+                else:
+                    provider = instances.provider_of(s, reg, a.name)
+                    if not s.model_lock:
+                        provider = ask_provider(f"Which provider should {a.name} sign in to?", provider)
+                instances.login(reg, a.name, provider)
             elif command == "instance reset-password":
                 instances.password(s, reg, a.name)
             elif command == "instance disable":
@@ -204,15 +215,8 @@ def init_config() -> None:
     print(f"thinny needs a few settings for {path}. Enter takes the [suggestion].\n"
           "Everything else keeps its default; change any of it later with: thinny config edit\n")
     try:
-        kind = choose("Model provider", [("openai", "OpenAI      a ChatGPT subscription"),
-                                         ("anthropic", "Anthropic   a Claude Pro or Max subscription"),
-                                         ("other", "Other       another Hermes provider")], "openai")
-        if kind == "openai":
-            provider, model = "openai-codex", ask("Model id", "gpt-5.5")
-        elif kind == "anthropic":
-            provider, model = instances.CLAUDE_PROVIDER, ask("Model id", "claude-opus-5-5")
-        else:
-            provider, model = ask("Hermes provider id"), ask("Model id")
+        provider = ask_provider("Model provider", "openai-codex")
+        model = ask("Model id", next((m for p, m, _ in PROVIDERS.values() if p == provider), None))
         language = ask("Webapp language (en, cs, de, ...)", "en").lower()  # Hermes's codes, e.g. pt-br
         interface = ask("Internet interface, containers go out through it", interface or "eth0")
         print()
@@ -252,6 +256,16 @@ def ask(question: str, default: str | None = None) -> str:
         answer = input(f"{question}{f' [{default}]' if default else ''}: ").strip() or default
         if answer is not None:
             return answer
+
+
+def ask_provider(question: str, default: str) -> str:
+    """The Hermes provider id of OpenAI, Anthropic or another (`default` when not on a terminal)."""
+    if not sys.stdin.isatty():
+        return default
+    known = [p for p, _, _ in PROVIDERS.values()]
+    picked = choose(question, [(p, text) for p, _, text in PROVIDERS.values()] +
+                    [("other", "Other       another Hermes provider")], default if default in known else "other")
+    return picked if picked != "other" else ask("Hermes provider id", None if default in known else default)
 
 
 def ask_access(question: str, lan_address: str, default: str) -> str:

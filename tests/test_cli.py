@@ -179,6 +179,38 @@ def test_instance_add_takes_the_limits_of_the_new_instance(server, monkeypatch):
     assert len(added) == 2
 
 
+@pytest.fixture
+def login(server, monkeypatch):
+    """`instance login` on a terminal, for an instance that uses the provider nous; records the logins."""
+    monkeypatch.setattr(cli.sys, "stdin", type("Terminal", (), {"isatty": lambda self: True})())
+    monkeypatch.setattr(instances, "provider_of", lambda s, reg, name: "nous")
+    logins = []
+    monkeypatch.setattr(instances, "login", lambda reg, name, provider: logins.append((name, provider)))
+    return logins
+
+
+@pytest.mark.parametrize("args, answers, provider", [
+    ([], ["", ""], "nous"),   # Other, then its id: both as the instance has them
+    ([], ["2"], "claude-subscription-directsdk-experimental"),
+    ([], ["3", "openrouter"], "openrouter"),
+    (["--provider", "openai"], [], "openai-codex"),
+    (["--provider", "anthropic"], [], "claude-subscription-directsdk-experimental"),
+    (["--provider", "openrouter"], [], "openrouter"),
+])
+def test_instance_login_signs_in_to_the_chosen_provider(login, monkeypatch, args, answers, provider):
+    answering(monkeypatch, *answers)
+    assert cli.main(["instance", "login", "alice", *args]) == 0
+    assert login == [("alice", provider)]
+
+
+def test_instance_login_signs_a_locked_instance_in_to_its_provider_unasked(server, login, monkeypatch):
+    site, _ = server
+    site.write_text(VALID.replace('model = "m1"', 'model = "m1"\nmodel_lock = true'))
+    answering(monkeypatch)
+    assert cli.main(["instance", "login", "alice"]) == 0
+    assert login == [("alice", "nous")]
+
+
 def test_instance_limits_changes_only_the_given_limits(server, monkeypatch):
     changed = []
     monkeypatch.setattr(instances, "limits", lambda reg, *args: changed.append(args))

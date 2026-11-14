@@ -470,16 +470,24 @@ def limits(reg: Registry, name: str, cpu: int | None, memory_mb: int | None, dis
     set_limits(name, cpu, memory_mb, disk_gb)
 
 
-def login(s: Settings, reg: Registry, name: str, claude: bool = False) -> None:
+def provider_of(s: Settings, reg: Registry, name: str) -> str:
+    """The provider the instance uses: the lock's, or the one in its own config."""
     _active(reg, name)
-    if claude or s.model_provider == CLAUDE_PROVIDER:
+    if s.model_lock:
+        return s.model_provider
+    return hermes(name, ["config", "get", "model.provider"], check=False).stdout.strip() or s.model_provider
+
+
+def login(reg: Registry, name: str, provider: str) -> None:
+    _active(reg, name)
+    if provider == CLAUDE_PROVIDER:
         print(f"Signing {name} in to a Claude subscription. Give the link below to whoever uses {name}, then "
               "enter the code they get back.")
         cmd = ["claude", "auth", "login"]
     else:
-        print(f"Signing {name} in to {s.model_provider}. Give the code below to whoever uses {name}; it expires "
-              "in about 15 minutes.")
-        cmd = ["hermes", "auth", "add", s.model_provider, "--type", "oauth", "--no-browser"]
+        print(f"Signing {name} in to {provider}. Give the code below to whoever uses {name}; it expires "
+              "in about 15 minutes. A provider without one asks for their API key instead.")
+        cmd = ["hermes", "auth", "add", provider, "--no-browser"]  # Hermes picks OAuth or an API key
     if as_user_interactive(name, cmd):
         raise CommandError("the login did not finish")
 

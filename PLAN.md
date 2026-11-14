@@ -489,8 +489,8 @@ instance add <name> [--access ...]
                                   Claude Code, language pack and built-in plugins (turned on),
                                   model-guard, Webapp password, language, look, without the
                                   model lock the starting model, access, gateway
-instance access | login [--claude] | reset-password <name>
-                                  access method, ChatGPT or Claude device login, new Webapp
+instance access | login [--provider] | reset-password <name>
+                                  access method, device login to any provider, new Webapp
                                   password
 instance disable <name>           autostart off, container stopped (forced after 60 s), access
                                   removed; container and data stay

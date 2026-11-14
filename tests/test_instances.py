@@ -160,6 +160,10 @@ class Incus:
             c["hermes"] = True
         elif cmd[:3] == ["hermes", "gateway", "install"]:
             c["unit"] = True
+        elif cmd[:3] == ["hermes", "config", "set"]:
+            c.setdefault("hermes_config", {})[cmd[3]] = cmd[4]
+        elif cmd[:3] == ["hermes", "config", "get"]:
+            return c.get("hermes_config", {}).get(cmd[3], ""), 0
         elif cmd[:3] == ["hermes", "plugins", "list"]:
             return json.dumps([{"name": "model-guard", "status": "enabled" if c.get("guard", True) else "not enabled",
                                 "version": "1.0", "source": "bundled"}]), 0
@@ -304,16 +308,23 @@ def test_with_the_model_lock_the_policy_sets_the_model_and_the_guard_must_be_on(
     instances.check_gateway(S, alice)   # without the lock, model-guard stays off
 
 
-def test_an_instance_signs_in_to_claude_with_the_admins_terminal(incus, monkeypatch):
+def test_an_instance_signs_in_with_the_admins_terminal(incus, monkeypatch):
     started = []
     monkeypatch.setattr(instances, "as_user_interactive", lambda name, cmd: started.append((name, cmd)) or 0)
     reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
-    instances.login(S, reg, "alice", claude=True)
-    instances.login(S, reg, "alice")
-    instances.login(dataclasses.replace(S, model_provider="claude-subscription-directsdk-experimental"), reg, "alice")
+    instances.login(reg, "alice", "claude-subscription-directsdk-experimental")
+    instances.login(reg, "alice", "nous")
     assert started == [("alice", ["claude", "auth", "login"]),
-                       ("alice", ["hermes", "auth", "add", "openai-codex", "--type", "oauth", "--no-browser"]),
-                       ("alice", ["claude", "auth", "login"])]
+                       ("alice", ["hermes", "auth", "add", "nous", "--no-browser"])]   # Hermes knows OAuth or API key
+
+
+def test_an_instance_uses_its_own_provider_or_the_locked_one(incus):
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {}, "hermes_config": {"model.provider": "nous"}}
+    assert instances.provider_of(S, reg, "alice") == "nous"
+    assert instances.provider_of(LOCKED, reg, "alice") == "openai-codex"
+    del incus.containers["alice"]["hermes_config"]["model.provider"]   # e.g. unset by a former lock
+    assert instances.provider_of(S, reg, "alice") == "openai-codex"
 
 
 def test_an_interrupted_add_resumes_where_it_stopped(incus):
