@@ -319,12 +319,43 @@ When someone enters an instance's container by hand, with `incus exec`, `incus s
   if $programname == "thinny-trace" then action(type="omfwd" target="logs.example.org" port="514" protocol="tcp")
   ```
 
+- **In the instance's Google Sheet**, which its users own. Every change to it shows in its
+  version history (File → Version history). See below.
+
+**A Google Sheet per instance.** The instance's users create a sheet, open Extensions → Apps
+Script, replace the code with this, and save:
+
+```js
+function doPost(e) {
+  const row = JSON.parse(e.postData.contents);
+  SpreadsheetApp.getActive().getSheets()[0].appendRow([row.time, row.instance, row.entry]);
+  return ContentService.createTextOutput("ok");
+}
+```
+
+Then Deploy → New deployment → Web app, with *Execute as* Me and *Who has access* Anyone, and
+allow it access to their sheets. They send you the web app URL
+(`https://script.google.com/macros/s/…/exec`), and you run:
+
+```sh
+thinny instance trace-sheet alice https://script.google.com/macros/s/…/exec
+thinny instance trace-sheet alice off   # stop
+```
+
+- thinny connects a sheet only once it took a test row. A sheet that stops getting the trace (`off`
+  or another URL) gets a last row saying so.
+- The URL only lets the server add rows. Keep yourself out of the sheet's editors: whoever can
+  edit it can delete rows, and only its version history would show it.
+- Rows the sheet cannot take wait on the server and go first next time; `doctor` warns while they
+  wait. A Google Workspace that allows no access from outside it refuses them all.
+- A moved instance needs its sheet connected again on the new server.
+
 It is a trace, not a lock: root on the server can stop it or change its files. It does not see
 `incus file` (push, pull, mount), snapshots, exports and copies, the containers' files on the
 server's disk, `nsenter`, what happens in a shell after it opens, a command that starts with
 `env THINNY=1` (thinny's own mark), or the few seconds while it restarts (e.g. with Incus).
-Commands are noted in full: keep passwords out of them. `doctor` warns when the trace is not
-running.
+Commands are noted in full, also in a Google Sheet: keep passwords out of them. `doctor` warns
+when the trace is not running.
 
 ## Uninstall
 

@@ -449,7 +449,8 @@ extras/, tests/     netcup snapshot and nightly watch (run off the server); pyte
 /var/lib/thinny/instances.json  registry: name, port, container address, access, URL, state,
                                 the built-ins (render.BUILT_INS) its container last got,
                                 whether it moved here from another server, its own model lock
-                                (models and provider; [] unlocked; null: the site's)
+                                (models and provider; [] unlocked; null: the site's), the URL of
+                                its users' Google Sheet for the access trace
 /var/lib/thinny/release         "<tag> <commit>": the Hermes release all instances run
 /var/lib/thinny/policies/<name>/        its Hermes managed scope, rendered from site.toml; a
                                         folder per instance (before, all shared /etc/hermes/)
@@ -457,6 +458,7 @@ extras/, tests/     netcup snapshot and nightly watch (run off the server); pyte
 /etc/systemd/system/incus.service.d/thinny.conf, /etc/sysctl.d/90-thinny.conf
 /var/lib/thinny/trace/<name>/admin-access.log  the instance's access trace, written by
                                 thinny-trace.service (also to the journal)
+/var/lib/thinny/trace-unsent/<name>  rows of it its Google Sheet has not taken yet (JSON lines)
 Incus                                   pool `default` (btrfs, sparse file), profile `thinny-instance`,
                                         one container per instance, named after it
 ```
@@ -472,7 +474,10 @@ Incus                                   pool `default` (btrfs, sparse file), pro
 - Access trace: the hidden `thinny trace` (thinny-trace.service, restarted at once and with
   every apply) follows Incus's lifecycle events and notes each `instance-exec` and
   `instance-console` that is not thinny's own: every command thinny runs in a container starts
-  with `env THINNY=1`. Transparency, not a guard: the admin is root.
+  with `env THINNY=1`. Transparency, not a guard: the admin is root. An instance with a Google
+  Sheet gets each entry as a row too, posted to the sheet's Apps Script web app (only
+  `https://script.google.com/macros/s/<id>/exec`, so the server can add rows and nothing else);
+  rows it does not take wait and go first at the next entry or start of the trace.
 - Our nft table: forward from `thinny-*` only out of `network.interface`, not to private, CGNAT
   (tailnet), link-local, multicast or blocked networks, no IPv6, nothing new into `thinny-*`;
   input: nothing new from `thinny-*`; masquerade. Loaded by `config apply` and by the incus.service
@@ -530,6 +535,9 @@ instance lock <name> [model ...] | unlock <name>
                                   its own model lock (the provider it uses, these models or the
                                   one it uses) or none, whatever the site's; unlock puts the model
                                   it was locked to back in its own config
+instance trace-sheet <name> <URL|off>
+                                  its users' Google Sheet gets its access trace too, once it took
+                                  a test row; the sheet it had gets a last row
 instance disable <name>           autostart off, container stopped (forced after 60 s), access
                                   removed; container and data stay
 instance list | restart           instances; one-by-one gateway restarts
@@ -617,7 +625,7 @@ private ones and the tailnet are always blocked). `site.example.toml` lists ever
 - Install: Incus pool `default` and profile `thinny-instance`, the incus.service drop-in, IPv4
   forwarding (FAIL); instance policies match `site.toml` (WARN); the recorded release; nightly
   timer enabled (WARN); last update status (FAIL when failed, WARN when missing or older than
-  48 h); thinny-trace.service enabled and active (WARN).
+  48 h); thinny-trace.service enabled and active, no rows waiting for a Google Sheet (WARN).
 - Prerequisites (section 6.3), all WARN.
 - Firewall: the loaded table is exactly what `site.toml` renders, chain by chain (FAIL).
 - Caddy active when any instance uses LAN access, or own addresses with a tunnel port (FAIL);
@@ -717,8 +725,14 @@ writing, remounting and symlinking in it refused (without shift, section 4).
 `systemctl restart incus`: back after 2 s. Missing directory: start and export/import fine.
 rsyslog forwarding. Then thinny f0a81ee restored.
 
+Google Sheet per instance (2026-11-14): 1 rows to the sheet and the rows that wait, against a
+local stand-in for Apps Script (a POST answered with a redirect to the script's answer, as
+Google does); 2 `instance trace-sheet`, the `doctor` check; 3 README and this file.
+
 ## 9. Open questions
 
+- The Google Sheet of the access trace is tested against a stand-in only: check a real Apps
+  Script web app, its "ok" after the redirect, and the answer of one not open to anyone.
 - `instance move` is experimental, tested with fakes only. Between two real servers, check: the
   uid remap of an imported container with `security.idmap.isolated`, a routed NIC changed with
   `device set` before the first start, Docker data, a reboot of either server afterwards, and
