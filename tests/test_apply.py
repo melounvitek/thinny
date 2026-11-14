@@ -17,6 +17,7 @@ def policies(monkeypatch):
     written = []
     monkeypatch.setattr(instances, "container_state", lambda name: "RUNNING")
     monkeypatch.setattr(instances, "ensure_device", lambda *a: None)
+    monkeypatch.setattr(instances, "devices", lambda name: {})
     monkeypatch.setattr(host, "write_policy", lambda s, name: written.append(name))
     return written
 
@@ -99,7 +100,8 @@ def test_apply_moves_every_container_to_a_policy_of_its_own(server, incus):
         incus.containers[name] = {"state": "RUNNING", "devices": {"policy": dict(shared)}}
 
     apply.apply(S)
-    assert incus.containers["alice"]["devices"]["policy"] == shared | {"source": str(host.POLICIES / "alice")}
+    assert incus.containers["alice"]["devices"]["policy"] == \
+        shared | {"source": str(host.POLICIES / "alice"), "shift": "false"}
     assert (host.POLICIES / "alice/config.yaml").read_text() == render.managed_config(S)
     assert restarted == ["alice"]
     assert incus.containers["carol"]["devices"]["policy"] == shared and sorted(host.POLICIES.iterdir()) == \
@@ -107,6 +109,30 @@ def test_apply_moves_every_container_to_a_policy_of_its_own(server, incus):
 
     apply.apply(S)
     assert restarted == ["alice"]
+
+
+def test_apply_takes_the_shift_off_the_disks_containers_have(server, incus):
+    # Incus does not lock a disk added to a running container read-only: with shift, the container's root
+    # could remount it and write into the host's folder as the host's root.
+    reg, _ = server
+    reg.instances.update(alice=Instance("alice", 9120, "local", state="active"),
+                         bob=Instance("bob", 9121, "local", state="pending"),     # stopped after its model guard
+                         carol=Instance("carol", 9122, "local", state="pending"),  # stopped before its Hermes
+                         dave=Instance("dave", 9123, "local", state="pending"))    # a move stopped after its import
+    for name in reg.instances:
+        guard = f"/home/{name}/.hermes/hermes-agent/plugins/model-guard"
+        incus.containers[name] = {"state": "STOPPED" if name == "dave" else "RUNNING", "devices": {
+            "policy": {"type": "disk", "source": str(host.POLICIES / name), "path": "/etc/hermes", "readonly": "true",
+                       "shift": "true"},
+            "model-guard": {"type": "disk", "source": str(host.FILES / "model-guard"), "path": guard,
+                            "readonly": "true", "shift": "true"}}}
+    del incus.containers["carol"]["devices"]["model-guard"]
+    apply.apply(S)
+    assert {name: {device: props["shift"] for device, props in c["devices"].items()}
+            for name, c in incus.containers.items()} == {"alice": {"policy": "false", "model-guard": "false"},
+                                                          "bob": {"policy": "false", "model-guard": "false"},
+                                                          "carol": {"policy": "false"},
+                                                          "dave": {"policy": "false", "model-guard": "false"}}
 
 
 def test_apply_keeps_the_locks_instances_have_on_their_own(server, incus):

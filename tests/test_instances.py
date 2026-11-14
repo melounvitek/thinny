@@ -133,6 +133,8 @@ class Incus:
                 return "", 1
             self.containers[cmd[2]]["state"] = "STOPPED"
         elif cmd[:2] == ["incus", "exec"]:
+            if self.containers[cmd[2]]["state"] != "RUNNING":
+                return "Error: Instance is not running", 1
             return self.inside(self.containers[cmd[2]], cmd[cmd.index("--") + 1:])
         elif cmd[:3] == ["btrfs", "qgroup", "show"]:   # what the instance's disk quota counts
             name = cmd[-1].rsplit("/", 1)[1]
@@ -211,7 +213,7 @@ def test_a_new_instance_gets_its_own_container_with_hermes(incus):
     assert incus.ran("incus config device add alice eth0 nic nictype=routed ipv4.address=10.78.0.1 host_name=thinny-9120")
     # its own policy, read-only, before the container first starts
     assert incus.ran(f"incus config device add alice policy disk source={host.POLICIES}/alice path=/etc/hermes "
-                     "readonly=true")
+                     "readonly=true shift=false")
     assert incus.index("incus config device add alice policy") < incus.index("incus start alice")
     assert (host.POLICIES / "alice/config.yaml").read_text() == render.managed_config(S)
     assert incus.ran("incus config device add alice webapp proxy listen=tcp:127.0.0.1:9120 connect=tcp:127.0.0.1:9120")
@@ -241,7 +243,7 @@ def test_a_new_instance_gets_its_own_container_with_hermes(incus):
                       "USER=alice LOGNAME=alice PATH=/home/alice/.local/bin:/usr/local/bin:/usr/bin:/bin "
                       "LANG=C.UTF-8 XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus "
                       "hermes gateway install")
-    assert "path=/home/alice/.hermes/hermes-agent/plugins/model-guard readonly=true shift=true" in \
+    assert "path=/home/alice/.hermes/hermes-agent/plugins/model-guard readonly=true shift=false" in \
         incus.calls[incus.index("incus config device add alice model-guard")]
     # git ignores the read-only mount before it appears (the installer stashes untracked files)
     assert next(i for i, c in enumerate(incus.calls) if "grep -qx /plugins/model-guard/" in c) \

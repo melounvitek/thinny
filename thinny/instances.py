@@ -29,6 +29,10 @@ URL_RE = re.compile(r"https?://[a-z0-9.-]+(:\d+)?(/[a-z0-9-]+)?/?")
 CLAUDE_INSTALLER = "https://claude.ai/install.sh"
 # The Claude subscription plugin's provider; it signs in through Claude Code.
 CLAUDE_PROVIDER = "claude-subscription-directsdk-experimental"
+# Host folders in a container. Incus does not lock a disk added to a running container read-only, and with
+# shift its root could remount it and write into the folder as the host's root. Without shift, it is just
+# another account there. "shift=false", not left out, so older disks lose their shift too.
+READ_ONLY = ("readonly=true", "shift=false")
 
 
 def hermes(name: str, args: list[str], **kw):
@@ -95,7 +99,7 @@ def ensure_policy(s: Settings, inst: Instance) -> None:
     """The instance's own policy, read-only as Hermes's managed scope in its container."""
     host.write_policy(s, inst.name)
     ensure_device(inst.name, "policy", "disk", f"source={host.POLICIES / inst.name}", f"path={host.MANAGED}",
-                  "readonly=true", "shift=true")
+                  *READ_ONLY)
 
 
 def ensure_device(name: str, device: str, kind: str, *props: str) -> None:
@@ -228,7 +232,7 @@ def ensure_model_guard(name: str) -> None:
     as_user(name, ["sh", "-c", 'grep -qx /plugins/model-guard/ "$1" || echo /plugins/model-guard/ >> "$1"', "sh",
                    str(home(name) / "hermes-agent/.git/info/exclude")])
     ensure_device(name, "model-guard", "disk", f"source={host.FILES / 'model-guard'}",
-                  f"path={home(name) / 'hermes-agent/plugins/model-guard'}", "readonly=true", "shift=true")
+                  f"path={home(name) / 'hermes-agent/plugins/model-guard'}", *READ_ONLY)
 
 
 def webapp_settings(name: str) -> dict[str, str]:

@@ -28,6 +28,8 @@ def apply(s: Settings) -> None:
         # policy all instances once shared.
         if instances.container_state(inst.name) is not None:
             instances.update_policy(s, inst)
+            if "model-guard" in instances.devices(inst.name):   # added before READ_ONLY, it had shift
+                instances.ensure_device(inst.name, "model-guard", "disk", *instances.READ_ONLY)
     for inst in active:
         inst.url = instances.url_for(s, inst)
         instances.configure_webapp(s, inst)  # remembers the restart when it changes something

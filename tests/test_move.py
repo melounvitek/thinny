@@ -71,6 +71,7 @@ def test_a_moved_instance_keeps_its_users_settings_and_gets_this_servers_port_an
     assert incus.index("incus config device set alice eth0") < incus.index("incus start alice")
     # this server's policy for alice, also when its old one shared /etc/hermes
     assert devices["policy"]["source"] == str(host.POLICIES / "alice")
+    assert devices["policy"]["shift"] == devices["model-guard"]["shift"] == "false"
     assert incus.index("incus config device set alice policy") < incus.index("incus start alice")
     # its users' language, model, look, password and Hermes came along
     assert not incus.ran("display.language") and not incus.ran("hermes config set model.")

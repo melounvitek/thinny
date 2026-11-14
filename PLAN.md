@@ -326,6 +326,15 @@ Debian 13, kernel 6.12, Incus 6.0.4 (`incus-base`), Hermes v0.23.0 -> v0.23.1. A
   were not saved"); model-guard mounted read-only into `hermes-agent/plugins/` plus a
   `.git/info/exclude` line was enabled. Managed `plugins.enabled` replaces the instance's
   list, so a plugin users install (e.g. hermes-3310, the phone plugin) loads only if listed.
+- A disk added to a running container is not locked (2026-11-14): root inside remounted a
+  read-only `shift=true` disk read-write and wrote into its host folder as the host's root.
+  model-guard (one folder for all instances) was added that way at every `instance add`, and
+  the policy disk when apply moved it to the instance's own folder. Without shift the remount
+  was refused, and the container's root is only "others" on the folder. `incus config device
+  set <name> <disk> shift=false` mounts it so in a running container, but only detaches the old
+  mount: what its root bind-mounted or opened there while it was writable stays until the
+  container restarts. A container started with the disk has it locked either way. Hermes checks
+  no owner of plugin or managed-scope files.
 - Official installer as the instance's account, `--channel stable --commit <sha>`: fresh v0.23.0
   in 191 s; rerun with the v0.23.1 sha: exit 0 in 93 s, exactly v0.23.1, git status clean,
   read-only model-guard intact. It does not build the Webapp: `hermes webapp --build-only`
@@ -440,8 +449,8 @@ Incus                                   pool `default` (btrfs, sparse file), pro
 - Profile `thinny-instance`: root disk with the `disk_gb` quota, `/dev/net/tun`,
   `security.idmap.isolated`, `security.nesting`, `limits.cpu`, `limits.memory`,
   `limits.processes=2000`, `boot.autostart`. Per container: a routed NIC `thinny-<port>`, its
-  policy folder at `/etc/hermes` and model-guard as read-only disks (`shift=true`), and a proxy
-  device from host `127.0.0.1:<port>` to the same port inside.
+  policy folder at `/etc/hermes` and model-guard as read-only disks without shift (section 4),
+  and a proxy device from host `127.0.0.1:<port>` to the same port inside.
 - Our nft table: forward from `thinny-*` only out of `network.interface`, not to private, CGNAT
   (tailnet), link-local, multicast or blocked networks, no IPv6, nothing new into `thinny-*`;
   input: nothing new from `thinny-*`; masquerade. Loaded by `config apply` and by the incus.service
