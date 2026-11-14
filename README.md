@@ -11,9 +11,10 @@ Status: in development. Design notes: [`PLAN.md`](PLAN.md).
   process and disk limits. A firewall lets it reach the internet and nothing else. Its users
   have `sudo` in it.
 - **One central policy** from `site.toml`, mounted read-only as each container's `/etc/hermes`
-  (Hermes "managed scope"): approvals and the agent kept in its container. The optional **model lock** (`policy.model_lock`) also pins
-  the provider, model, reasoning effort and plugins, and allows only `allowed_models`. Without it,
-  users choose their own.
+  (Hermes "managed scope"): approvals and the agent kept in its container. The optional **model
+  lock** (`policy.model_lock`) also pins the provider, model, reasoning effort and plugins, and
+  allows only `allowed_models`. Without it, users choose their own. One instance can have its own
+  lock, or none, whatever the site's (`thinny instance lock` and `unlock`).
 - **Built into every instance:** [Claude Code](https://code.claude.com/) with the Claude
   subscription plugin, and the [hermes-3310](https://github.com/melounvitek/hermes-3310) phone
   plugin with Docker.
@@ -175,6 +176,8 @@ thinny instance login alice --provider anthropic   # or name it: openai | anthro
 thinny instance list
 thinny instance access alice tailscale  # lan | tailscale | url=<URL> | local
 thinny instance limits alice --cpu 4 --memory-mb 8192 --disk-gb 50
+thinny instance lock alice [model ...]  # only these models (default: the one it uses)
+thinny instance unlock alice            # its users choose, even with the site's lock
 thinny instance reset-password alice
 thinny instance disable alice           # stop it for good, keep its data
 thinny instance restart [alice ...]
@@ -193,6 +196,10 @@ thinny instance move alice bob --to admin@new-server   # or --all; experimental
 - `add` takes the same `--cpu`, `--memory-mb` and `--disk-gb`. Limits an instance was not given
   follow `[container]` in `site.toml`, also when it changes. `limits` applies at once, even to a
   running instance.
+- `lock` keeps the provider `alice` uses and allows the models given, the first by default; it
+  pins effort and plugins as the site's lock does. `unlock` leaves `alice` on the model it was
+  locked to, for its users to change. Either stays whatever `policy.model_lock` says. The model
+  picker keeps showing every model; the model guard refuses the others.
 - Names are 2-32 lowercase letters, digits and `-`, starting with a letter. Names and ports are
   never reused, and a disabled instance cannot be re-enabled.
 - Shell in a container: `sudo incus exec alice -- runuser -l alice` (or `-- bash` for root).
@@ -200,7 +207,8 @@ thinny instance move alice bob --to admin@new-server   # or --all; experimental
   Snapshot both servers first.
 - `move` takes whole containers over SSH to another server that runs thinny, one at a time, each
   down for a few minutes. Everything inside comes along: data, sign-ins, the Webapp password,
-  the model (unless the new server's model lock pins it), language, look and limits. The new
+  the model (unless the new server's model lock pins it), language, look and limits; its own
+  `lock` or `unlock` does not: it follows the new server's `policy.model_lock`. The new
   server gives it its own port, address, policy and packages: `lan`, `tailscale` and `local`
   instances get a new address; for `url` ones, point your DNS or tunnel at the new server. The
   old copy stays here, disabled.

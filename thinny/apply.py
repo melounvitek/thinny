@@ -24,19 +24,10 @@ def apply(s: Settings) -> None:
     host.install_units(s)
     host.ensure_profile(s)
     for inst in reg.current():
-        if instances.container_state(inst.name) is None:
-            continue  # its add stopped before the container; the add writes its policy
-        if not host.policy_current(s, inst.name):
-            if inst in active:
-                log(f"{inst.name}: its policy changes: its gateway restarts")
-                instances.mark_restart([inst.name])  # before the change, so a failure keeps the intent
-            if s.model_lock:
-                # Before the lock pins them: Hermes drops pinned keys from an instance's config whenever it
-                # saves it, and writes a `model:` section left empty as invalid YAML (v0.23.1). Pending
-                # instances too: a resumed add would start its gateway under the lock.
-                for key in instances.starting_model(s):
-                    instances.hermes(inst.name, ["config", "unset", key], check=False)  # 1 when not set
-        instances.ensure_policy(s, inst)  # also moves containers off the policy all instances once shared
+        # Without a container, its add stopped early and writes its policy. Also moves containers off the
+        # policy all instances once shared.
+        if instances.container_state(inst.name) is not None:
+            instances.update_policy(s, inst)
     for inst in active:
         inst.url = instances.url_for(s, inst)
         instances.configure_webapp(s, inst)  # remembers the restart when it changes something

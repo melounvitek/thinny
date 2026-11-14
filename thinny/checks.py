@@ -60,7 +60,7 @@ def install(s: Settings, reg: Registry):
         yield (ok("AppArmor lets instances create user namespaces") if userns.read_text().strip() == "0"
                else fail("AppArmor keeps instances from creating user namespaces: their browser cannot start",
                          "thinny config apply"))
-    stale = [inst.name for inst in active(reg) if not host.policy_current(s, inst.name)]
+    stale = [inst.name for inst in active(reg) if not host.policy_current(instances.settings_for(s, inst), inst.name)]
     yield (warn(f"policy not as site.toml says: {', '.join(stale)}", "thinny config apply") if stale
            else ok(f"instance policies in {host.POLICIES} match site.toml"))
     if host.RELEASE_FILE.exists():
@@ -233,8 +233,8 @@ def built_ins(s: Settings, inst: Instance):
 def bypass(s: Settings, inst: Instance):
     home = instances.home(inst.name)
     unit = home.parent / ".config/systemd/user/hermes-gateway.service"
-    own_guard = s.model_lock and system.as_user(inst.name, ["test", "-e", str(home / "plugins/model-guard")],
-                                                check=False, timeout=30).returncode == 0
+    own_guard = instances.settings_for(s, inst).model_lock and system.as_user(
+        inst.name, ["test", "-e", str(home / "plugins/model-guard")], check=False, timeout=30).returncode == 0
     yield from bypasses(inst.name, system.read_user_file(inst.name, str(home / ".env")),
                         system.read_user_file(inst.name, str(unit)), own_guard,
                         str(home / "hermes-agent/.hermes/bin/hermes"))

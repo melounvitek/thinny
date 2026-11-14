@@ -162,6 +162,8 @@ class Incus:
             c["unit"] = True
         elif cmd[:3] == ["hermes", "config", "set"]:
             c.setdefault("hermes_config", {})[cmd[3]] = cmd[4]
+        elif cmd[:3] == ["hermes", "config", "unset"]:
+            c.get("hermes_config", {}).pop(cmd[3], None)
         elif cmd[:3] == ["hermes", "config", "get"]:
             return c.get("hermes_config", {}).get(cmd[3], ""), 0
         elif cmd[:3] == ["hermes", "plugins", "list"]:
@@ -311,6 +313,11 @@ def test_with_the_model_lock_the_policy_sets_the_model_and_the_guard_must_be_on(
     with pytest.raises(CommandError, match="model-guard is not enabled"):
         instances.check_gateway(LOCKED, alice)
     instances.check_gateway(S, alice)   # without the lock, model-guard stays off
+    alice.lock, alice.lock_provider = ["m1"], "openai-codex"   # locked on its own
+    with pytest.raises(CommandError, match="model-guard is not enabled"):
+        instances.check_gateway(S, alice)
+    alice.lock = []   # unlocked on its own
+    instances.check_gateway(LOCKED, alice)
 
 
 def test_an_instance_signs_in_with_the_admins_terminal(incus, monkeypatch):
@@ -323,13 +330,55 @@ def test_an_instance_signs_in_with_the_admins_terminal(incus, monkeypatch):
                        ("alice", ["hermes", "auth", "add", "nous", "--no-browser"])]   # Hermes knows OAuth or API key
 
 
-def test_an_instance_uses_its_own_provider_or_the_locked_one(incus):
+def test_an_instance_uses_its_own_model_or_the_locked_one(incus):
+    alice = Instance("alice", 9120, "local", state="active")
+    reg = Registry({"alice": alice})
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {},
+                                 "hermes_config": {"model.provider": "nous", "model.default": "hermes-4"}}
+    assert instances.model_of(S, reg, "alice") == ("nous", "hermes-4")
+    assert instances.model_of(LOCKED, reg, "alice") == ("openai-codex", "m1")
+    alice.lock = []   # unlocked on its own
+    assert instances.model_of(LOCKED, reg, "alice") == ("nous", "hermes-4")
+    alice.lock, alice.lock_provider = ["m2", "m3"], "openrouter"
+    assert instances.model_of(S, reg, "alice") == ("openrouter", "m2")
+    alice.lock = None
+    incus.containers["alice"]["hermes_config"].clear()   # e.g. unset by a former lock
+    assert instances.model_of(S, reg, "alice") == ("openai-codex", "m1")
+
+
+def test_an_instance_locked_on_its_own_allows_only_its_models(incus, gateways, monkeypatch):
+    restarted, _ = gateways
+    reg = Registry({n: Instance(n, 9120 + i, "local", state="active") for i, n in enumerate(["alice", "bob"])})
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {},
+                                 "hermes_config": {"model.provider": "nous", "model.default": "hermes-4"}}
+    saved = []
+    monkeypatch.setattr(Registry, "save", lambda self, path=None: saved.append(
+        (self.get("alice").lock, dict(incus.containers["alice"]["hermes_config"]))))
+    instances.lock(S, reg, "alice", [])
+    alice = reg.get("alice")
+    assert (alice.lock, alice.lock_provider) == (["hermes-4"], "nous")   # the model it uses
+    # saved while its config still has it: a failure on the way leaves the lock for apply to finish
+    assert saved == [(["hermes-4"], {"model.provider": "nous", "model.default": "hermes-4"})]
+    assert host.policy_current(dataclasses.replace(LOCKED, model_provider="nous", model="hermes-4",
+                                                   allowed_models=("hermes-4",)), "alice")
+    assert incus.containers["alice"]["hermes_config"] == {}   # pinned now, see apply
+    assert incus.containers["alice"]["devices"]["policy"]["source"] == str(host.POLICIES / "alice")
+    assert restarted == ["alice"]
+
+    instances.lock(S, reg, "alice", ["m2", "m3"])
+    assert (alice.lock, alice.lock_provider) == (["m2", "m3"], "nous")
+    assert (host.POLICIES / "alice/allowed-models.txt").read_text().endswith("\nm2\nm3\n")
+    assert restarted == ["alice", "alice"] and not (host.POLICIES / "bob").exists()
+
+
+def test_an_instance_unlocked_on_its_own_starts_with_the_model_it_was_locked_to(incus, gateways):
+    restarted, _ = gateways
     reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
-    incus.containers["alice"] = {"state": "RUNNING", "devices": {}, "hermes_config": {"model.provider": "nous"}}
-    assert instances.provider_of(S, reg, "alice") == "nous"
-    assert instances.provider_of(LOCKED, reg, "alice") == "openai-codex"
-    del incus.containers["alice"]["hermes_config"]["model.provider"]   # e.g. unset by a former lock
-    assert instances.provider_of(S, reg, "alice") == "openai-codex"
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {}}
+    instances.unlock(LOCKED, reg, "alice")
+    assert reg.get("alice").lock == [] and host.policy_current(S, "alice") and restarted == ["alice"]
+    assert incus.containers["alice"]["hermes_config"] == \
+        {"model.provider": "openai-codex", "model.default": "m1", "agent.reasoning_effort": "high"}
 
 
 def test_an_interrupted_add_resumes_where_it_stopped(incus):

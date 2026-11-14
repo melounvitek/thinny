@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from thinny import apply, cli, host, instances, move, render, settings, system, update
-from thinny.registry import Registry
+from thinny.registry import Instance, Registry
 
 VALID = '[policy]\nmodel = "m1"\nallowed_models = ["m1"]\n\n[access]\nlan_address = "192.168.1.10"\n'
 
@@ -214,11 +214,13 @@ def test_instance_add_leaves_the_model_to_the_lock(server, terminal, added, monk
 
 @pytest.fixture
 def login(server, terminal, monkeypatch):
-    """`instance login` on a terminal, for an instance that uses the provider nous; records the logins."""
-    monkeypatch.setattr(instances, "provider_of", lambda s, reg, name: "nous")
+    """`instance login` on a terminal, for alice who uses the provider nous; records the logins."""
+    alice = Instance("alice", 9120, "local", state="active")
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: Registry({"alice": alice})))
+    monkeypatch.setattr(instances, "model_of", lambda s, reg, name: ("nous", "hermes-4"))
     logins = []
     monkeypatch.setattr(instances, "login", lambda reg, name, provider: logins.append((name, provider)))
-    return logins
+    return logins, alice
 
 
 @pytest.mark.parametrize("args, answers, provider", [
@@ -232,15 +234,30 @@ def login(server, terminal, monkeypatch):
 def test_instance_login_signs_in_to_the_chosen_provider(login, monkeypatch, args, answers, provider):
     answering(monkeypatch, *answers)
     assert cli.main(["instance", "login", "alice", *args]) == 0
-    assert login == [("alice", provider)]
+    assert login[0] == [("alice", provider)]
 
 
-def test_instance_login_signs_a_locked_instance_in_to_its_provider_unasked(server, login, monkeypatch):
+@pytest.mark.parametrize("site_lock, own_lock", [(True, None), (False, ["hermes-4"])])
+def test_instance_login_signs_a_locked_instance_in_to_its_provider_unasked(server, login, monkeypatch, site_lock,
+                                                                         own_lock):
     site, _ = server
-    site.write_text(VALID.replace('model = "m1"', 'model = "m1"\nmodel_lock = true'))
+    logins, alice = login
+    if site_lock:
+        site.write_text(VALID.replace('model = "m1"', 'model = "m1"\nmodel_lock = true'))
+    alice.lock, alice.lock_provider = own_lock, "nous"
     answering(monkeypatch)
     assert cli.main(["instance", "login", "alice"]) == 0
-    assert login == [("alice", "nous")]
+    assert logins == [("alice", "nous")]
+
+
+def test_instance_lock_takes_the_models_and_unlock_the_name(server, monkeypatch):
+    calls = []
+    monkeypatch.setattr(instances, "lock", lambda s, reg, name, models: calls.append(("lock", name, models)))
+    monkeypatch.setattr(instances, "unlock", lambda s, reg, name: calls.append(("unlock", name)))
+    assert cli.main(["instance", "lock", "alice", "m2", "m3"]) == 0
+    assert cli.main(["instance", "lock", "bob"]) == 0
+    assert cli.main(["instance", "unlock", "alice"]) == 0
+    assert calls == [("lock", "alice", ["m2", "m3"]), ("lock", "bob", []), ("unlock", "alice")]
 
 
 def test_instance_limits_changes_only_the_given_limits(server, monkeypatch):

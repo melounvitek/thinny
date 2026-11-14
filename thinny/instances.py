@@ -4,6 +4,7 @@ its home runs as the instance's account, inside it."""
 from __future__ import annotations
 
 import base64
+import dataclasses
 import hashlib
 import json
 import math
@@ -62,6 +63,32 @@ def container_state(name: str) -> str | None:
 def devices(name: str) -> dict[str, dict[str, str]]:
     """The container's own devices (not its profile's): name -> properties."""
     return json.loads(run(["incus", "query", f"/1.0/instances/{name}"]).stdout)["devices"]
+
+
+def settings_for(s: Settings, inst: Instance) -> Settings:
+    """The settings with the instance's own model lock, when it has one."""
+    if inst.lock is None:
+        return s
+    if not inst.lock:
+        return dataclasses.replace(s, model_lock=False)
+    return dataclasses.replace(s, model_lock=True, model_provider=inst.lock_provider, model=inst.lock[0],
+                               allowed_models=tuple(inst.lock))
+
+
+def update_policy(s: Settings, inst: Instance) -> None:
+    """The instance's policy as the settings and its own lock say; a change restarts its gateway."""
+    s = settings_for(s, inst)
+    if not host.policy_current(s, inst.name):
+        if inst.state == "active":
+            log(f"{inst.name}: its policy changes: its gateway restarts")
+            mark_restart([inst.name])  # before the change, so a failure keeps the intent
+        if s.model_lock:
+            # Before the lock pins them: Hermes drops pinned keys from an instance's config whenever it
+            # saves it, and writes a `model:` section left empty as invalid YAML (v0.23.1). Pending
+            # instances too: a resumed add would start its gateway under the lock.
+            for key in starting_model(s):
+                hermes(inst.name, ["config", "unset", key], check=False)  # 1 when not set
+    ensure_policy(s, inst)
 
 
 def ensure_policy(s: Settings, inst: Instance) -> None:
@@ -283,7 +310,7 @@ def check_gateway(s: Settings, inst: Instance, timeout: float = 180) -> None:
         if time.time() > deadline:
             raise CommandError(f"{inst.name}: gateway {'active' if active else 'not active'}, Webapp HTTP {code}")
         time.sleep(5)
-    if not s.model_lock:
+    if not settings_for(s, inst).model_lock:
         return
     if plugin_states(inst.name).get("model-guard") != "enabled":
         raise CommandError(f"{inst.name}: model-guard is not enabled")
@@ -476,12 +503,40 @@ def limits(reg: Registry, name: str, cpu: int | None, memory_mb: int | None, dis
     set_limits(name, cpu, memory_mb, disk_gb)
 
 
-def provider_of(s: Settings, reg: Registry, name: str) -> str:
-    """The provider the instance uses: the lock's, or the one in its own config."""
-    _active(reg, name)
+def model_of(s: Settings, reg: Registry, name: str) -> tuple[str, str]:
+    """The provider and model the instance uses: its lock's, or those in its own config."""
+    s = settings_for(s, _active(reg, name))
     if s.model_lock:
-        return s.model_provider
-    return hermes(name, ["config", "get", "model.provider"], check=False).stdout.strip() or s.model_provider
+        return s.model_provider, s.model
+    provider, model = (hermes(name, ["config", "get", key], check=False).stdout.strip() or default
+                       for key, default in (("model.provider", s.model_provider), ("model.default", s.model)))
+    return provider, model
+
+
+def lock(s: Settings, reg: Registry, name: str, models: list[str]) -> None:
+    """Lock the instance to these models (or the one it uses) of the provider it uses, whatever the site's lock."""
+    inst = _active(reg, name)
+    provider, model = model_of(s, reg, name)
+    inst.lock, inst.lock_provider = models or [model], provider
+    reg.save()  # first: its config loses its model on the way, so a failure leaves the lock for apply to finish
+    update_policy(s, inst)
+    restart_all(s, [], reg)
+    print(f"{name} is locked to {provider}: {', '.join(inst.lock)}")
+
+
+def unlock(s: Settings, reg: Registry, name: str) -> None:
+    """Let the instance's users choose their models, whatever the site's lock. It starts with the model it was
+    locked to: the lock took the model out of its own config."""
+    inst = _active(reg, name)
+    locked = settings_for(s, inst)
+    inst.lock, inst.lock_provider = [], ""
+    update_policy(s, inst)
+    if locked.model_lock:
+        for key, value in starting_model(locked).items():
+            hermes(name, ["config", "set", key, value])
+    reg.save()  # last: until then, unlock again gives it its model
+    restart_all(s, [], reg)
+    print(f"{name} is unlocked: its users choose their models")
 
 
 def login(reg: Registry, name: str, provider: str) -> None:

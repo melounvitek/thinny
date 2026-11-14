@@ -69,6 +69,11 @@ def main(argv: list[str] | None = None) -> int:
     lgn = inst.add_parser("login", help="sign an instance in to a model provider (device code)")
     lgn.add_argument("name")
     lgn.add_argument("--provider", help="openai | anthropic | <Hermes provider id> (default: asked)")
+    lck = inst.add_parser("lock", help="lock an instance to models of the provider it uses, whatever the site's lock")
+    lck.add_argument("name")
+    lck.add_argument("models", nargs="*", help="model ids it allows, the first by default (default: the one it uses)")
+    inst.add_parser("unlock", help="let an instance's users choose their models, whatever the site's lock") \
+        .add_argument("name")
     for name, text in (("reset-password", "give an instance a new Webapp password"),
                        ("disable", "stop an instance's container for good, keep its data")):
         inst.add_parser(name, help=text).add_argument("name")
@@ -143,10 +148,14 @@ def main(argv: list[str] | None = None) -> int:
                 if a.provider:
                     provider = PROVIDERS.get(a.provider, (a.provider,))[0]
                 else:
-                    provider = instances.provider_of(s, reg, a.name)
-                    if not s.model_lock:
+                    provider, _ = instances.model_of(s, reg, a.name)
+                    if not instances.settings_for(s, reg.get(a.name)).model_lock:
                         provider = ask_provider(f"Which provider should {a.name} sign in to?", provider)
                 instances.login(reg, a.name, provider)
+            elif command == "instance lock":
+                instances.lock(s, reg, a.name, a.models)
+            elif command == "instance unlock":
+                instances.unlock(s, reg, a.name)
             elif command == "instance reset-password":
                 instances.password(s, reg, a.name)
             elif command == "instance disable":

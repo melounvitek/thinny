@@ -1,7 +1,7 @@
 import dataclasses
 
 import pytest
-from test_instances import incus  # noqa: F401 - the fake Incus fixture
+from test_instances import LOCKED, incus  # noqa: F401 - incus: the fake Incus fixture
 
 from thinny import apply, host, instances, render, system
 from thinny.registry import Instance, Registry
@@ -74,14 +74,10 @@ def test_turning_the_model_lock_on_first_removes_the_model_instances_started_wit
                     for step in [f"{name}: hermes config unset {key}" for key in keys] + [name]]
 
 
-def test_apply_moves_every_container_to_a_policy_of_its_own(incus, tmp_path, monkeypatch):
-    # alice and carol from before, on the policy all instances shared; bob's add stopped before his container
-    shared = {"type": "disk", "source": "/etc/hermes", "path": "/etc/hermes", "readonly": "true", "shift": "true"}
-    reg = Registry({"alice": Instance("alice", 9120, "local", state="active"),
-                    "bob": Instance("bob", 9121, "local", state="pending"),
-                    "carol": Instance("carol", 9122, "local", state="disabled")})
-    for name in ("alice", "carol"):
-        incus.containers[name] = {"state": "RUNNING", "devices": {"policy": dict(shared)}}
+@pytest.fixture
+def server(incus, monkeypatch):
+    """apply on the fake Incus with the registry it returns; records the restarts."""
+    reg = Registry()
     monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
     for step in ("firewall", "install_units", "ensure_profile"):
         monkeypatch.setattr(host, step, lambda *a: None)
@@ -89,6 +85,18 @@ def test_apply_moves_every_container_to_a_policy_of_its_own(incus, tmp_path, mon
     monkeypatch.setattr(instances, "configure_webapp", lambda s, inst: False)
     restarted = []
     monkeypatch.setattr(instances, "_gateway_up", lambda s, inst: restarted.append(inst.name))
+    return reg, restarted
+
+
+def test_apply_moves_every_container_to_a_policy_of_its_own(server, incus):
+    reg, restarted = server
+    # alice and carol from before, on the policy all instances shared; bob's add stopped before his container
+    shared = {"type": "disk", "source": "/etc/hermes", "path": "/etc/hermes", "readonly": "true", "shift": "true"}
+    reg.instances.update(alice=Instance("alice", 9120, "local", state="active"),
+                         bob=Instance("bob", 9121, "local", state="pending"),
+                         carol=Instance("carol", 9122, "local", state="disabled"))
+    for name in ("alice", "carol"):
+        incus.containers[name] = {"state": "RUNNING", "devices": {"policy": dict(shared)}}
 
     apply.apply(S)
     assert incus.containers["alice"]["devices"]["policy"] == shared | {"source": str(host.POLICIES / "alice")}
@@ -99,6 +107,19 @@ def test_apply_moves_every_container_to_a_policy_of_its_own(incus, tmp_path, mon
 
     apply.apply(S)
     assert restarted == ["alice"]
+
+
+def test_apply_keeps_the_locks_instances_have_on_their_own(server, incus):
+    reg, restarted = server
+    reg.instances.update(alice=Instance("alice", 9120, "local", state="active", lock=["m2"], lock_provider="nous"),
+                         bob=Instance("bob", 9121, "local", state="active", lock=[]),
+                         carol=Instance("carol", 9122, "local", state="active"))
+    for name in reg.instances:
+        incus.containers[name] = {"state": "RUNNING", "devices": {}}
+    apply.apply(LOCKED)
+    assert host.policy_current(dataclasses.replace(LOCKED, model_provider="nous", model="m2", allowed_models=("m2",)),
+                               "alice")
+    assert host.policy_current(S, "bob") and host.policy_current(LOCKED, "carol")
 
 
 @pytest.mark.parametrize("tunnel_port, hint", [(0, False), (8080, True)])

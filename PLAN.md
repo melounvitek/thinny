@@ -32,9 +32,10 @@ In priority order.
    nightly update for all instances, one instance at a time.
 3. **Central policy:** approvals mode and terminal backend; with the model lock
    (`policy.model_lock`, off by default) also pinned model and reasoning effort, model
-   allowlist enforced by a plugin and plugin list. Users cannot change it from the
-   Webapp or their settings. It is a guardrail, not enforcement: users are root in their
-   container and can get around it. `doctor` reports it when they do.
+   allowlist enforced by a plugin and plugin list; per instance too (`instance lock`, `unlock`,
+   whatever the site's). Users cannot change it from the Webapp or their settings. It is a
+   guardrail, not enforcement: users are root in their container and can get around it.
+   `doctor` reports it when they do.
 4. **Agent tools run in the instance's container** (`terminal.backend: local`); no sandbox
    image, no nested Podman. The instance's account has passwordless `sudo`, so users and their
    agent can `apt install`. Docker is installed inside (the phone plugin's Asterisk), Tailscale is
@@ -423,7 +424,8 @@ extras/, tests/     netcup snapshot and nightly watch (run off the server); pyte
 /etc/thinny/site.toml           admin-edited settings
 /var/lib/thinny/instances.json  registry: name, port, container address, access, URL, state,
                                 the built-ins (render.BUILT_INS) its container last got,
-                                whether it moved here from another server
+                                whether it moved here from another server, its own model lock
+                                (models and provider; [] unlocked; null: the site's)
 /var/lib/thinny/release         "<tag> <commit>": the Hermes release all instances run
 /var/lib/thinny/policies/<name>/        its Hermes managed scope, rendered from site.toml; a
                                         folder per instance (before, all shared /etc/hermes/)
@@ -493,6 +495,10 @@ instance add <name> [--access ...]
 instance access | login [--provider] | reset-password <name>
                                   access method, device login to any provider, new Webapp
                                   password
+instance lock <name> [model ...] | unlock <name>
+                                  its own model lock (the provider it uses, these models or the
+                                  one it uses) or none, whatever the site's; unlock puts the model
+                                  it was locked to back in its own config
 instance disable <name>           autostart off, container stopped (forced after 60 s), access
                                   removed; container and data stay
 instance list | restart           instances; one-by-one gateway restarts

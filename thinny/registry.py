@@ -33,6 +33,8 @@ class Instance:
     state: str = "pending"
     built_ins: str = ""   # render.BUILT_INS its container last got in full
     moved: bool = False   # from another server: a resumed add keeps its users' settings
+    lock: list[str] | None = None   # its own model lock, the models it allows ([]: unlocked); None: the site's
+    lock_provider: str = ""         # the provider of its own lock
 
 
 def validate_name(name: str) -> None:

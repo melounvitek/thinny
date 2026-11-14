@@ -11,7 +11,8 @@ model_provider = "openai-codex"
 model = "<model id>"            # default model (with model_lock = false, what instance add suggests)
 reasoning_effort = "high"
 model_lock = false              # true: every instance uses model_provider, reasoning_effort and allowed_models
-                                # only, and the plugins the policy turns on
+                                # only, and the plugins the policy turns on (but instances with their own
+                                # lock or unlock: thinny instance lock / unlock)
 allowed_models = []             # with model_lock: the model-guard plugin blocks every other model
 approvals = "smart"             # manual | smart (never off: every command would run unasked)
 language = "en"                 # Hermes UI language (display.language) for new instances
