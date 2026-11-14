@@ -32,7 +32,8 @@ private networks or the tailnet, and cannot change the shared policy.
 
 **Not protected:**
 
-- anything from the server admin or the model provider;
+- anything from the server admin or the model provider. The [access trace](#access-trace) shows
+  when the admin enters a container;
 - the policy from an instance's users: they are root in their container, so the policy is a
   guardrail. `doctor` reports the bypasses it can see;
 - users from their own agent: it can do whatever they can in the container, but cannot leave it.
@@ -203,6 +204,7 @@ thinny instance move alice bob --to admin@new-server   # or --all; experimental
 - Names are 2-32 lowercase letters, digits and `-`, starting with a letter. Names and ports are
   never reused, and a disabled instance cannot be re-enabled.
 - Shell in a container: `sudo incus exec alice -- runuser -l alice` (or `-- bash` for root).
+  Both show in the [access trace](#access-trace).
 - **`move` is experimental:** it has not moved an instance between two real servers yet.
   Snapshot both servers first.
 - `move` takes whole containers over SSH to another server that runs thinny, one at a time, each
@@ -299,6 +301,31 @@ so allow exactly these two without a password, with `sudo visudo -f /etc/sudoers
 <you> ALL=(root) NOPASSWD: /usr/local/sbin/thinny status, /usr/local/sbin/thinny doctor
 ```
 
+## Access trace
+
+When someone enters an instance's container by hand, with `incus exec`, `incus shell` or
+`incus console`, thinny notes the time and the full command. Its own commands are left out.
+
+- **On the server:** `journalctl -t thinny-trace`, and per instance in
+  `/var/lib/thinny/trace/<name>/admin-access.log`.
+- **Inside the instance:** the same file, read-only, at `/var/log/thinny/admin-access.log`. Its
+  users can ask their agent whether anyone came in.
+- **Off the server**, out of reach of whoever is root on it: the entries have the syslog tag
+  `thinny-trace` and the facility `authpriv`, so they can go wherever your logins go. With
+  rsyslog (`apt install rsyslog`), put this in `/etc/rsyslog.d/50-thinny-trace.conf`, then run
+  `systemctl restart rsyslog`:
+
+  ```
+  if $programname == "thinny-trace" then action(type="omfwd" target="logs.example.org" port="514" protocol="tcp")
+  ```
+
+It is a trace, not a lock: root on the server can stop it or change its files. It does not see
+`incus file` (push, pull, mount), snapshots, exports and copies, the containers' files on the
+server's disk, `nsenter`, what happens in a shell after it opens, a command that starts with
+`env THINNY=1` (thinny's own mark), or the few seconds while it restarts (e.g. with Incus).
+Commands are noted in full: keep passwords out of them. `doctor` warns when the trace is not
+running.
+
 ## Uninstall
 
 ```sh
@@ -306,11 +333,12 @@ thinny uninstall
 ```
 
 It lists the instances and asks you to type the server's hostname. Then it deletes every
-instance's container with all its data, and everything thinny set up: the update timer,
-`tailscale serve` of the instances' ports, thinny's Caddyfile (Caddy is disabled), the Incus profile
-and storage pool, the firewall table, `/etc/thinny`, `/etc/hermes`, `/var/lib/thinny`, the log,
-`/etc/sudoers.d/thinny-checks`, the clone in `/usr/local/src/thinny` and thinny itself. **There is
-no undo.** If a step fails, fix the cause and run it again: it continues.
+instance's container with all its data, and everything thinny set up: the update timer, the
+access trace, `tailscale serve` of the instances' ports, thinny's Caddyfile (Caddy is disabled),
+the Incus profile and storage pool, the firewall table, `/etc/thinny`, `/etc/hermes`,
+`/var/lib/thinny`, the log, `/etc/sudoers.d/thinny-checks`, the clone in `/usr/local/src/thinny`
+and thinny itself. **There is no undo.** If a step fails, fix the cause and run it again: it
+continues.
 
 A storage pool that something else uses stays; the output says so. The packages stay installed:
 `apt purge` removes those nothing else uses. IP forwarding and user namespaces stay on until the

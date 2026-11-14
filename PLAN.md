@@ -353,6 +353,21 @@ Debian 13, kernel 6.12, Incus 6.0.4 (`incus-base`), Hermes v0.23.0 -> v0.23.1. A
   ~80 MB. ~2.8 GB own disk per instance for Hermes (copied from a template, so without the
   system packages).
 
+### Access trace (2026-11-14)
+Debian 13, Incus 6.0.4, from Incus's stable-6.0 source and **[tested]** on the test server.
+
+- Lifecycle events (`incus monitor --type lifecycle --format json`: a JSON line, then an empty
+  line): `instance-exec` with only the argv as context, `instance-console`. `incus shell` is
+  `incus exec -- su -l`. Over the unix socket the requestor is always root, so only the command
+  tells thinny's own apart. `incus file` goes through SFTP and sends no event.
+- `systemctl restart incus` ends the monitor (websocket close 1006). Restarted 2 s later, it
+  missed the execs of the first ~1.5 s after the restart.
+- A disk with `required=false` whose source is missing: the container still starts, and
+  `incus import` still takes it. A required one fails both.
+- rsyslog is not installed on Debian 13. Installed, it gets the entries from the journal, files
+  them in `/var/log/auth.log`, and `$programname == "thinny-trace"` forwarded them
+  (`<86>`: authpriv.info).
+
 ### Plugins and Claude Code (2026-11-13)
 - `hermes plugins install` without a terminal reads `requires_env` prompts from stdin; with
   stdin at end of file (our `as_user`) it skips them and goes on. Flags: `--force`, `--ref
@@ -440,6 +455,8 @@ extras/, tests/     netcup snapshot and nightly watch (run off the server); pyte
                                         folder per instance (before, all shared /etc/hermes/)
 /etc/thinny/thinny.nft  our nft table for the containers
 /etc/systemd/system/incus.service.d/thinny.conf, /etc/sysctl.d/90-thinny.conf
+/var/lib/thinny/trace/<name>/admin-access.log  the instance's access trace, written by
+                                thinny-trace.service (also to the journal)
 Incus                                   pool `default` (btrfs, sparse file), profile `thinny-instance`,
                                         one container per instance, named after it
 ```
@@ -449,8 +466,13 @@ Incus                                   pool `default` (btrfs, sparse file), pro
 - Profile `thinny-instance`: root disk with the `disk_gb` quota, `/dev/net/tun`,
   `security.idmap.isolated`, `security.nesting`, `limits.cpu`, `limits.memory`,
   `limits.processes=2000`, `boot.autostart`. Per container: a routed NIC `thinny-<port>`, its
-  policy folder at `/etc/hermes` and model-guard as read-only disks without shift (section 4),
-  and a proxy device from host `127.0.0.1:<port>` to the same port inside.
+  policy folder at `/etc/hermes`, model-guard and its trace folder at `/var/log/thinny` (not
+  required) as read-only disks without shift (section 4), and a proxy device from host
+  `127.0.0.1:<port>` to the same port inside.
+- Access trace: the hidden `thinny trace` (thinny-trace.service, restarted at once and with
+  every apply) follows Incus's lifecycle events and notes each `instance-exec` and
+  `instance-console` that is not thinny's own: every command thinny runs in a container starts
+  with `env THINNY=1`. Transparency, not a guard: the admin is root.
 - Our nft table: forward from `thinny-*` only out of `network.interface`, not to private, CGNAT
   (tailnet), link-local, multicast or blocked networks, no IPv6, nothing new into `thinny-*`;
   input: nothing new from `thinny-*`; masquerade. Loaded by `config apply` and by the incus.service
@@ -531,7 +553,7 @@ uninstall                         after the hostname is typed: every container, 
   container has Debian's system accounts too) and not an existing container.
 - `instance add` records `pending` first and can be rerun to finish after a failure.
 - Gateway restarts happen only where unavoidable, and are announced.
-- The admin's shell in a container: `incus exec <name> -- runuser -l <name>`.
+- The admin's shell in a container: `incus exec <name> -- runuser -l <name>` (traced).
 
 ### 6.6 Access per instance
 
@@ -595,7 +617,7 @@ private ones and the tailnet are always blocked). `site.example.toml` lists ever
 - Install: Incus pool `default` and profile `thinny-instance`, the incus.service drop-in, IPv4
   forwarding (FAIL); instance policies match `site.toml` (WARN); the recorded release; nightly
   timer enabled (WARN); last update status (FAIL when failed, WARN when missing or older than
-  48 h).
+  48 h); thinny-trace.service enabled and active (WARN).
 - Prerequisites (section 6.3), all WARN.
 - Firewall: the loaded table is exactly what `site.toml` renders, chain by chain (FAIL).
 - Caddy active when any instance uses LAN access, or own addresses with a tunnel port (FAIL);
@@ -684,6 +706,16 @@ its environment kept piper through `hermes pm install`. Phone plugin listening w
 `install-asterisk.sh` ran as the instance's account and Asterisk sent its REGISTER out masqueraded.
 `instance login --claude` printed the link (a wrong code asks again). Not done: a real Claude
 sign-in and a real call (see section 9).
+
+Access trace (2026-11-14): 1 the trace and thinny's mark on its own commands; 2 the service,
+the instances' read-only directories, `doctor` and `uninstall`; 3 README and this file. Server
+test **[tested]**: branch installed over thinny f0a81ee with an instance running. `doctor` all OK and
+nothing traced from its commands. In a scratch container: exec, shell, console and a command with
+a newline traced on one line each, in the journal and its file; `incus file pull` and a
+command with the mark not traced. The directory readable by an ordinary account inside;
+writing, remounting and symlinking in it refused (without shift, section 4).
+`systemctl restart incus`: back after 2 s. Missing directory: start and export/import fine.
+rsyslog forwarding. Then thinny f0a81ee restored.
 
 ## 9. Open questions
 
