@@ -62,7 +62,8 @@ KbdInteractiveAuthentication no
 
 **A firewall** whose input chain drops by default, and whose forward chain lets the containers
 through (thinny filters them in its own table, but a drop in any chain is final). With LAN
-access, open the Webapp ports (`webapp.port_range`, 9120-9199) to office PCs. Example
+access, open the Webapp ports (`webapp.port_range`, 9120-9199) and port 80 (the root certificate)
+to office PCs. Example
 `/etc/nftables.conf`, loaded with `nft -f /etc/nftables.conf`:
 
 ```
@@ -79,6 +80,7 @@ table inet filter {
 		meta l4proto { icmp, ipv6-icmp } accept
 		ip saddr 192.168.1.0/24 tcp dport 22 accept         # SSH from the office network
 		ip saddr 192.168.1.0/24 tcp dport 9120-9199 accept  # office PCs to the Webapps
+		ip saddr 192.168.1.0/24 tcp dport 80 accept         # and to the root certificate
 	}
 	chain forward {
 		type filter hook forward priority filter; policy drop;
@@ -234,12 +236,13 @@ microphone, notifications and the Bot Screen. `<name>.localhost` through SSH kee
 
 **LAN certificate:** thinny runs Caddy with its own certificate authority and owns
 `/etc/caddy/Caddyfile`. It copies the root certificate to `/etc/thinny/office-root.crt`, readable
-by any account. Install it as trusted on each office PC (on Windows:
-`certutil -addstore Root office-root.crt` as administrator):
-
-```sh
-scp <you>@<server>:/etc/thinny/office-root.crt .
-```
+by any account. While an instance uses LAN access, Caddy also serves it on the office network at
+`http://<lan_address>/office-root.crt`; thinny prints the link when an instance gets LAN access.
+Download it on each office PC and install it as trusted: open it, "Install Certificate", "Current
+User", "Trusted Root Certification Authorities" (or for all accounts, as administrator:
+`certutil -addstore Root office-root.crt`). Over plain HTTP, someone on the office network could
+swap the file; where that matters, copy it with `scp <you>@<server>:/etc/thinny/office-root.crt .`
+instead.
 
 **One tunnel for every `url` instance:** set `access.tunnel_port` (e.g. `8080`) and run
 `thinny config apply`. Caddy then serves every `url` instance at `http://127.0.0.1:8080`, by the

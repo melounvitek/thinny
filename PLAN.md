@@ -571,7 +571,8 @@ uninstall                         after the hostname is typed: every container, 
 `instance add` asks for one method per instance (`--access`, default from `site.toml`), since a
 Webapp accepts only its own `public_url`. The Webapp listens on `127.0.0.1:<port>` inside the
 container; the proxy device publishes it on the same host loopback port, and every method
-points there: **LAN** a Caddy site with its local CA (`tls internal`); **Tailscale**
+points there: **LAN** a Caddy site with its local CA (`tls internal`), whose root certificate
+office PCs download at `http://<lan_address>/office-root.crt`; **Tailscale**
 `tailscale serve --bg --https=<port>`, offered only when Tailscale runs; **own address** the
 URL entered, the admin points a proxy at the port; **local** `http://<name>.localhost:<port>/`
 through `ssh -L <port>:127.0.0.1:<port> <you>@<server>`.

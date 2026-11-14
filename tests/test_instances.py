@@ -266,6 +266,11 @@ def test_an_address_is_a_host_or_a_host_and_one_path(incus, url):
     assert not incus.calls
 
 
+def test_lan_access_gives_the_link_to_the_root_certificate_for_office_pcs(incus, capsys):
+    instances.add(dataclasses.replace(S, lan_address="192.168.1.10"), Registry(), "alice", "lan")
+    assert "http://192.168.1.10/office-root.crt" in capsys.readouterr().out
+
+
 def test_a_host_has_one_instance_on_its_root_or_one_per_path(incus):
     reg = Registry()
     instances.add(S, reg, "accounting", "url", "https://office.example.org/accounting/")

@@ -135,6 +135,11 @@ def caddyfile(s: Settings, lan_ports: list[int], tunnel_routes: list[tuple[str, 
         f"\nhttps://{host_for_url(s.lan_address)}:{port} {{\n\tbind {s.lan_address}\n\ttls internal\n"
         f"\treverse_proxy 127.0.0.1:{port}\n}}\n"
         for port in lan_ports)
+    if lan_ports:
+        # Office PCs download the root certificate here before they trust the sites above.
+        sites += (f"\nhttp://{host_for_url(s.lan_address)} {{\n\tbind {s.lan_address}\n"
+                  "\thandle /office-root.crt {\n\t\troot * /etc/thinny\n\t\tfile_server\n\t}\n"
+                  "\thandle {\n\t\trespond 404\n\t}\n}\n")
     hosts: dict[str, list[tuple[str, int]]] = {}
     for url, port in tunnel_routes:
         parts = urlsplit(url)

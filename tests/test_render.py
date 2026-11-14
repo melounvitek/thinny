@@ -81,9 +81,25 @@ def test_caddyfile_has_one_https_site_per_lan_instance_and_no_admin_api():
     assert "reverse_proxy 127.0.0.1:9122" in text
 
 
+def test_caddyfile_hands_out_only_the_root_certificate_over_http_on_the_lan_address():
+    assert """
+http://192.168.1.10 {
+	bind 192.168.1.10
+	handle /office-root.crt {
+		root * /etc/thinny
+		file_server
+	}
+	handle {
+		respond 404
+	}
+}
+""" in render.caddyfile(S, [9120])
+
+
 def test_caddyfile_without_lan_instances_needs_no_address():
     s = Settings(model="m1", allowed_models=("m1",), access_default="local")
-    assert "https://" not in render.caddyfile(s, [])
+    text = render.caddyfile(s, [])
+    assert "https://" not in text and "office-root.crt" not in text
 
 
 TUNNEL_SITES = """
