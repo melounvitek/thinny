@@ -8,7 +8,7 @@ min_release_age_hours = 48      # install a stable release only once it is this 
 
 [policy]
 model_provider = "openai-codex"
-model = "<model id>"            # default model (with model_lock = false, only where new instances start)
+model = "<model id>"            # default model (with model_lock = false, what instance add suggests)
 reasoning_effort = "high"
 model_lock = false              # true: every instance uses model_provider, reasoning_effort and allowed_models
                                 # only, and the plugins the policy turns on

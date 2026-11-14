@@ -162,14 +162,14 @@ With sudo, name your editor in the command: `sudo EDITOR=vim thinny config edit`
 
 Applying restarts gateways one by one where needed. `policy.language`, `port_range` and the
 `[webapp]` look apply only to instances added afterwards. A new `language_pack` reaches existing
-instances with their next Hermes update. Without the model lock, `model_provider`, `model` and
-`reasoning_effort` are only where new instances start; turning the lock on removes the models
-users chose.
+instances with their next Hermes update. Without the model lock, `model_provider` and `model`
+are only what `instance add` suggests, and `reasoning_effort` where new instances start; turning
+the lock on removes the models users chose.
 
 ## Instances
 
 ```sh
-thinny instance add alice               # about 7 minutes; asks how users open the Webapp
+thinny instance add alice               # about 7 minutes; asks how users open the Webapp and the model
 thinny instance login alice             # sign in to a model provider; asks which
 thinny instance login alice --provider anthropic   # or name it: openai | anthropic | <Hermes provider id>
 thinny instance list

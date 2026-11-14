@@ -180,9 +180,41 @@ def test_instance_add_takes_the_limits_of_the_new_instance(server, monkeypatch):
 
 
 @pytest.fixture
-def login(server, monkeypatch):
-    """`instance login` on a terminal, for an instance that uses the provider nous; records the logins."""
+def terminal(monkeypatch):
     monkeypatch.setattr(cli.sys, "stdin", type("Terminal", (), {"isatty": lambda self: True})())
+
+
+@pytest.fixture
+def added(monkeypatch):
+    """The provider and model of each instance `instance add` adds."""
+    added = []
+    monkeypatch.setattr(instances, "add",
+                        lambda s, reg, name, access, url, **kw: added.append((s.model_provider, s.model)))
+    return added
+
+
+@pytest.mark.parametrize("answers, model", [
+    (["", ""], ("openai-codex", "m1")),   # the site's
+    (["2", ""], ("claude-subscription-directsdk-experimental", "claude-opus-5-5")),
+    (["3", "nous", "hermes-4"], ("nous", "hermes-4")),
+])
+def test_instance_add_asks_for_the_instances_provider_and_model(server, terminal, added, monkeypatch, answers, model):
+    answering(monkeypatch, *answers)
+    assert cli.main(["instance", "add", "alice", "--access", "local"]) == 0
+    assert added == [model]
+
+
+def test_instance_add_leaves_the_model_to_the_lock(server, terminal, added, monkeypatch):
+    site, _ = server
+    site.write_text(VALID.replace('model = "m1"', 'model = "m1"\nmodel_lock = true'))
+    answering(monkeypatch)
+    assert cli.main(["instance", "add", "alice", "--access", "local"]) == 0
+    assert added == [("openai-codex", "m1")]
+
+
+@pytest.fixture
+def login(server, terminal, monkeypatch):
+    """`instance login` on a terminal, for an instance that uses the provider nous; records the logins."""
     monkeypatch.setattr(instances, "provider_of", lambda s, reg, name: "nous")
     logins = []
     monkeypatch.setattr(instances, "login", lambda reg, name, provider: logins.append((name, provider)))

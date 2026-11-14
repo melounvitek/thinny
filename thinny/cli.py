@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import os
 import shlex
 import shutil
@@ -129,6 +130,10 @@ def main(argv: list[str] | None = None) -> int:
                     ask_access(f"How will users open {a.name}'s Webapp?", s.lan_address, s.access_default), "")
                 if access == "url" and not url:
                     url = input("Address users will open (https://...): ").strip()
+                moved = a.name in reg.instances and reg.get(a.name).moved
+                if not s.model_lock and not moved and sys.stdin.isatty():  # else the lock or its old server decides
+                    provider, model = ask_model(f"Which model provider will {a.name} use?", s.model_provider, s.model)
+                    s = dataclasses.replace(s, model_provider=provider, model=model)
                 instances.add(s, reg, a.name, access, url, cpu=a.cpu, memory_mb=a.memory_mb, disk_gb=a.disk_gb)
             elif command == "instance limits":
                 instances.limits(reg, a.name, a.cpu, a.memory_mb, a.disk_gb)
@@ -215,8 +220,7 @@ def init_config() -> None:
     print(f"thinny needs a few settings for {path}. Enter takes the [suggestion].\n"
           "Everything else keeps its default; change any of it later with: thinny config edit\n")
     try:
-        provider = ask_provider("Model provider", "openai-codex")
-        model = ask("Model id", next((m for p, m, _ in PROVIDERS.values() if p == provider), None))
+        provider, model = ask_model("Model provider", "openai-codex", "gpt-5.5")
         language = ask("Webapp language (en, cs, de, ...)", "en").lower()  # Hermes's codes, e.g. pt-br
         interface = ask("Internet interface, containers go out through it", interface or "eth0")
         print()
@@ -266,6 +270,13 @@ def ask_provider(question: str, default: str) -> str:
     picked = choose(question, [(p, text) for p, _, text in PROVIDERS.values()] +
                     [("other", "Other       another Hermes provider")], default if default in known else "other")
     return picked if picked != "other" else ask("Hermes provider id", None if default in known else default)
+
+
+def ask_model(question: str, provider: str, model: str) -> tuple[str, str]:
+    """A provider and model id; Enter keeps `provider` and `model`, or takes the suggestion for another provider."""
+    picked = ask_provider(question, provider)
+    suggested = model if picked == provider else next((m for p, m, _ in PROVIDERS.values() if p == picked), None)
+    return picked, ask("Model id", suggested)
 
 
 def ask_access(question: str, lan_address: str, default: str) -> str:
