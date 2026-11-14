@@ -115,7 +115,9 @@ def receive(s: Settings, reg: Registry, name: str, access: str, url: str, releas
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as f:
             shutil.copyfileobj(archive, f)
         log(f"{name}: importing its container")
-        # Before registering: a failed import leaves nothing here, and the move can be tried again.
+        host.write_policy(s, name)   # Incus refuses the container while its policy device's source is missing
+        # Before registering: a failed import leaves only that policy folder here, which a retry reuses and uninstall
+        # deletes, so the move can be tried again.
         run(["incus", "import", str(path), name, "--storage", render.POOL, "--quiet"], timeout=ARCHIVE_TIMEOUT)
     finally:
         path.unlink(missing_ok=True)
