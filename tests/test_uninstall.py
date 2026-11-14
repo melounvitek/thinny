@@ -72,7 +72,7 @@ class Server:
             self.pool = False
         elif cmd[:3] == ["tailscale", "serve", "status"]:
             if not self.served:
-                return "null\n", 0
+                return "{}\n", 0
             return json.dumps({"TCP": {str(port): {"HTTPS": True} for port in self.served}}), 0
         elif cmd[:2] == ["tailscale", "serve"]:
             self.served.discard(int(cmd[2].removeprefix("--https=")))

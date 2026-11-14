@@ -51,7 +51,7 @@ def run() -> None:
     if host.tailscale_status() is not None:
         out = system.run(["tailscale", "serve", "status", "--json"]).stdout
         try:
-            served = {int(port) for port in (json.loads(out) or {}).get("TCP") or {}}  # null: nothing served
+            served = {int(port) for port in json.loads(out).get("TCP") or {}}
         except ValueError as e:
             raise CommandError(f"tailscale serve status --json: {e}") from None
         for port in sorted(served & {inst.port for inst in reg.instances.values()}):
