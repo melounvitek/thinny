@@ -1,8 +1,10 @@
 import dataclasses
 import itertools
 import json
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -74,8 +76,11 @@ class Incus:
 
     def __init__(self):
         self.calls = []
-        self.containers = {}            # name -> {"state", "devices", "account", "hermes", "unit"}
+        # name -> {"state", "config", "devices" (name -> properties), "account", "hermes", "unit",
+        #          "files" (path -> text)}
+        self.containers = {}
         self.graceful_stop_fails = False
+        self.imported_mode = self.exported_mode = None   # of the last archive imported, or the directory exported to
 
     def run(self, cmd, *, check=True, input=None, timeout=600, env=None, cwd=None):
         self.calls.append(" ".join(cmd))
@@ -95,12 +100,32 @@ class Incus:
             c = self.containers.get(cmd[-1].strip("^$"))
             return (c["state"] + "\n" if c else ""), 0
         if cmd[:2] == ["incus", "init"]:
-            self.containers[cmd[3]] = {"state": "STOPPED", "devices": set(), "account": False, "hermes": False,
+            self.containers[cmd[3]] = {"state": "STOPPED", "devices": {}, "account": False, "hermes": False,
                                        "unit": False}
-        elif cmd[:4] == ["incus", "config", "device", "list"]:
-            return "\n".join(sorted(self.containers[cmd[4]]["devices"])), 0
-        elif cmd[:4] in (["incus", "config", "device", "add"], ["incus", "config", "device", "override"]):
-            self.containers[cmd[4]]["devices"].add(cmd[5])
+        elif cmd[:3] == ["incus", "config", "set"]:
+            self.containers[cmd[3]].setdefault("config", {}).update(p.split("=", 1) for p in cmd[4:])
+        elif cmd[:3] == ["incus", "config", "unset"]:
+            if self.containers[cmd[3]].get("config", {}).pop(cmd[4], None) is None:
+                return f"Error: Can't unset key '{cmd[4]}', it's not currently set", 1
+        elif cmd[:2] == ["incus", "query"]:   # /1.0/instances/NAME
+            return json.dumps({"devices": self.containers[cmd[2].rsplit("/", 1)[1]]["devices"]}), 0
+        elif cmd[:4] == ["incus", "config", "device", "add"]:
+            self.containers[cmd[4]]["devices"][cmd[5]] = {"type": cmd[6], **dict(p.split("=", 1) for p in cmd[7:])}
+        elif cmd[:4] in (["incus", "config", "device", "set"], ["incus", "config", "device", "override"]):
+            self.containers[cmd[4]]["devices"].setdefault(cmd[5], {}).update(p.split("=", 1) for p in cmd[6:])
+        elif cmd[:2] == ["incus", "export"]:   # the fake's archives are the container as JSON
+            c = self.containers[cmd[2]]
+            if c.get("export_fails"):
+                return "Error: no space left on device", 1
+            with open(cmd[3], "w") as f:
+                json.dump(c, f)
+            self.exported_mode = os.stat(os.path.dirname(cmd[3])).st_mode & 0o777
+        elif cmd[:2] == ["incus", "import"]:
+            self.imported_mode = os.stat(cmd[2]).st_mode & 0o777
+            try:
+                self.containers[cmd[3]] = json.loads(Path(cmd[2]).read_text())
+            except ValueError:
+                return "Error: not a backup", 1
         elif cmd[:2] == ["incus", "start"]:
             self.containers[cmd[2]]["state"] = "RUNNING"
         elif cmd[:2] == ["incus", "stop"]:
@@ -121,6 +146,8 @@ class Incus:
             cmd = list(itertools.dropwhile(lambda a: "=" in a, cmd[cmd.index("-i") + 1:]))
         if cmd[:2] == ["id", "-u"]:
             return "", 0 if c["account"] else 1
+        if cmd[0] == "cat":
+            return c.get("files", {}).get(cmd[1], ""), 0
         if cmd[:3] == ["timeout", "10", "getent"]:
             return "", 0 if c.get("internet", True) else 2
         if cmd[0] == "useradd":
@@ -243,7 +270,7 @@ def test_an_instance_can_get_its_own_limits_instead_of_the_sites(incus):
 
 def test_the_limits_of_a_running_instance_change_without_a_restart(incus):
     reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
-    incus.containers["alice"] = {"state": "RUNNING", "devices": {"eth0", "policy", "webapp"}}
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {"eth0": {}, "policy": {}, "webapp": {}}}
     instances.limits(reg, "alice", None, 2048, 40)
     instances.limits(reg, "alice", 3, None, 60)
     assert [c for c in incus.calls if c.startswith(("incus config set", "incus config device o", "incus config device s"))] \
@@ -258,7 +285,7 @@ def test_a_disk_limit_too_close_to_what_the_instance_uses_is_refused(incus):
     # btrfs would set the quota, fail halfway, and leave the instance unable to write for good. Its
     # quota counts data shared with the image or a snapshot too, which Incus's usage figure leaves out.
     reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
-    incus.containers["alice"] = {"state": "RUNNING", "devices": {"eth0"}, "used": int(5.7 * 2**30)}
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {"eth0": {}}, "used": int(5.7 * 2**30)}
     with pytest.raises(CommandError, match="alice uses 5.7 GiB of disk; give it at least 7 GiB"):
         instances.limits(reg, "alice", 4, None, 6)
     assert not incus.ran("incus config set") and not incus.ran("incus config device override")
@@ -292,7 +319,7 @@ def test_an_instance_signs_in_to_claude_with_the_admins_terminal(incus, monkeypa
 def test_an_interrupted_add_resumes_where_it_stopped(incus):
     reg = Registry()
     reg.add("alice", "local", (9120, 9199))
-    incus.containers["alice"] = {"state": "STOPPED", "devices": {"eth0", "policy", "webapp", "model-guard"},
+    incus.containers["alice"] = {"state": "STOPPED", "devices": {d: {} for d in ("eth0", "policy", "webapp", "model-guard")},
                                  "account": True, "hermes": True, "unit": False}
     instances.add(S, reg, "alice", "local")
     assert reg.get("alice").state == "active"
@@ -304,7 +331,8 @@ def test_an_interrupted_add_resumes_where_it_stopped(incus):
 
 def test_a_container_without_internet_fails_fast_with_the_fix(incus, monkeypatch):
     monkeypatch.setattr(instances.time, "sleep", lambda s: None)
-    incus.containers["alice"] = {"state": "RUNNING", "devices": {"eth0", "policy", "webapp"}, "internet": False}
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {d: {} for d in ("eth0", "policy", "webapp")},
+                                 "internet": False}
     with pytest.raises(CommandError, match="forward chain"):
         instances.ensure_packages("alice")
     assert not incus.ran("apt-get")

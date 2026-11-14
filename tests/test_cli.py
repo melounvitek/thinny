@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from thinny import apply, cli, host, instances, render, settings, system, update
+from thinny import apply, cli, host, instances, move, render, settings, system, update
 from thinny.registry import Registry
 
 VALID = '[policy]\nmodel = "m1"\nallowed_models = ["m1"]\n\n[access]\nlan_address = "192.168.1.10"\n'
@@ -186,6 +186,30 @@ def test_instance_limits_changes_only_the_given_limits(server, monkeypatch):
     assert changed == [("alice", None, None, 60)]
     with pytest.raises(SystemExit):
         cli.main(["instance", "limits", "alice", "--memory-mb", "lots"])
+
+
+def test_instance_move_takes_names_or_all(server, monkeypatch, capsys):
+    moved = []
+    monkeypatch.setattr(move, "move", lambda s, reg, names, to: moved.append((names, to)))
+    assert cli.main(["instance", "move", "alice", "bob", "--to", "admin@new"]) == 0
+    assert cli.main(["instance", "move", "--all", "--to", "new"]) == 0
+    assert moved == [(["alice", "bob"], "admin@new"), ([], "new")]
+    for args in ([], ["alice", "--all"]):
+        assert cli.main(["instance", "move", *args, "--to", "new"]) == 1
+        assert "name the instances to move, or give --all" in capsys.readouterr().err
+    assert len(moved) == 2
+
+
+def test_the_other_server_takes_the_archive_from_stdin_or_only_checks(server, monkeypatch):
+    received = []
+    monkeypatch.setattr(move, "receive", lambda s, reg, *args: received.append(args))
+    monkeypatch.setattr(cli.sys, "stdin", type("Pipe", (), {"buffer": "the archive"})())
+    args = ["instance", "receive", "bob", "--access", "url", "--url", "https://bob.example.org/",
+            "--release", "v2", "c0ffee", "--built-ins", ""]   # added by a thinny without built-ins
+    assert cli.main(args) == 0
+    assert cli.main([*args, "--check"]) == 0
+    assert received == [("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", "the archive"),
+                        ("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", None)]
 
 
 def test_config_edit_applies_a_valid_change_even_to_a_broken_site_toml(server, monkeypatch):

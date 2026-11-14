@@ -422,7 +422,8 @@ extras/, tests/     netcup snapshot and nightly watch (run off the server); pyte
 ```
 /etc/thinny/site.toml           admin-edited settings
 /var/lib/thinny/instances.json  registry: name, port, container address, access, URL, state,
-                                the built-ins (render.BUILT_INS) its container last got
+                                the built-ins (render.BUILT_INS) its container last got,
+                                whether it moved here from another server
 /var/lib/thinny/release         "<tag> <commit>": the Hermes release all instances run
 /etc/hermes/                            Hermes managed scope, rendered from site.toml
 /etc/thinny/thinny.nft  our nft table for the containers
@@ -494,6 +495,18 @@ instance access | login [--claude] | reset-password <name>
 instance disable <name>           autostart off, container stopped (forced after 60 s), access
                                   removed; container and data stay
 instance list | restart           instances; one-by-one gateway restarts
+instance move <name>... | --all --to [user@]host
+                                  experimental: whole containers to another thinny server, one
+                                  at a time. That server checks them all first (same Hermes
+                                  release, no unfinished update on either side, a name it never
+                                  had, the access method); then autostart off, stop, `incus
+                                  export` streamed over SSH (as root or `sudo -n`) to its hidden
+                                  `instance receive`: `incus import`, registered at once, then a
+                                  resumed add with its own port, address and settings that keeps
+                                  the users' (language, model unless the lock pins it, look,
+                                  password; Hermes, which only new built-ins or a later
+                                  `instance add` install again, like an update). Disabled here;
+                                  started here again after a failure unless it may have arrived
 uninstall                         after the hostname is typed: every container, then everything
                                   thinny set up, thinny itself last; packages stay
 ```
@@ -658,6 +671,10 @@ sign-in and a real call (see section 9).
 
 ## 9. Open questions
 
+- `instance move` is experimental, tested with fakes only. Between two real servers, check: the
+  uid remap of an imported container with `security.idmap.isolated`, a routed NIC changed with
+  `device set` before the first start, Docker data, a reboot of either server afterwards, and
+  sudo (Ubuntu's sudo-rs too) passing the archive on stdin.
 - Package drift: `render.PACKAGES` copies the official image's Dockerfile lists (v0.23.1).
   When Hermes adds a system dependency the list must follow; containers get the list at
   `instance add` and before each Hermes update.

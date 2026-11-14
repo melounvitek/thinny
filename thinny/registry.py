@@ -32,6 +32,7 @@ class Instance:
     address: str = ""
     state: str = "pending"
     built_ins: str = ""   # render.BUILT_INS its container last got in full
+    moved: bool = False   # from another server: a resumed add keeps its users' settings
 
 
 def validate_name(name: str) -> None:

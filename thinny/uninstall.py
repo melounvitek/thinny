@@ -15,7 +15,7 @@ from .registry import Registry
 from .system import CommandError, log
 
 SUDOERS = Path("/etc/sudoers.d/thinny-checks")   # README's rule for status and doctor
-COMMAND = Path("/usr/local/sbin/thinny")
+COMMAND = Path(host.THINNY)
 LIB = Path("/usr/local/lib/thinny")     # where install.sh put thinny; host.LIB is wherever this code runs from
 CLONE = Path("/usr/local/src/thinny")   # bin/install's clone
 

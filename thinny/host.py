@@ -16,6 +16,7 @@ from .system import STATE_DIR, log, run, tailscale_status, write_file
 
 MANAGED = Path("/etc/hermes")
 LIB = Path(__file__).resolve().parent.parent      # this repository, installed to /usr/local/lib/thinny
+THINNY = "/usr/local/sbin/thinny"
 FILES = LIB / "files"
 CADDYFILE = Path("/etc/caddy/Caddyfile")
 OFFICE_CA = Path("/etc/thinny/office-root.crt")   # Caddy's root certificate, readable by any account

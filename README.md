@@ -178,6 +178,7 @@ thinny instance limits alice --cpu 4 --memory-mb 8192 --disk-gb 50
 thinny instance reset-password alice
 thinny instance disable alice           # stop it for good, keep its data
 thinny instance restart [alice ...]
+thinny instance move alice bob --to admin@new-server   # or --all; experimental
 ```
 
 - `add` prints the Webapp address, username and password. **The password is shown only
@@ -195,6 +196,19 @@ thinny instance restart [alice ...]
 - Names are 2-32 lowercase letters, digits and `-`, starting with a letter. Names and ports are
   never reused, and a disabled instance cannot be re-enabled.
 - Shell in a container: `sudo incus exec alice -- runuser -l alice` (or `-- bash` for root).
+- **`move` is experimental:** it has not moved an instance between two real servers yet.
+  Snapshot both servers first.
+- `move` takes whole containers over SSH to another server that runs thinny, one at a time, each
+  down for a few minutes. Everything inside comes along: data, sign-ins, the Webapp password,
+  the model (unless the new server's model lock pins it), language, look and limits. The new
+  server gives it its own port, address, policy and packages: `lan`, `tailscale` and `local`
+  instances get a new address; for `url` ones, point your DNS or tunnel at the new server. The
+  old copy stays here, disabled.
+- Before a move, run `thinny update` on both servers: they need the same Hermes release. Each
+  needs room for one container archive. SSH must reach the new server as root, or as an account
+  with sudo without a password. It asks nothing, so connect once as root by hand to accept the
+  host key (`sudo ssh admin@new-server true`). sudo hides your SSH agent: thinny uses root's key
+  unless you run `sudo --preserve-env=SSH_AUTH_SOCK thinny instance move ...`.
 
 ## Access
 

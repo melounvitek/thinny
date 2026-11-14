@@ -59,13 +59,19 @@ def container_state(name: str) -> str | None:
     return out or None
 
 
-def devices(name: str) -> set[str]:
-    return set(run(["incus", "config", "device", "list", name]).stdout.split())
+def devices(name: str) -> dict[str, dict[str, str]]:
+    """The container's own devices (not its profile's): name -> properties."""
+    return json.loads(run(["incus", "query", f"/1.0/instances/{name}"]).stdout)["devices"]
 
 
-def add_device(name: str, device: str, *args: str) -> None:
-    if device not in devices(name):
-        run(["incus", "config", "device", "add", name, device, *args])
+def ensure_device(name: str, device: str, kind: str, *props: str) -> None:
+    """The container's own `device` with these "key=value" properties, added or updated (an imported
+    container comes with its old server's)."""
+    current = devices(name).get(device)
+    if current is None:
+        run(["incus", "config", "device", "add", name, device, kind, *props])
+    elif changed := [p for p in props if current.get(p.partition("=")[0]) != p.partition("=")[2]]:
+        run(["incus", "config", "device", "set", name, device, *changed])
 
 
 def set_limits(name: str, cpu: int | None, memory_mb: int | None, disk_gb: int | None) -> None:
@@ -90,18 +96,28 @@ def set_limits(name: str, cpu: int | None, memory_mb: int | None, disk_gb: int |
         run(["incus", "config", "device", action, name, "root", f"size={disk_gb}GiB"])
 
 
-def ensure_container(inst: Instance) -> None:
-    """The instance's container from the plain Debian image, running, with its network, the
-    read-only policy and the Webapp published on the host's loopback (each step repeatable)."""
+def ensure_container(s: Settings, inst: Instance) -> None:
+    """The instance's container from the plain Debian image (or moved here), running, with its network,
+    the read-only policy and the Webapp published on the host's loopback (each step repeatable)."""
     if container_state(inst.name) is None:
         run(["incus", "init", IMAGE, inst.name, "--profile", render.PROFILE], timeout=1800)
-    add_device(inst.name, "eth0", "nic", "nictype=routed", f"ipv4.address={inst.address}",
-               f"host_name=thinny-{inst.port}")
-    add_device(inst.name, "policy", "disk", f"source={host.MANAGED}", f"path={host.MANAGED}",
-               "readonly=true", "shift=true")
-    add_device(inst.name, "webapp", "proxy", f"listen=tcp:127.0.0.1:{inst.port}", f"connect=tcp:127.0.0.1:{inst.port}")
+    ensure_device(inst.name, "eth0", "nic", "nictype=routed", f"ipv4.address={inst.address}",
+                  f"host_name=thinny-{inst.port}")
+    ensure_device(inst.name, "policy", "disk", f"source={host.MANAGED}", f"path={host.MANAGED}",
+                  "readonly=true", "shift=true")
+    ensure_device(inst.name, "webapp", "proxy", f"listen=tcp:127.0.0.1:{inst.port}",
+                  f"connect=tcp:127.0.0.1:{inst.port}")
+    if inst.moved:  # its old server turned autostart off for the move; the profile's applies again
+        run(["incus", "config", "unset", inst.name, "boot.autostart"], check=False)  # 1 when unset already
     if container_state(inst.name) != "RUNNING":
         run(["incus", "start", inst.name])
+    if inst.moved and s.model_lock:
+        # At once: its gateway starts under the lock with the container, and Hermes would leave the model it
+        # had on its old server as invalid YAML (see apply). The lock refuses the unset, so without the
+        # managed scope.
+        for key in starting_model(s):
+            as_user(inst.name, ["sh", "-c", 'd=$(mktemp -d) && HERMES_MANAGED_DIR="$d" hermes config unset "$1"; '
+                                'rmdir "$d"', "sh", key], check=False)  # 1 when not set
     in_container(inst.name, ["systemctl", "is-system-running", "--wait"], check=False, timeout=300)
     in_container(inst.name, ["sh", "-c", "cat > /etc/systemd/network/eth0.network && systemctl restart systemd-networkd"],
                  input=render.network_file(inst.address))
@@ -178,8 +194,8 @@ def ensure_model_guard(name: str) -> None:
     the installer stashes untracked files, which it cannot do with a read-only mount."""
     as_user(name, ["sh", "-c", 'grep -qx /plugins/model-guard/ "$1" || echo /plugins/model-guard/ >> "$1"', "sh",
                    str(home(name) / "hermes-agent/.git/info/exclude")])
-    add_device(name, "model-guard", "disk", f"source={host.FILES / 'model-guard'}",
-               f"path={home(name) / 'hermes-agent/plugins/model-guard'}", "readonly=true", "shift=true")
+    ensure_device(name, "model-guard", "disk", f"source={host.FILES / 'model-guard'}",
+                  f"path={home(name) / 'hermes-agent/plugins/model-guard'}", "readonly=true", "shift=true")
 
 
 def webapp_settings(name: str) -> dict[str, str]:
@@ -321,14 +337,11 @@ def restart_all(s: Settings, instances: list[Instance], reg: Registry) -> None:
 # ---------- commands ----------
 
 def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = "", *, cpu: int | None = None,
-        memory_mb: int | None = None, disk_gb: int | None = None) -> None:
+        memory_mb: int | None = None, disk_gb: int | None = None, just_imported: bool = False) -> None:
+    """Add an instance, or finish one whose add stopped. `just_imported`: it was moved here a moment ago, with
+    the Hermes release this server runs."""
     access = access or s.access_default
-    if access not in ACCESS_METHODS:
-        raise CommandError(f"access must be one of {', '.join(ACCESS_METHODS)}")
-    if access == "url":
-        check_url(reg, name, url)
-    if access == "lan" and not s.lan_address:
-        raise CommandError("set access.lan_address in site.toml first")
+    check_access(s, reg, name, access, url)
     if name in reg.instances:
         inst = reg.get(name)
         if inst.state == "active":
@@ -337,34 +350,36 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
             raise CommandError(f"{name} was disabled; names are not reused")
         log(f"resuming the unfinished setup of {name}")
     else:
-        if uid_of(name) is not None:  # Debian's system accounts, which the container has too
-            raise CommandError(f"{name!r} is a system account name; choose another name")
-        if container_state(name) is not None:
-            raise CommandError(f"an Incus container {name!r} already exists; choose another name")
+        check_free_name(name)
         inst = reg.add(name, access, s.port_range)
     inst.access, inst.url = access, url if access == "url" else ""
     reg.save()
 
     with step(f"{name}: container {inst.address}"):
-        ensure_container(inst)
+        ensure_container(s, inst)
         set_limits(name, cpu, memory_mb, disk_gb)
     with step(f"{name}: system packages"):
         ensure_packages(name)
         ensure_account(name)
     tag, commit = host.release() or host.first_release()
-    log(f"{name}: Hermes {tag}")
-    install_hermes(s, name, commit, enable=True)  # a resumed add repeats it: it may have stopped halfway
+    # A resumed add repeats it: it may have stopped halfway, or an update here changed the release. A moved
+    # instance gets it like an update: only new built-ins are turned on.
+    new_built_ins = inst.built_ins != render.BUILT_INS
+    if not just_imported or new_built_ins:
+        log(f"{name}: Hermes {tag}")
+        install_hermes(s, name, commit, enable=not inst.moved or new_built_ins)
     with step(f"{name}: settings"):
         ensure_model_guard(name)
         inst.url = url_for(s, inst)
         reg.save()
         configure_webapp(s, inst)
-        hermes(name, ["config", "set", "display.language", s.language])
-        if not s.model_lock:  # with the lock the policy sets them
-            for key, value in starting_model(s).items():
-                hermes(name, ["config", "set", key, value])
+        if not inst.moved:  # a moved instance keeps its users' choices
+            hermes(name, ["config", "set", "display.language", s.language])
+            if not s.model_lock:  # with the lock the policy sets them
+                for key, value in starting_model(s).items():
+                    hermes(name, ["config", "set", key, value])
+            seed_ui(s, name)
         password = ensure_sign_in(name)
-        seed_ui(s, name)
     host.reconcile_access(s, reg)  # outside a step: it logs when it installs Caddy
     with step(f"{name}: gateway"):
         start_or_restart_gateway(s, inst)
@@ -375,7 +390,31 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     print(f"  Password: {password}   (shown once; reset with: thinny instance reset-password {name})" if password
           else "  Password: unchanged (reset with: thinny instance reset-password " + name + ")")
     _print_access_hint(s, inst)
-    print(f"Next: sign {name} in to {s.model_provider} before handing over: thinny instance login {name}")
+    if inst.moved:
+        print(f"Next: if {name} did not use {s.model_provider} on its old server, sign it in: "
+              f"thinny instance login {name}")
+    else:
+        print(f"Next: sign {name} in to {s.model_provider} before handing over: thinny instance login {name}")
+
+
+def check_access(s: Settings, reg: Registry, name: str, access: str, url: str) -> None:
+    """Refuse an access method this server cannot give the instance."""
+    if access not in ACCESS_METHODS:
+        raise CommandError(f"access must be one of {', '.join(ACCESS_METHODS)}")
+    if access == "url":
+        check_url(reg, name, url)
+    if access == "lan" and not s.lan_address:
+        raise CommandError("set access.lan_address in site.toml first")
+    if access == "tailscale" and host.tailscale_status() is None:
+        raise CommandError("Tailscale is not running on this server")
+
+
+def check_free_name(name: str) -> None:
+    """Refuse a name the host or Incus already uses."""
+    if uid_of(name) is not None:  # Debian's system accounts, which the container has too
+        raise CommandError(f"{name!r} is a system account name; choose another name")
+    if container_state(name) is not None:
+        raise CommandError(f"an Incus container {name!r} already exists; choose another name")
 
 
 def starting_model(s: Settings) -> dict[str, str]:
@@ -413,10 +452,7 @@ def _print_access_hint(s: Settings, inst: Instance) -> None:
 
 def change_access(s: Settings, reg: Registry, name: str, access: str, url: str = "") -> None:
     inst = _active(reg, name)
-    if access not in ACCESS_METHODS:
-        raise CommandError(f"access must be one of {', '.join(ACCESS_METHODS)}")
-    if access == "url":
-        check_url(reg, name, url)
+    check_access(s, reg, name, access, url)
     inst.access, inst.url = access, url if access == "url" else ""
     inst.url = url_for(s, inst)
     reg.save()
@@ -462,16 +498,21 @@ def disable(s: Settings, reg: Registry, name: str) -> None:
         print(f"{name} is already disabled")
         return
     if container_state(name) is not None:
-        run(["incus", "config", "set", name, "boot.autostart=false"])  # first: a reboot must not bring it back
-        if container_state(name) == "RUNNING" and \
-                run(["incus", "stop", name, "--timeout", "60"], check=False, timeout=120).returncode != 0:
-            run(["incus", "stop", name, "--force"])  # its root may refuse to shut down
-        if container_state(name) == "RUNNING":
-            raise CommandError(f"{name}'s container is still running")
+        stop(name)
     inst.state = "disabled"
     reg.save()
     host.reconcile_access(s, reg)
     print(f"{name} disabled: container stopped, Webapp and agent with it. Its data stays in the container {name}.")
+
+
+def stop(name: str) -> None:
+    """Stop the instance's container and keep it stopped."""
+    run(["incus", "config", "set", name, "boot.autostart=false"])  # first: a reboot must not bring it back
+    if container_state(name) == "RUNNING" and \
+            run(["incus", "stop", name, "--timeout", "60"], check=False, timeout=120).returncode != 0:
+        run(["incus", "stop", name, "--force"])  # its root may refuse to shut down
+    if container_state(name) == "RUNNING":
+        raise CommandError(f"{name}'s container is still running")
 
 
 def list_instances(reg: Registry) -> None:

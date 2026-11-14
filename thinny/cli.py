@@ -11,12 +11,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import apply, checks, host, instances, settings, system, uninstall, update
+from . import apply, checks, host, instances, move, settings, system, uninstall, update
 from .registry import Registry, RegistryError
 from .settings import SettingsError, load
 from .system import CommandError, lock, write_file
-
-THINNY = "/usr/local/sbin/thinny"
 
 
 def parse_access(value: str) -> tuple[str, str]:
@@ -70,6 +68,17 @@ def main(argv: list[str] | None = None) -> int:
         inst.add_parser(name, help=text).add_argument("name")
     rst = inst.add_parser("restart", help="restart gateways one by one (all, or the named instances)")
     rst.add_argument("names", nargs="*")
+    mov = inst.add_parser("move", help="move instances to another thinny server over SSH (experimental)")
+    mov.add_argument("names", nargs="*")
+    mov.add_argument("--all", action="store_true", help="every active instance")
+    mov.add_argument("--to", required=True, metavar="[USER@]HOST")
+    rcv = inst.add_parser("receive")  # without help, so not listed: `move` runs it on the other server
+    rcv.add_argument("name")
+    rcv.add_argument("--access", required=True)
+    rcv.add_argument("--url", default="")
+    rcv.add_argument("--release", nargs=2, required=True, metavar=("TAG", "COMMIT"))
+    rcv.add_argument("--built-ins", required=True)
+    rcv.add_argument("--check", action="store_true")
     sub.add_parser("uninstall", help="remove thinny and every instance, with all their data")
     a = ap.parse_args(argv)
     command = " ".join(filter(None, (a.command, getattr(a, "action", None))))
@@ -100,7 +109,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         # Before the lock: the install.sh of a new thinny runs `thinny setup`.
         if command == "update" and not a.dry_run and (s.auto_update or not a.scheduled) and update.update_thinny():
-            os.execv(THINNY, [THINNY, "update", *(["--scheduled"] if a.scheduled else [])])  # on with the new code
+            # on with the new code
+            os.execv(host.THINNY, [host.THINNY, "update", *(["--scheduled"] if a.scheduled else [])])
         with lock():
             reg = Registry.load()
             if command == "setup":
@@ -128,6 +138,13 @@ def main(argv: list[str] | None = None) -> int:
             elif command == "instance restart":
                 targets = [reg.get(n) for n in a.names] if a.names else reg.current()
                 instances.restart_all(s, [t for t in targets if t.state == "active"], reg)
+            elif command == "instance move":
+                if bool(a.names) == a.all:
+                    raise CommandError("name the instances to move, or give --all")
+                move.move(s, reg, a.names, a.to)
+            elif command == "instance receive":
+                move.receive(s, reg, a.name, a.access, a.url, tuple(a.release), a.built_ins,
+                             None if a.check else sys.stdin.buffer)
         return 0
     except (SettingsError, RegistryError, CommandError) as e:
         print(f"thinny: {e}", file=sys.stderr)
