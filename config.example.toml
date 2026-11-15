@@ -1,4 +1,4 @@
-# thinny site settings: /etc/thinny/site.toml
+# thinny server settings: /etc/thinny/config.toml
 # Edit with: thinny config edit (or edit it directly, then run: thinny config apply)
 
 [hermes]

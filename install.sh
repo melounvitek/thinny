@@ -6,7 +6,7 @@
 set -eu
 
 LIB=/usr/local/lib/thinny
-SITE=/etc/thinny/site.toml
+CONFIG=/etc/thinny/config.toml
 SRC=$(cd "$(dirname "$0")" && pwd)
 
 [ "$(id -u)" = 0 ] || { echo "run as root or with sudo" >&2; exit 1; }
@@ -29,7 +29,7 @@ DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y -q \
 echo "Installing thinny into $LIB"
 mkdir -p "$LIB"
 rm -rf "$LIB/thinny"
-cp -r "$SRC/thinny" "$SRC/bin" "$SRC/site.example.toml" "$LIB/"
+cp -r "$SRC/thinny" "$SRC/bin" "$SRC/config.example.toml" "$LIB/"
 # In place: every instance's container mounts files/model-guard, and a replaced directory would
 # leave them an empty one. Gateways load a changed model guard at their next restart.
 mkdir -p "$LIB/files"
@@ -40,21 +40,26 @@ ln -sfn "$LIB/bin/thinny" /usr/local/sbin/thinny
 echo "$SRC" >"$LIB/source" # thinny update pulls this clone
 # 755 whatever the umask: any account may fetch the office certificate in it.
 install -d -m 755 /etc/thinny
+# Named site.toml before.
+if [ -f /etc/thinny/site.toml ] && [ ! -e "$CONFIG" ]; then
+	mv /etc/thinny/site.toml "$CONFIG"
+fi
+rm -f "$LIB/site.example.toml"
 
-if [ ! -f "$SITE" ]; then
+if [ ! -f "$CONFIG" ]; then
 	echo
 	# The one-line install pipes this script into bash, so the questions read the terminal itself.
 	if (exec </dev/tty) 2>/dev/null; then
 		/usr/local/sbin/thinny init </dev/tty || { echo "To try again: ${SUDO_USER:+sudo }sh $SRC/install.sh" >&2; exit 1; }
 		echo
 	else
-		install -m 600 "$SRC/site.example.toml" "$SITE"
-		echo "Edit $SITE (model, LAN address, ...), then run: ${SUDO_USER:+sudo }sh $SRC/install.sh"
+		install -m 600 "$SRC/config.example.toml" "$CONFIG"
+		echo "Edit $CONFIG (model, LAN address, ...), then run: ${SUDO_USER:+sudo }sh $SRC/install.sh"
 		exit 0
 	fi
 fi
 # Only root reads it: it may hold the Telegram manager bot's token.
-chmod 600 "$SITE"
+chmod 600 "$CONFIG"
 
 /usr/local/sbin/thinny setup
 # The commit set up: thinny update installs only a newer one.

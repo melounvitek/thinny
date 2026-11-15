@@ -62,7 +62,7 @@ tamper-proof against users who are root in their container.
 
 - No personal or site data in the repo: no IPs, hostnames, tailnet names, e-mails,
   organisation names, tokens, provider server ids. Site data lives on the server in
-  `/etc/thinny/site.toml`; the repo ships `site.example.toml` with placeholders.
+  `/etc/thinny/config.toml`; the repo ships `config.example.toml` with placeholders.
 - Secrets are generated on the server (Webapp sign-in) or entered by the admin on the
   server (ChatGPT device login). Never logged, never committed, never printed except the
   one-time hand-over of an instance's Webapp password.
@@ -502,21 +502,21 @@ thinny/             settings, registry, render (all generated text), system (com
                     host and in containers), host (Incus pool and profile, firewall, units,
                     release, access), instances, apply, checks, update
 files/model-guard/  mounted read-only into every container
-site.example.toml   every site setting with its default, commented
+config.example.toml   every site setting with its default, commented
 extras/, tests/     netcup snapshot and nightly watch (run off the server); pytest
 ```
 
 ### 6.2 State on the server
 
 ```
-/etc/thinny/site.toml           admin-edited settings
+/etc/thinny/config.toml           admin-edited settings
 /var/lib/thinny/instances.json  registry: name, port, container address, access, URL, state,
                                 the built-ins (render.BUILT_INS) its container last got,
                                 whether it moved here from another server, its own model lock
                                 (models and provider; [] unlocked; null: the site's), the URL of
                                 its users' Google Sheet for the access trace
 /var/lib/thinny/release         "<tag> <commit>": the Hermes release all instances run
-/var/lib/thinny/policies/<name>/        its Hermes managed scope, rendered from site.toml; a
+/var/lib/thinny/policies/<name>/        its Hermes managed scope, rendered from config.toml; a
                                         folder per instance (before, all shared /etc/hermes/)
 /etc/thinny/thinny.nft  our nft table for the containers
 /etc/systemd/system/incus.service.d/thinny.conf, /etc/sysctl.d/90-thinny.conf
@@ -569,7 +569,7 @@ Tailscale socket are no longer needed: the host has no instance accounts.
 Idempotent; a rerun repairs and never destroys data or updates Hermes: packages
 (`incus-base`, or `incus` on Ubuntu 24.04, `btrfs-progs`, `nftables`, `curl`, `git`, `python3`;
 Caddy later when LAN access needs it), the tool and the path of the clone it ran from,
-`site.toml` from the example on the first run, then `thinny setup` and the commit it set up:
+`config.toml` from the example on the first run, then `thinny setup` and the commit it set up:
 the storage pool once (80% of the free space under `/var/lib`; no Incus network), then
 `config apply`: firewall first, units, sysctl, profile, instance policies, Webapp settings, access,
 remembered restarts. No Hermes on the host.
@@ -588,7 +588,7 @@ status | doctor                   quick look (release, last update, containers, 
                                   every check (section 7)
 update [--dry-run] [--scheduled]  update now (6.8); the timer runs --scheduled, which waits
                                   for the minimum age and respects auto_update
-config edit | apply               visudo-like edit of site.toml, then apply; re-render and
+config edit | apply               visudo-like edit of config.toml, then apply; re-render and
                                   restart where needed
 instance add <name> [--access ...] [--frontend webapp|webui]
                                   port, address, container, packages, account (uid 1000, sudo,
@@ -647,7 +647,7 @@ uninstall                         after the hostname is typed: every container, 
 
 ### 6.6 Access per instance
 
-`instance add` asks for one method per instance (`--access`, default from `site.toml`), since a
+`instance add` asks for one method per instance (`--access`, default from `config.toml`), since a
 Webapp accepts only its own `public_url`. The Webapp, or WebUI, listens on `127.0.0.1:<port>` inside
 the container; the proxy device publishes it on the same host loopback port, and every method
 points there: **LAN** a Caddy site with its local CA (`tls internal`), whose root certificate
@@ -660,14 +660,14 @@ With `access.tunnel_port`, Caddy also serves every own address at `http://127.0.
 for one tunnel (cloudflared with a wildcard route): one site per host, 404 for anything else. An
 address is a host of its own, without a path (section 5).
 
-### 6.7 Settings (`site.toml`)
+### 6.7 Settings (`config.toml`)
 
 `[hermes]` update timing, `[policy]` provider, models, effort, `model_lock`, approvals, language and
 `language_pack` (a catalog plugin name), `[container]` `cpu`, `memory_mb`, `disk_gb`,
 `[webapp]` port range, `frontend` and the look for new instances (`text_scale` 110), `[access]` `default`,
 `lan_address`, `tunnel_port`, `[network]` `interface` (`eth0`) and `blocked_networks` (public networks;
 private ones and the tailnet are always blocked), `[telegram]` `manager_token` (only root reads
-`site.toml`). `site.example.toml` lists every key.
+`config.toml`). `config.example.toml` lists every key.
 
 ### 6.8 Nightly update
 
@@ -711,11 +711,11 @@ private ones and the tailnet are always blocked), `[telegram]` `manager_token` (
 ## 7. Checks (`thinny doctor`)
 
 - Install: Incus pool `default` and profile `thinny-instance`, the incus.service drop-in, IPv4
-  forwarding (FAIL); instance policies match `site.toml` (WARN); the recorded release; nightly
+  forwarding (FAIL); instance policies match `config.toml` (WARN); the recorded release; nightly
   timer enabled (WARN); last update status (FAIL when failed, WARN when missing or older than
   48 h); thinny-trace.service enabled and active, no rows waiting for a Google Sheet (WARN).
 - Prerequisites (section 6.3), all WARN.
-- Firewall: the loaded table is exactly what `site.toml` renders, chain by chain (FAIL).
+- Firewall: the loaded table is exactly what `config.toml` renders, chain by chain (FAIL).
 - Caddy active when any instance uses LAN access, or own addresses with a tunnel port (FAIL);
   then something answers at the tunnel port (FAIL), and with LAN access `/etc/thinny/office-root.crt`
   is Caddy's root certificate (WARN).
@@ -829,7 +829,7 @@ up by hand as `add` does it now, Asterisk registered through the container's NAT
 worked: PIN, Czech speech, Piper's replies. Piper's own speed (`length_scale` 1.0) was too slow.
 
 Telegram bots (2026-11-15): 0 managed bots with a real manager bot (section 4); 1 `instance
-telegram` and `site.toml` readable by root only; 2 `instance add` points to it after `login`
+telegram` and `config.toml` readable by root only; 2 `instance add` points to it after `login`
 (waiting in `add` would greet the user before Hermes is signed in); 3 README and this file.
 
 WebUI per instance (2026-11-15): 1 the setting, the choice at `instance add` and `instance frontend`,

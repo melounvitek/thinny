@@ -184,7 +184,7 @@ def test_another_release_or_an_unfinished_update_is_refused(target, incus, tmp_p
 
 
 def test_what_this_server_cannot_give_is_refused(target, incus):
-    refused(target, "set access.lan_address in site.toml first", access="lan")
+    refused(target, "set access.lan_address in config.toml first", access="lan")
     refused(target, "Tailscale is not running on this server", access="tailscale")
     refused(target, "no free Webapp port left", s=dataclasses.replace(S, port_range=(9120, 9120)))
     assert not incus.ran("incus import")

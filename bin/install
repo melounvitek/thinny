@@ -21,7 +21,7 @@ as_root() {
 	fi
 }
 
-if [ -n "$TTY" ] && [ ! -f /etc/thinny/site.toml ]; then
+if [ -n "$TTY" ] && [ ! -f /etc/thinny/config.toml ]; then
 	cat <<-EOF
 	thinny is meant for a dedicated server, not a desktop or a shared machine. It sets up:
 	  - Incus containers, with their own firewall table and IP forwarding

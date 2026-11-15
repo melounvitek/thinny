@@ -61,8 +61,8 @@ def install(s: Settings, reg: Registry):
                else fail("AppArmor keeps instances from creating user namespaces: their browser cannot start",
                          "thinny config apply"))
     stale = [inst.name for inst in active(reg) if not host.policy_current(instances.settings_for(s, inst), inst.name)]
-    yield (warn(f"policy not as site.toml says: {', '.join(stale)}", "thinny config apply") if stale
-           else ok(f"instance policies in {host.POLICIES} match site.toml"))
+    yield (warn(f"policy not as config.toml says: {', '.join(stale)}", "thinny config apply") if stale
+           else ok(f"instance policies in {host.POLICIES} match config.toml"))
     if host.RELEASE_FILE.exists():
         yield ok(f"Hermes release of all instances: {host.RELEASE_FILE.read_text().split()[0]}")
     state = system.run(["systemctl", "is-enabled", "thinny-update.timer"], check=False).stdout.strip()
@@ -144,9 +144,9 @@ def unattended_upgrades(apt_dump: str, update_time: str):
 def firewall(s: Settings, reg: Registry):
     listed = system.run(["nft", "list", "table", "inet", "thinny"], check=False).stdout
     rendered = render.firewall(s.network_interface, list(s.blocked_networks))
-    yield (ok("firewall table inet thinny loaded as site.toml says")
+    yield (ok("firewall table inet thinny loaded as config.toml says")
            if table_parts(listed) == table_parts(rendered)
-           else fail("firewall table inet thinny is missing or not as site.toml says: containers may reach "
+           else fail("firewall table inet thinny is missing or not as config.toml says: containers may reach "
                      "each other, the host or blocked networks", "thinny config apply"))
 
 

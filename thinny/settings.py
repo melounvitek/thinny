@@ -1,4 +1,4 @@
-"""Site settings from /etc/thinny/site.toml."""
+"""Server settings from /etc/thinny/config.toml."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import tomllib
 from dataclasses import dataclass, fields
 from pathlib import Path
 
-SITE_TOML = Path("/etc/thinny/site.toml")
+CONFIG_TOML = Path("/etc/thinny/config.toml")
 ACCESS_METHODS = ("lan", "tailscale", "url", "local")
 FRONTENDS = ("webapp", "webui")   # Hermes's built-in Webapp, or hermes-webui
 
@@ -49,7 +49,7 @@ class Settings:
     telegram_manager_token: str = ""
 
 
-# (section, key) in site.toml -> Settings field
+# (section, key) in config.toml -> Settings field
 KEYS = {
     ("hermes", "auto_update"): "auto_update",
     ("hermes", "update_time"): "update_time",
@@ -81,7 +81,7 @@ KEYS = {
 }
 
 
-def load(path: Path = SITE_TOML) -> Settings:
+def load(path: Path = CONFIG_TOML) -> Settings:
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as e:
@@ -89,7 +89,7 @@ def load(path: Path = SITE_TOML) -> Settings:
     return parse(text, source=str(path))
 
 
-def parse(text: str, source: str = "site.toml") -> Settings:
+def parse(text: str, source: str = "config.toml") -> Settings:
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:
@@ -116,7 +116,7 @@ def parse(text: str, source: str = "site.toml") -> Settings:
 
 
 def fill(template: str, values: dict[tuple[str, str], object]) -> str:
-    """site.toml text: `template` with `values` ((section, key) -> value) set, its comments kept (in their
+    """config.toml text: `template` with `values` ((section, key) -> value) set, its comments kept (in their
     column when the value fits)."""
     lines, section = [], ""
     for line in template.splitlines():

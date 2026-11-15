@@ -33,7 +33,7 @@ class Instance:
     state: str = "pending"
     built_ins: str = ""   # render.BUILT_INS its container last got in full
     moved: bool = False   # from another server: a resumed add keeps its users' settings
-    lock: list[str] | None = None   # its own model lock, the models it allows ([]: unlocked); None: the site's
+    lock: list[str] | None = None   # its own model lock, the models it allows ([]: unlocked); None: the server's
     lock_provider: str = ""         # the provider of its own lock
     trace_sheet: str = ""           # the Apps Script URL of the Google Sheet that gets its access trace too
     frontend: str = "webapp"        # what its users open: Hermes's Webapp, or webui (hermes-webui)

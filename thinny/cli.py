@@ -40,23 +40,23 @@ def at_least_1(value: str) -> int:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="thinny", description="Shared Hermes Agent server, one isolated container per instance.")
     sub = ap.add_subparsers(dest="command", required=True, metavar="command")
-    sub.add_parser("init", help="ask for the main settings and write site.toml (on a new server)")
-    sub.add_parser("setup", help="set up the server, then apply site.toml")
+    sub.add_parser("init", help="ask for the main settings and write config.toml (on a new server)")
+    sub.add_parser("setup", help="set up the server, then apply config.toml")
     sub.add_parser("status", help="quick look: release, last update, containers, gateways")
     sub.add_parser("doctor", help="every isolation and health check, with fixes")
     upd = sub.add_parser("update", help="update thinny, then every instance's Hermes, now")
     upd.add_argument("--dry-run", action="store_true", help="only report what would happen")
     upd.add_argument("--scheduled", action="store_true",
                      help="as the nightly timer: respect auto_update, wait for min_release_age_hours")
-    cfg = sub.add_parser("config", help="the site settings, /etc/thinny/site.toml")
+    cfg = sub.add_parser("config", help="the server settings, /etc/thinny/config.toml")
     cfg = cfg.add_subparsers(dest="action", required=True, metavar="action")
-    cfg.add_parser("edit", help="edit site.toml in $VISUAL or $EDITOR, check it, then apply it")
-    cfg.add_parser("apply", help="bring the server in line with site.toml after editing it")
+    cfg.add_parser("edit", help="edit config.toml in $VISUAL or $EDITOR, check it, then apply it")
+    cfg.add_parser("apply", help="bring the server in line with config.toml after editing it")
     inst = sub.add_parser("instance", help="instances, one container each")
     inst = inst.add_subparsers(dest="action", required=True, metavar="action")
     inst.add_parser("list", help="instances, ports, URLs, gateway state, CPU, RAM and disk use")
     add = inst.add_parser("add", help="add an instance (or finish an interrupted add)",
-                          description="Limits not given follow [container] in site.toml.")
+                          description="Limits not given follow [container] in config.toml.")
     add.add_argument("name")
     add.add_argument("--access", help="lan | tailscale | url=<URL> | local (default: asked)")
     add.add_argument("--frontend", choices=settings.FRONTENDS, help="(default: asked)")
@@ -76,10 +76,10 @@ def main(argv: list[str] | None = None) -> int:
     lgn = inst.add_parser("login", help="sign an instance in to a model provider (device code)")
     lgn.add_argument("name")
     lgn.add_argument("--provider", choices=PROVIDERS, help="(default: asked)")
-    lck = inst.add_parser("lock", help="lock an instance to models of the provider it uses, whatever the site's lock")
+    lck = inst.add_parser("lock", help="lock an instance to models of the provider it uses, whatever the server's lock")
     lck.add_argument("name")
     lck.add_argument("models", nargs="*", help="model ids it allows, the first by default (default: the one it uses)")
-    inst.add_parser("unlock", help="let an instance's users choose their models, whatever the site's lock") \
+    inst.add_parser("unlock", help="let an instance's users choose their models, whatever the server's lock") \
         .add_argument("name")
     inst.add_parser("telegram", help="give an instance a Telegram bot its user creates with a link (see README)") \
         .add_argument("name")
@@ -116,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         if command == "init":
             init_config()
             return 0
-        if command == "trace":  # without site.toml: a broken one must not stop the trace
+        if command == "trace":  # without config.toml: a broken one must not stop the trace
             return trace.run()
         if command == "uninstall":
             with lock(update.SELF_UPDATE_LOCK), lock():
@@ -209,14 +209,14 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def edit_config() -> bool:
-    """Edit a copy of site.toml, like visudo: only a valid change replaces it. True when it did."""
-    path = settings.SITE_TOML
+    """Edit a copy of config.toml, like visudo: only a valid change replaces it. True when it did."""
+    path = settings.CONFIG_TOML
     # sudo drops the admin's $EDITOR; `editor` is Debian's and Ubuntu's default (nano).
     editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or shutil.which("editor")
     if not editor:
         raise CommandError(f"no editor found (set EDITOR), or edit {path}, then run: thinny config apply")
     original = path.read_text(encoding="utf-8")
-    fd, name = tempfile.mkstemp(prefix="site-", suffix=".toml")
+    fd, name = tempfile.mkstemp(prefix="config-", suffix=".toml")
     copy = Path(name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -227,10 +227,10 @@ def edit_config() -> bool:
             except OSError as e:
                 raise CommandError(f"cannot start {editor}: {e.strerror}") from e
             if code != 0:
-                raise CommandError(f"{editor} exited with {code}; site.toml is unchanged")
+                raise CommandError(f"{editor} exited with {code}; config.toml is unchanged")
             text = copy.read_text(encoding="utf-8")
             if text == original:
-                print("site.toml is unchanged.")
+                print("config.toml is unchanged.")
                 return False
             try:
                 settings.parse(text, source=str(path))
@@ -241,7 +241,7 @@ def edit_config() -> bool:
                 except EOFError:  # nobody to answer
                     answer = "d"
                 if answer.strip().lower().startswith("d"):
-                    print("Discarded; site.toml is unchanged.")
+                    print("Discarded; config.toml is unchanged.")
                     return False
                 continue
             write_file(path, text, 0o600)   # it may hold the Telegram manager bot's token
@@ -251,12 +251,12 @@ def edit_config() -> bool:
 
 
 def init_config() -> None:
-    """Ask for what a new server needs and write it into the commented site.example.toml."""
-    path = settings.SITE_TOML
+    """Ask for what a new server needs and write it into the commented config.example.toml."""
+    path = settings.CONFIG_TOML
     if path.exists():
         raise CommandError(f"{path} exists; change it with: thinny config edit")
     if not sys.stdin.isatty():
-        raise CommandError(f"no terminal to ask on; copy {host.LIB / 'site.example.toml'} to {path} and edit it")
+        raise CommandError(f"no terminal to ask on; copy {host.LIB / 'config.example.toml'} to {path} and edit it")
     interface, address = system.default_route()
     print(f"thinny needs a few settings for {path}. Enter takes the [suggestion].\n"
           "Everything else keeps its default; change any of it later with: thinny config edit\n")
@@ -274,7 +274,7 @@ def init_config() -> None:
         pack = f"hermes-lang-{language}"
         found = system.http_status(host.CATALOG_URL.format(pack), timeout=20) if language != "en" else ""
         pack = pack if found == "200" else ""
-        text = settings.fill((host.LIB / "site.example.toml").read_text(encoding="utf-8"), {
+        text = settings.fill((host.LIB / "config.example.toml").read_text(encoding="utf-8"), {
             ("policy", "model_provider"): provider, ("policy", "model"): model, ("policy", "language"): language,
             ("policy", "language_pack"): pack, ("network", "interface"): interface, ("access", "default"): access,
             ("access", "lan_address"): lan_address, ("access", "tunnel_port"): int(port)})

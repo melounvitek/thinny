@@ -11,11 +11,11 @@ VALID = '[policy]\nmodel = "m1"\nallowed_models = ["m1"]\n\n[access]\nlan_addres
 
 @pytest.fixture
 def server(tmp_path, monkeypatch):
-    """A root run against site.toml in tmp_path; records the applies and updates it starts. thinny
+    """A root run against config.toml in tmp_path; records the applies and updates it starts. thinny
     itself has nothing new."""
-    site = tmp_path / "site.toml"
+    site = tmp_path / "config.toml"
     site.write_text(VALID)
-    monkeypatch.setattr(settings, "SITE_TOML", site)
+    monkeypatch.setattr(settings, "CONFIG_TOML", site)
     monkeypatch.setattr(cli, "load", lambda: settings.load(site))
     monkeypatch.setattr(cli.os, "geteuid", lambda: 0)
     monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: Registry()))
@@ -42,7 +42,7 @@ def editor(monkeypatch, *texts, code=0):
 
 @pytest.fixture
 def new_server(server, monkeypatch):
-    """A server without site.toml, on a terminal. It reaches the internet through enp1s0 from
+    """A server without config.toml, on a terminal. It reaches the internet through enp1s0 from
     192.168.1.5, Hermes's catalog has a Czech and a Brazilian Portuguese language pack, and Tailscale
     is off."""
     site, _ = server
