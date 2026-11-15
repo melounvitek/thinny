@@ -30,14 +30,16 @@ def commands(tmp_path, monkeypatch):
     return calls, missing
 
 
-def test_the_storage_pool_is_created_once(commands):
+def test_the_storage_pool_is_created_once_and_compressed(commands):
     calls, missing = commands
+    compress = "incus storage set default btrfs.mount_options=user_subvol_rm_allowed,compress-force=zstd:1"
     host.init_incus()
     assert any(c.startswith("incus storage create default btrfs size=") for c, _ in calls)
+    assert calls[-1][0] == compress
     calls.clear()
     missing.discard("storage")
     host.init_incus()
-    assert [c for c, _ in calls] == ["incus storage show default"]
+    assert [c for c, _ in calls] == ["incus storage show default", compress]
 
 
 def test_the_profile_follows_the_settings(commands):

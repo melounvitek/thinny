@@ -93,11 +93,15 @@ def write_policy(s: Settings, name: str) -> None:
 def init_incus() -> None:
     """Incus storage: a btrfs pool in a sparse file (instant copies and snapshots, a disk quota per
     container), sized once to most of the free space. No Incus network: containers get routed NICs."""
-    if run(["incus", "storage", "show", render.POOL], check=False).returncode == 0:
-        return
-    size = int(shutil.disk_usage("/var/lib").free * 0.8) // 2**30
-    log(f"creating the Incus storage pool ({size} GiB at most; it takes space as instances use it)")
-    run(["incus", "storage", "create", render.POOL, "btrfs", f"size={size}GiB"], timeout=600)
+    if run(["incus", "storage", "show", render.POOL], check=False).returncode != 0:
+        size = int(shutil.disk_usage("/var/lib").free * 0.8) // 2**30
+        log(f"creating the Incus storage pool ({size} GiB at most; it takes space as instances use it)")
+        run(["incus", "storage", "create", render.POOL, "btrfs", f"size={size}GiB"], timeout=600)
+    # Compressed, which about halves an instance's disk use (the quota counts the compressed size). Forced:
+    # btrfs's own guess left most of Chromium and Claude Code uncompressed. Incus's default option first. A pool
+    # from before gets it at once, remounted, for what is written from then on.
+    run(["incus", "storage", "set", render.POOL,
+         "btrfs.mount_options=user_subvol_rm_allowed,compress-force=zstd:1"])
 
 
 def ensure_profile(s: Settings) -> None:
