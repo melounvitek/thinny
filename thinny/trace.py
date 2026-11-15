@@ -1,6 +1,6 @@
-"""The trace of admins' access to containers: every `incus exec` (`incus shell` too) and `incus console`
-that is not thinny's own, `incus file`, snapshots and exports, from Incus's lifecycle events and its log of
-API requests. It goes to the journal (and so to syslog) and,
+"""The trace of admins' access to containers: every `incus exec` (`incus shell` too) and `incus console`,
+`incus file`, snapshots and exports, from Incus's lifecycle events and its log of API requests; thinny's own
+commands once per run. It goes to the journal (and so to syslog) and,
 for an instance, to its trace directory, which its container sees read-only, and to its Google Sheet if
 it has one. A trace, not a guard: root on the host can stop it, or reach a container around Incus."""
 
@@ -9,15 +9,18 @@ from __future__ import annotations
 import datetime as dt
 import http.client
 import json
+import os
 import re
 import shlex
 import subprocess
 import sys
 import threading
 import urllib.request
+from pathlib import Path
 
+from .host import THINNY
 from .registry import Registry, RegistryError
-from .system import INTERNAL, STATE_DIR, CommandError, write_file
+from .system import STATE_DIR, CommandError, write_file
 
 DIR = STATE_DIR / "trace"   # an instance's admin-access.log in DIR/<name>
 IN_CONTAINER = "/var/log/thinny"   # DIR/<name>, as the instance's container sees it
@@ -26,6 +29,9 @@ RETRY = 300   # seconds between tries to send the rows a sheet did not take
 # A sheet's Apps Script as a web app. Nothing else: the server would post the trace wherever an URL points.
 SHEET_URL = re.compile(r"https://script\.google\.com/macros/s/[\w-]+/exec")
 MONITOR = ["incus", "monitor", "--project", "default", "--type", "lifecycle", "--type", "logging", "--format", "json"]
+PROC = Path("/proc")
+PYTHON = "/usr/bin/python3"   # thinny's, bin/thinny says
+MARK = re.compile(r"THINNY=(\d+)")   # system.INTERNAL: thinny's process
 # An event's source or a request's URL: the instance and what of it ("", "sftp", "snapshots/snap0", ...).
 INSTANCE = re.compile(r"/1\.0/instances/([A-Za-z0-9][A-Za-z0-9-]*)/?([^?]*)(\?.*)?")
 # The other lifecycle events of access, as the admin's command. The file API's are other clients' than `incus`.
@@ -38,8 +44,21 @@ COMMANDS = {"instance-console": "incus console {name}",
             "instance-backup-created": "incus export {name}"}
 
 
-def entry(event: dict) -> tuple[str, str] | None:
-    """The instance and the admin's command; None for thinny's own commands and other events."""
+def thinny_run(pid: str) -> str | None:
+    """`thinny <arguments>` the process runs; None when it runs no thinny."""
+    try:
+        python = os.path.samefile(PROC / pid / "exe", PYTHON)
+        argv = (PROC / pid / "cmdline").read_bytes().decode(errors="replace").split("\0")[:-1]
+    except OSError:   # it ended
+        return None
+    if not python or argv[1:2] != [THINNY]:   # Python runs thinny as its script
+        return None
+    return shlex.join(["thinny", *argv[2:]])
+
+
+def entry(event: dict, noted: set[tuple[str, str]]) -> tuple[str, str] | None:
+    """The instance and the admin's command, or the run of thinny if not noted for the instance yet; None for
+    other events. `noted`: the instances and processes of the runs of thinny noted."""
     meta = event["metadata"]
     if event["type"] == "logging":
         # `incus file` goes through SFTP, which sends no lifecycle event: only its request is logged.
@@ -55,9 +74,14 @@ def entry(event: dict) -> tuple[str, str] | None:
             return None
         name = found[1]
         if action == "instance-exec":
-            if context["command"][:len(INTERNAL)] == INTERNAL:
-                return None
-            text = f"incus exec {name} -- {shlex.join(context['command'])}"
+            command = context["command"]
+            mark = MARK.fullmatch(command[1]) if len(command) > 1 and command[0] == "env" else None
+            run = thinny_run(mark[1]) if mark else None   # only a running thinny's mark counts: anyone can put one in
+            if run:
+                if (name, mark[1]) in noted:
+                    return None
+                noted.add((name, mark[1]))
+            text = f"{run} ran its commands in {name}" if run else f"incus exec {name} -- {shlex.join(command)}"
         else:
             text = COMMANDS[action].format(name=name, path=str(context.get("path", "")).lstrip("/"),
                                            item=found[2].rpartition("/")[2])
@@ -149,11 +173,12 @@ def run() -> int:
     wake, stop = threading.Event(), threading.Event()
     sending = threading.Thread(target=sender, args=(wake, stop), daemon=True)
     sending.start()
+    noted = set()
     with subprocess.Popen(MONITOR, stdout=subprocess.PIPE, encoding="utf-8", errors="replace") as monitor:
         for raw in monitor.stdout:
             if not raw.strip():   # every event ends with an empty line
                 continue
-            found = entry(json.loads(raw))
+            found = entry(json.loads(raw), noted)
             if found is None:
                 continue
             name, text = found

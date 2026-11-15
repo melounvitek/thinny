@@ -428,7 +428,8 @@ so allow exactly these two without a password, with `sudo visudo -f /etc/sudoers
 
 When someone reaches into an instance's container through Incus, with `incus exec`, `incus shell`,
 `incus console` (or its log), `incus file`, a snapshot or an export, thinny notes the time and the
-command. Its own commands are left out.
+command. thinny's own commands there are noted once per run of thinny, e.g. `thinny doctor ran its
+commands in alice` (`doctor` reads the instance's `.env`, among others).
 
 - **On the server:** `journalctl -t thinny-trace`, and per instance in
   `/var/lib/thinny/trace/<name>/admin-access.log`.
@@ -478,8 +479,8 @@ thinny instance trace-sheet alice off   # stop
 
 It is a trace, not a lock: root on the server can stop it or change its files. It does not see
 `incus copy` and `incus publish`, which files `incus file` touched, the containers' files on the
-server's disk, `nsenter`, what happens in a shell after it opens, a command that starts with
-`env THINNY=1` (thinny's own mark), or the few seconds while it restarts (e.g. with Incus).
+server's disk, `nsenter`, what happens in a shell after it opens, a command with the mark of a
+running thinny (`env THINNY=<its process>`), or the few seconds while it restarts (e.g. with Incus).
 Commands are noted in full, also in a Google Sheet: keep passwords out of them. `doctor` warns
 when the trace is not running.
 

@@ -20,8 +20,9 @@ LOG_FILE = Path("/var/log/thinny.log")
 LOCK_FILE = Path("/run/thinny.lock")
 INSTANCE_UID = 1000        # every instance's account inside its container
 OUTPUT_LIMIT = 4_000_000   # bytes per output stream of one command
-# Leads every command thinny runs in a container, so the trace of admins' access (trace.py) leaves it out.
-INTERNAL = ["env", "THINNY=1"]
+# Leads every command thinny runs in a container, with thinny's process: the trace of admins' access (trace.py)
+# notes each run of thinny once per container, as the thinny command the process runs.
+INTERNAL = ["env", f"THINNY={os.getpid()}"]
 
 
 class CommandError(Exception):

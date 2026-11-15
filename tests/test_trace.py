@@ -2,7 +2,10 @@ import contextlib
 import datetime as dt
 import http.server
 import json
+import os
 import re
+import shlex
+import shutil
 import sys
 import threading
 import time
@@ -41,6 +44,8 @@ def traced(tmp_path, monkeypatch):
     """alice and bob are instances; plays `incus monitor` with the events given, printed as Incus does."""
     monkeypatch.setattr(trace, "DIR", tmp_path)
     monkeypatch.setattr(trace, "UNSENT", tmp_path / "unsent")
+    monkeypatch.setattr(trace, "PROC", tmp_path / "proc")   # no processes but those a test starts
+    monkeypatch.setattr(trace, "PYTHON", str(tmp_path / "usr/bin/python3"))
     reg = Registry({name: Instance(name, 9120 + i, "local", state="active") for i, name in enumerate(("alice", "bob"))})
     monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
     for name in ("alice", "bob"):
@@ -69,12 +74,64 @@ def test_an_admins_shell_exec_and_console_are_traced_for_the_host_and_the_instan
     assert not (tmp_path / "other").exists()
 
 
-def test_thinnys_own_commands_and_other_events_are_not_traced(traced, tmp_path, monkeypatch, capsys):
+def process(tmp_path, pid, *argv):
+    """A process in the traced fixture's /proc, of the program `argv[0]` in its stand-in for /."""
+    program = tmp_path / argv[0].lstrip("/")
+    program.parent.mkdir(parents=True, exist_ok=True)
+    program.touch()
+    path = tmp_path / "proc" / str(pid)
+    path.mkdir(parents=True)
+    (path / "exe").symlink_to(program)
+    (path / "cmdline").write_bytes(b"".join(arg.encode() + b"\0" for arg in argv))
+
+
+def test_each_run_of_thinny_is_traced_once_for_each_instance(traced, tmp_path, monkeypatch, capsys):
+    process(tmp_path, os.getpid(), "/usr/bin/python3", "/usr/local/sbin/thinny", "doctor")   # this test's
+    process(tmp_path, 4712, "/usr/bin/python3", "/usr/local/sbin/thinny", "update", "--scheduled")
     ran = []
     monkeypatch.setattr(system, "run", lambda cmd, **kw: ran.append(cmd))
-    system.in_container("alice", ["systemctl", "is-system-running"])
-    traced(exec_event(ran[0]), exec_event(system.as_user_cmd("alice", ["hermes", "status"])),
-           event("instance-started"), event("instance-snapshot-deleted", of="/snapshots/snap0"),
+    system.in_container("alice", ["curl", "https://example.org"])
+    traced(exec_event(ran[0]), exec_event(system.as_user_cmd("alice", ["cat", "/home/alice/.hermes/.env"])),
+           exec_event(system.as_user_cmd("bob", ["cat", "/home/bob/.hermes/.env"])),
+           event("instance-exec", command=["bash"]),
+           exec_event(system.as_user_cmd("alice", ["claude", "--version"])),   # still the same run
+           event("instance-exec", command=["env", "THINNY=4712", "claude", "update"]),
+           exec_event(system.as_user_cmd("alice", ["true"])),   # the two runs at once
+           event("instance-exec", command=["env", "THINNY=4712", "true"]))
+    journal = ["thinny doctor ran its commands in alice", "thinny doctor ran its commands in bob",
+               "incus exec alice -- bash", "thinny update --scheduled ran its commands in alice"]
+    assert capsys.readouterr().out.splitlines() == journal
+    alice = (tmp_path / "alice/admin-access.log").read_text().splitlines()
+    assert [line.split(" ", 1)[1] for line in alice] == [journal[0], *journal[2:]]
+
+
+def test_a_command_with_thinnys_mark_is_traced_in_full_unless_thinny_runs(traced, tmp_path, capsys):
+    process(tmp_path, 4713, "/usr/bin/sleep", "600")
+    process(tmp_path, 4716, "/usr/bin/python3", "-c", "import time; time.sleep(600)", "thinny", "doctor")
+    process(tmp_path, 4717, "/usr/bin/tail", "/usr/local/sbin/thinny", "-f")
+    process(tmp_path, 4718, "/tmp/python3", "/usr/local/sbin/thinny", "-f")   # tail, renamed
+    marked = [["env", "THINNY=4713", "cat", "/home/alice/.hermes/.env"],   # not thinny
+              ["env", "THINNY=4714", "cat", "/home/alice/.hermes/.env"],   # no such process
+              ["env", "THINNY=4716", "true"], ["env", "THINNY=4716", "cat", "/home/alice/.hermes/.env"],
+              ["env", "THINNY=4717", "true"], ["env", "THINNY=4717", "cat", "/home/alice/.hermes/.env"],
+              ["env", "THINNY=4718", "true"], ["env", "THINNY=4718", "cat", "/home/alice/.hermes/.env"],
+              ["env", "THINNY=../4713", "cat", "/home/alice/.hermes/.env"], ["env", "THINNY=1"]]
+    traced(*(event("instance-exec", command=command) for command in marked))
+    assert capsys.readouterr().out.splitlines() == [f"incus exec alice -- {shlex.join(c)}" for c in marked]
+
+
+def test_the_mark_of_a_run_of_thinny_that_ended_is_traced_in_full(traced, tmp_path):
+    process(tmp_path, 4715, "/usr/bin/python3", "/usr/local/sbin/thinny", "doctor")
+    noted = set()
+    assert trace.entry(event("instance-exec", command=["env", "THINNY=4715", "true"]), noted) == \
+        ("alice", "thinny doctor ran its commands in alice")
+    shutil.rmtree(tmp_path / "proc/4715")
+    assert trace.entry(event("instance-exec", command=["env", "THINNY=4715", "id"]), noted) == \
+        ("alice", "incus exec alice -- env THINNY=4715 id")
+
+
+def test_other_events_are_not_traced(traced, tmp_path, capsys):
+    traced(event("instance-started"), event("instance-snapshot-deleted", of="/snapshots/snap0"),
            request("/1.0/instances/alice?recursion=1"), request("/1.0/instances/alice/exec", "POST"),
            {"type": "logging", "metadata": {"message": "Started operation", "level": "debug", "context": {}}})
     assert capsys.readouterr().out == ""

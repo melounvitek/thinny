@@ -212,6 +212,7 @@ class Incus:
 
 S = Settings(model="m1", allowed_models=("m1",), access_default="local", language_pack="hermes-lang-cs")
 LOCKED = dataclasses.replace(S, model_lock=True)
+MARK = " ".join(system.INTERNAL)   # on thinny's commands in containers
 
 
 @pytest.fixture
@@ -255,10 +256,10 @@ def test_a_new_instance_gets_its_own_container_with_hermes(incus):
     assert incus.ran("bash /tmp/hermes-install.sh --channel stable --commit c0ffee --non-interactive")
     assert incus.ran("hermes plugins install hermes-lang-cs --force --yes-deps --enable")
     # the built-in plugins and what they need: Docker for the phone plugin, Claude Code for the subscription
-    packages = incus.calls[incus.index("incus exec alice -- env THINNY=1 sh -c export DEBIAN_FRONTEND")].split()
+    packages = incus.calls[incus.index(f"incus exec alice -- {MARK} sh -c export DEBIAN_FRONTEND")].split()
     assert {"docker.io", "docker-cli", "gettext-base"} <= set(packages)   # without recommends: no docker-cli
-    assert incus.index("incus exec alice -- env THINNY=1 usermod --append --groups docker alice") \
-        < incus.index("incus exec alice -- env THINNY=1 loginctl enable-linger alice")
+    assert incus.index(f"incus exec alice -- {MARK} usermod --append --groups docker alice") \
+        < incus.index(f"incus exec alice -- {MARK} loginctl enable-linger alice")
     claude = next(i for i, c in enumerate(incus.calls) if "curl -fsSL https://claude.ai/install.sh | bash" in c)
     assert claude < next(i for i, c in enumerate(incus.calls) if c.endswith(" claude --version")) \
         < next(i for i, c in enumerate(incus.calls) if "hermes plugins install claude-subscription-directsdk " in c)
@@ -270,12 +271,12 @@ def test_a_new_instance_gets_its_own_container_with_hermes(incus):
         assert incus.ran(f"hermes config set {setting}")
     assert incus.ran("hermes config set tts.piper.length_scale 0.65")   # Piper's normal speed is slow
     # network before packages, packages before the account, model guard into the finished checkout
-    assert incus.index("incus exec alice -- env THINNY=1 sh -c cat > /etc/systemd/network/eth0.network") \
-        < incus.index("incus exec alice -- env THINNY=1 sh -c export DEBIAN_FRONTEND") \
-        < incus.index("incus exec alice -- env THINNY=1 id -u")
-    assert incus.index("incus exec alice --cwd /home/alice -- env THINNY=1 runuser -u alice -- env -i HOME=/home/alice") \
+    assert incus.index(f"incus exec alice -- {MARK} sh -c cat > /etc/systemd/network/eth0.network") \
+        < incus.index(f"incus exec alice -- {MARK} sh -c export DEBIAN_FRONTEND") \
+        < incus.index(f"incus exec alice -- {MARK} id -u")
+    assert incus.index(f"incus exec alice --cwd /home/alice -- {MARK} runuser -u alice -- env -i HOME=/home/alice") \
         < incus.index("incus config device add alice model-guard disk") \
-        < incus.index("incus exec alice --cwd /home/alice -- env THINNY=1 runuser -u alice -- env -i HOME=/home/alice "
+        < incus.index(f"incus exec alice --cwd /home/alice -- {MARK} runuser -u alice -- env -i HOME=/home/alice "
                       "USER=alice LOGNAME=alice PATH=/home/alice/.local/bin:/usr/local/bin:/usr/bin:/bin "
                       "LANG=C.UTF-8 XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus "
                       "hermes gateway install")
@@ -366,7 +367,7 @@ def test_an_instance_can_get_its_own_limits_instead_of_the_sites(incus):
     assert incus.ran("incus config set alice limits.cpu=4 limits.memory=8192MiB")
     assert incus.ran("incus config device override alice root size=50GiB")   # the profile's root, resized
     assert incus.index("incus config device override alice root") \
-        < incus.index("incus exec alice -- env THINNY=1 sh -c export DEBIAN_FRONTEND")   # before the packages fill it
+        < incus.index(f"incus exec alice -- {MARK} sh -c export DEBIAN_FRONTEND")   # before the packages fill it
 
     instances.add(S, reg, "bob", "local")
     assert not any(c.startswith(("incus config set bob", "incus config device override bob")) for c in incus.calls)
