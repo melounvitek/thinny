@@ -174,3 +174,13 @@ def test_container_network_is_static():
 
 def test_update_timer_uses_the_update_time():
     assert "OnCalendar=*-*-* 03:00:00" in render.update_timer(S)
+
+
+@pytest.mark.parametrize("secure", [True, False])
+def test_webui_runs_on_the_instances_port_with_cookies_of_its_own(secure):
+    unit = render.webui_unit("alice", 9120, secure)
+    assert "Environment=HERMES_WEBUI_HOST=127.0.0.1 HERMES_WEBUI_PORT=9120 " in unit
+    assert "HERMES_WEBUI_COOKIE_NAME=hermes_session_alice HERMES_WEBUI_PROFILE_COOKIE_NAME=hermes_profile_alice" in unit
+    assert ("HERMES_WEBUI_SECURE=1" in unit) == secure
+    # its password: without the file, it does not start at all (an optional one would start it open)
+    assert "\nEnvironmentFile=%h/.config/hermes-webui.env\n" in unit

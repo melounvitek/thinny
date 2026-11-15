@@ -1,5 +1,5 @@
 """thinny update (nightly with --scheduled): thinny itself from its clone, then every instance's Hermes,
-one container at a time, to exactly the same release."""
+one container at a time, to exactly the same release, then the same for WebUI."""
 
 from __future__ import annotations
 
@@ -50,6 +50,11 @@ def run(s: Settings, reg: Registry, *, dry_run: bool = False, now: bool = False)
                     write_file(UNFINISHED, f"{tag} {commit}\n", 0o600)
                     rollout(s, reg, tag, commit)
                     result, detail = "ok", f"new built-ins at {tag}"
+        webui_result, webui_detail = update_webui(s, reg, dry_run=dry_run, now=now)
+        if webui_result:
+            detail += f"; WebUI {webui_detail}"
+            if webui_result in ("ok", "available") and result in ("up-to-date", "waiting"):
+                result = webui_result
         if result == "ok" and REBOOT_REQUIRED.exists():
             detail += "; the OS needs a reboot"
     except Exception as e:  # noqa: BLE001 - any failure must end as FAILED
@@ -96,10 +101,12 @@ def update_thinny() -> bool:
             raise CommandError(detail) from e
 
 
-def due(s: Settings, *, dry_run: bool, now: bool) -> tuple[str, str, str]:
-    """(result, detail, tag) for the latest stable release: up-to-date, waiting, available or due."""
-    tag, published = host.latest_release()
-    running = (host.release() or ("nothing",))[0]
+def due(s: Settings, *, dry_run: bool, now: bool, repo: str = host.HERMES_REPO,
+        path: Path | None = None) -> tuple[str, str, str]:
+    """(result, detail, tag) for the latest stable release (of Hermes, or of `repo` with its release in `path`):
+    up-to-date, waiting, available or due."""
+    tag, published = host.latest_release(repo)
+    running = (host.release(path) or ("nothing",))[0]
     age = (dt.datetime.now(dt.UTC) - published).total_seconds() / 3600
     log(f"running: {running}; latest stable: {tag}, out {age:.0f} h")
     if running == "nothing":
@@ -135,6 +142,27 @@ def rollout(s: Settings, reg: Registry, tag: str, commit: str, current: str = ""
     instances.restart_all(s, [], reg)
     host.write_release(tag, commit)
     UNFINISHED.unlink(missing_ok=True)
+
+
+def update_webui(s: Settings, reg: Registry, *, dry_run: bool, now: bool) -> tuple[str, str]:
+    """The instances that use WebUI to its latest stable release once it is old enough, like Hermes, one at a time,
+    each followed by a checked restart; stops at the first failure, and the next run goes on. ("", "") when no
+    instance uses WebUI."""
+    users = [inst for inst in reg.current() if inst.state == "active" and inst.frontend == "webui"]
+    if not users:
+        return "", ""
+    result, detail, tag = due(s, dry_run=dry_run, now=now, repo=host.WEBUI_REPO, path=host.WEBUI_RELEASE_FILE)
+    if result != "due":
+        return result, detail
+    commit = host.commit_of(tag, host.WEBUI_REPO)
+    for inst in users:
+        if instances.installed_commit(inst.name, webui=True) != commit:
+            log(f"{inst.name}: WebUI {tag}")
+            instances.mark_restart([inst.name])
+            instances.install_webui(inst.name, commit)
+            instances.restart_all(s, [inst], reg)
+    host.write_release(tag, commit, host.WEBUI_RELEASE_FILE)
+    return "ok", f"updated to {tag}"
 
 
 def update_claude(reg: Registry) -> None:

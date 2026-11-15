@@ -65,6 +65,7 @@ def test_model_lock_is_off_by_default_and_then_needs_no_allowed_models():
     ({"webapp__port_range": ["a", "b"]}, "port_range must be a list of int"),
     ({"hermes__update_time": "3:00"}, "HH:MM"),
     ({"access__default": "vpn"}, "access.default"),
+    ({"webapp__frontend": "open-webui"}, "webapp.frontend must be webapp or webui"),
     ({"network__blocked_networks": ["office"]}, "not a network"),
     ({"policy__approvals": "off"}, "manual or smart"),
     ({"policy__model": "m3", "policy__model_lock": True}, "one of policy.allowed_models"),
@@ -91,6 +92,11 @@ def test_container_limits_and_webapp_look():
     s = parse(site(container__cpu=4, container__memory_mb=8192, container__disk_gb=50))
     assert (s.container_cpu, s.container_memory_mb, s.container_disk_gb) == (4, 8192, 50)
     assert parse(site()).text_scale == 110
+
+
+def test_new_instances_get_the_webapp_unless_the_site_chooses_webui():
+    assert parse(site()).frontend == "webapp"
+    assert parse(site(webapp__frontend="webui")).frontend == "webui"
 
 
 def test_lan_address_is_optional_without_lan_default():

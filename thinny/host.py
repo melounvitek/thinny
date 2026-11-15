@@ -24,47 +24,50 @@ OFFICE_CA = Path("/etc/thinny/office-root.crt")   # Caddy's root certificate, re
 FIREWALL_FILE = Path(render.FIREWALL_FILE)
 SYSCTL_FILE = Path("/etc/sysctl.d/90-thinny.conf")
 SYSTEMD = Path("/etc/systemd/system")
-REPO_API = "https://api.github.com/repos/NousResearch/hermes-agent"
+HERMES_REPO = "NousResearch/hermes-agent"
+WEBUI_REPO = "nesquena/hermes-webui"
 INSTALLER_URL = "https://hermes-agent.nousresearch.com/install.sh"
 CATALOG_URL = "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/plugin-catalog/{}.yaml"
 RELEASE_FILE = STATE_DIR / "release"   # "<tag> <commit>": the Hermes release all instances run
+WEBUI_RELEASE_FILE = STATE_DIR / "webui-release"   # the same for WebUI, of the instances that use it
 
 
-def _github(path: str) -> dict:
-    req = urllib.request.Request(REPO_API + path, headers={"Accept": "application/vnd.github+json",
+def _github(repo: str, path: str) -> dict:
+    req = urllib.request.Request(f"https://api.github.com/repos/{repo}{path}", headers={"Accept": "application/vnd.github+json",
                                                           "User-Agent": "thinny"})
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.load(r)
 
 
-def latest_release() -> tuple[str, dt.datetime]:
-    """Tag and publication time of the latest stable Hermes release."""
-    data = _github("/releases/latest")
+def latest_release(repo: str = HERMES_REPO) -> tuple[str, dt.datetime]:
+    """Tag and publication time of the latest stable release (of Hermes, or `repo`)."""
+    data = _github(repo, "/releases/latest")
     return data["tag_name"], dt.datetime.fromisoformat(data["published_at"].replace("Z", "+00:00"))
 
 
-def commit_of(tag: str) -> str:
-    return _github(f"/commits/{tag}")["sha"]
+def commit_of(tag: str, repo: str = HERMES_REPO) -> str:
+    return _github(repo, f"/commits/{tag}")["sha"]
 
 
-def release() -> tuple[str, str] | None:
-    """(tag, commit) of the Hermes release all instances run and new ones get; None before the first
-    instance."""
-    if not RELEASE_FILE.exists():
+def release(path: Path | None = None) -> tuple[str, str] | None:
+    """(tag, commit) of the Hermes release (or WebUI's, in WEBUI_RELEASE_FILE) all instances run and new ones get;
+    None before the first instance."""
+    path = path or RELEASE_FILE
+    if not path.exists():
         return None
-    tag, commit = RELEASE_FILE.read_text().split()
+    tag, commit = path.read_text().split()
     return tag, commit
 
 
-def first_release() -> tuple[str, str]:
+def first_release(repo: str = HERMES_REPO, path: Path | None = None) -> tuple[str, str]:
     """The latest stable release becomes the one all instances run."""
-    tag, _ = latest_release()
-    write_release(tag, commit_of(tag))
-    return release()
+    tag, _ = latest_release(repo)
+    write_release(tag, commit_of(tag, repo), path)
+    return release(path)
 
 
-def write_release(tag: str, commit: str) -> None:
-    write_file(RELEASE_FILE, f"{tag} {commit}\n")
+def write_release(tag: str, commit: str, path: Path | None = None) -> None:
+    write_file(path or RELEASE_FILE, f"{tag} {commit}\n")
 
 
 def installer() -> str:

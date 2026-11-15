@@ -59,6 +59,7 @@ def main(argv: list[str] | None = None) -> int:
                           description="Limits not given follow [container] in site.toml.")
     add.add_argument("name")
     add.add_argument("--access", help="lan | tailscale | url=<URL> | local (default: asked)")
+    add.add_argument("--frontend", choices=settings.FRONTENDS, help="(default: asked)")
     lim = inst.add_parser("limits", help="change an instance's CPU, memory or disk limits",
                           description="Limits not given stay as they are.")
     lim.add_argument("name")
@@ -69,6 +70,9 @@ def main(argv: list[str] | None = None) -> int:
     acc = inst.add_parser("access", help="change how users open an instance's Webapp")
     acc.add_argument("name")
     acc.add_argument("access", help="lan | tailscale | url=<URL> | local")
+    frn = inst.add_parser("frontend", help="switch an instance between the Webapp and WebUI")
+    frn.add_argument("name")
+    frn.add_argument("frontend", choices=settings.FRONTENDS)
     lgn = inst.add_parser("login", help="sign an instance in to a model provider (device code)")
     lgn.add_argument("name")
     lgn.add_argument("--provider", choices=PROVIDERS, help="(default: asked)")
@@ -96,6 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     rcv.add_argument("name")
     rcv.add_argument("--access", required=True)
     rcv.add_argument("--url", default="")
+    rcv.add_argument("--frontend", choices=settings.FRONTENDS, default="webapp")
     rcv.add_argument("--release", nargs=2, required=True, metavar=("TAG", "COMMIT"))
     rcv.add_argument("--built-ins", required=True)
     rcv.add_argument("--check", action="store_true")
@@ -150,18 +155,23 @@ def main(argv: list[str] | None = None) -> int:
                     ask_access(f"How will users open {a.name}'s Webapp?", s.lan_address, s.access_default), "")
                 if access == "url" and not url:
                     url = input("Address users will open (https://...): ").strip()
+                # A resumed add keeps the one it has.
+                frontend = a.frontend or (None if a.name in reg.instances else
+                                          ask_frontend(f"What will {a.name}'s users open?", s.frontend))
                 moved = a.name in reg.instances and reg.get(a.name).moved
                 asking = not moved and sys.stdin.isatty()  # a moved instance keeps its model and line
                 if asking and not s.model_lock:  # else the lock decides
                     provider, model = ask_model(f"Which model provider will {a.name} use?", s.model_provider, s.model)
                     s = dataclasses.replace(s, model_provider=provider, model=model)
                 phone = ask_phone(a.name) if asking else None
-                instances.add(s, reg, a.name, access, url, phone=phone, cpu=a.cpu, memory_mb=a.memory_mb,
-                              disk_gb=a.disk_gb)
+                instances.add(s, reg, a.name, access, url, frontend=frontend, phone=phone, cpu=a.cpu,
+                              memory_mb=a.memory_mb, disk_gb=a.disk_gb)
             elif command == "instance limits":
                 instances.limits(reg, a.name, a.cpu, a.memory_mb, a.disk_gb)
             elif command == "instance access":
                 instances.change_access(s, reg, a.name, *parse_access(a.access))
+            elif command == "instance frontend":
+                instances.change_frontend(s, reg, a.name, a.frontend)
             elif command == "instance login":
                 if a.provider:
                     provider = PROVIDERS[a.provider][0]
@@ -191,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
                 move.move(s, reg, a.names, a.to)
             elif command == "instance receive":
                 move.receive(s, reg, a.name, a.access, a.url, tuple(a.release), a.built_ins,
-                             None if a.check else sys.stdin.buffer)
+                             None if a.check else sys.stdin.buffer, frontend=a.frontend)
         return 0
     except (SettingsError, RegistryError, CommandError) as e:
         print(f"thinny: {e}", file=sys.stderr)
@@ -342,6 +352,14 @@ def ask_access(question: str, lan_address: str, default: str) -> str:
                ("url", "Own address           you enter the URL (Cloudflare, your proxy, ...)"),
                ("local", "Local only            no network access; open via an SSH tunnel")]
     return choose(question, [o for o in options if o], default)
+
+
+def ask_frontend(question: str, default: str) -> str:
+    """The frontend question (`default` when not on a terminal)."""
+    if not sys.stdin.isatty():
+        return default
+    return choose(question, [("webapp", "Webapp   Hermes's built-in"),
+                             ("webui", "WebUI    hermes-webui (github.com/nesquena/hermes-webui)")], default)
 
 
 def choose(question: str, options: list[tuple[str, str]], default: str) -> str:

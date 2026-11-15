@@ -173,7 +173,7 @@ def test_a_failed_thinny_update_stops_the_update(server, monkeypatch, capsys):
 def test_instance_add_takes_the_limits_of_the_new_instance(server, monkeypatch):
     added = []
     monkeypatch.setattr(instances, "add",
-                        lambda s, reg, name, access, url, phone, **limits: added.append((name, limits)))
+                        lambda s, reg, name, access, url, phone, frontend, **limits: added.append((name, limits)))
     assert cli.main(["instance", "add", "alice", "--access", "local", "--cpu", "4", "--memory-mb", "8192",
                      "--disk-gb", "50"]) == 0
     assert cli.main(["instance", "add", "bob", "--access", "local"]) == 0
@@ -199,8 +199,8 @@ def added(monkeypatch):
 
 
 @pytest.mark.parametrize("answers, model", [
-    (["", "", ""], ("openai-codex", "m1")),   # the site's
-    (["2", "", ""], ("claude-subscription-directsdk-experimental", "claude-opus-5-5")),
+    (["", "", "", ""], ("openai-codex", "m1")),   # the site's
+    (["", "2", "", ""], ("claude-subscription-directsdk-experimental", "claude-opus-5-5")),
 ])
 def test_instance_add_asks_for_the_instances_provider_and_model(server, terminal, added, monkeypatch, answers, model):
     answering(monkeypatch, *answers)
@@ -211,9 +211,51 @@ def test_instance_add_asks_for_the_instances_provider_and_model(server, terminal
 def test_instance_add_leaves_the_model_to_the_lock(server, terminal, added, monkeypatch):
     site, _ = server
     site.write_text(VALID.replace('model = "m1"', 'model = "m1"\nmodel_lock = true'))
-    answering(monkeypatch, "")   # no phone line
+    answering(monkeypatch, "", "")   # the site's frontend, no phone line
     assert cli.main(["instance", "add", "alice", "--access", "local"]) == 0
     assert added == [("openai-codex", "m1")]
+
+
+@pytest.fixture
+def frontends(monkeypatch):
+    """The frontend `instance add` gives each instance (None: the one it has, or the site's)."""
+    frontends = []
+    monkeypatch.setattr(instances, "add", lambda s, reg, name, access, url, frontend, **kw: frontends.append(frontend))
+    return frontends
+
+
+@pytest.mark.parametrize("site_frontend, answer, frontend", [
+    ("webapp", "", "webapp"), ("webapp", "2", "webui"), ("webui", "", "webui"), ("webui", "1", "webapp"),
+])
+def test_instance_add_asks_which_frontend_a_new_instance_gets(server, terminal, frontends, monkeypatch,
+                                                              site_frontend, answer, frontend):
+    site, _ = server
+    site.write_text(VALID + f'\n[webapp]\nfrontend = "{site_frontend}"\n')
+    answering(monkeypatch, answer, "", "", "")   # the frontend, the site's model, no phone line
+    assert cli.main(["instance", "add", "alice", "--access", "local"]) == 0
+    assert frontends == [frontend]
+
+
+def test_instance_add_asks_no_frontend_when_given_one_or_when_resuming(server, terminal, frontends, monkeypatch):
+    answering(monkeypatch, "", "", "")   # the site's model, no phone line
+    assert cli.main(["instance", "add", "alice", "--access", "local", "--frontend", "webui"]) == 0
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: Registry(
+        {"bob": Instance("bob", 9120, "local", frontend="webui")})))   # its add stopped halfway
+    answering(monkeypatch, "", "", "")
+    assert cli.main(["instance", "add", "bob", "--access", "local"]) == 0
+    assert frontends == ["webui", None]
+    with pytest.raises(SystemExit):
+        cli.main(["instance", "add", "carol", "--access", "local", "--frontend", "open-webui"])
+
+
+def test_instance_frontend_switches_an_instance_to_the_other_frontend(server, monkeypatch):
+    switched = []
+    monkeypatch.setattr(instances, "change_frontend", lambda s, reg, name, frontend: switched.append((name, frontend)))
+    assert cli.main(["instance", "frontend", "alice", "webui"]) == 0
+    assert cli.main(["instance", "frontend", "alice", "webapp"]) == 0
+    assert switched == [("alice", "webui"), ("alice", "webapp")]
+    with pytest.raises(SystemExit):
+        cli.main(["instance", "frontend", "alice", "open-webui"])
 
 
 @pytest.fixture
@@ -227,7 +269,7 @@ def phones(monkeypatch):
 def test_instance_add_can_connect_a_phone_line_with_odoriks_defaults(server, terminal, phones, monkeypatch):
     # the site's model; a line at Odorik, a password as typed, PINs too short and in other digits than the
     # plugin's, callers, the number Hermes calls
-    hidden = answering(monkeypatch, "", "", "y", "", "794000", " secret", "12", "１２３４", "1234",
+    hidden = answering(monkeypatch, "", "", "", "y", "", "794000", " secret", "12", "１２３４", "1234",
                        "420777000111,420777000222", "", "sk-key")
     assert cli.main(["instance", "add", "alice", "--access", "local"]) == 0
     assert phones == [{"SIP_SERVER": "sip.odorik.cz", "SIP_USER": "794000", "SIP_PASSWORD": " secret",
@@ -237,7 +279,7 @@ def test_instance_add_can_connect_a_phone_line_with_odoriks_defaults(server, ter
 
 
 def test_instance_add_connects_no_phone_line_unless_asked_to(server, terminal, phones, monkeypatch):
-    answering(monkeypatch, "", "", "")
+    answering(monkeypatch, "", "", "", "")
     assert cli.main(["instance", "add", "alice", "--access", "local"]) == 0
     assert phones == [None]
 
@@ -339,14 +381,14 @@ def test_instance_move_takes_names_or_all(server, monkeypatch, capsys):
 
 def test_the_other_server_takes_the_archive_from_stdin_or_only_checks(server, monkeypatch):
     received = []
-    monkeypatch.setattr(move, "receive", lambda s, reg, *args: received.append(args))
+    monkeypatch.setattr(move, "receive", lambda s, reg, *args, frontend: received.append((*args, frontend)))
     monkeypatch.setattr(cli.sys, "stdin", type("Pipe", (), {"buffer": "the archive"})())
     args = ["instance", "receive", "bob", "--access", "url", "--url", "https://bob.example.org/",
             "--release", "v2", "c0ffee", "--built-ins", ""]   # added by a thinny without built-ins
     assert cli.main(args) == 0
-    assert cli.main([*args, "--check"]) == 0
-    assert received == [("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", "the archive"),
-                        ("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", None)]
+    assert cli.main([*args, "--check", "--frontend", "webui"]) == 0
+    assert received == [("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", "the archive", "webapp"),
+                        ("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", None, "webui")]
 
 
 def test_the_trace_runs_even_with_a_broken_site_toml(server, monkeypatch):
