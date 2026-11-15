@@ -167,8 +167,15 @@ def main(argv: list[str] | None = None) -> int:
     command = " ".join(filter(None, (a.command, getattr(a, "action", None))))
 
     if os.geteuid() != 0:
-        print("thinny must run as root or with sudo", file=sys.stderr)
-        return 2
+        # sudo drops the admin's editor, so config edit passes it on. Only there: sudo refuses variables for
+        # a sudoers rule naming the command, such as the one for status and doctor (README, Status and checks).
+        editors = [f"{name}={os.environ[name]}" for name in ("VISUAL", "EDITOR")
+                   if command == "config edit" and os.environ.get(name)]
+        try:
+            os.execvp("sudo", ["sudo", *editors, os.path.abspath(sys.argv[0]), *argv])
+        except FileNotFoundError:
+            print("thinny must run as root or with sudo", file=sys.stderr)
+            return 2
     try:
         if command == "init":
             init_config()
