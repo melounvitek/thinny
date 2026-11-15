@@ -223,7 +223,8 @@ def main(argv: list[str] | None = None) -> int:
             elif command == "instance remove":
                 instances.remove(s, reg, a.name)
             elif command == "instance restart":
-                targets = [reg.get(n) for n in chosen(reg, a.names, a.group)] if a.names or a.group else reg.current()
+                targets = [reg.get(n) for n in chosen(reg, a.names, a.group)] if a.names or a.group is not None \
+                    else reg.current()
                 instances.restart_all(s, [t for t in targets if t.state == "active"], reg)
             elif command == "instance move":
                 if sum((bool(a.names), a.all, bool(a.group))) != 1:

@@ -69,7 +69,7 @@ def connect(s: Settings, name: str) -> None:
             instances.mark_restart([name])
             instances.set_env(name, {"TELEGRAM_BOT_TOKEN": token, "TELEGRAM_ALLOWED_USERS": str(user["id"]),
                                      "TELEGRAM_HOME_CHANNEL": str(user["id"])})
-            instances.hermes(name, ["config", "set", "platforms.telegram.enabled", "true"])
+            instances.set_config(instances.settings_for(s, inst), name, {"platforms.telegram.enabled": "true"})
             instances.start_or_restart_gateway(s, inst)
         api(manager, "getUpdates", offset=update_id + 1)
     api(token, "sendMessage", chat_id=user["id"], text=READY.get(s.language, READY["en"]))

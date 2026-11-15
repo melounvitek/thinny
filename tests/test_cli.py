@@ -557,6 +557,7 @@ def test_commands_take_the_active_instances_of_a_group(sales):
 
 @pytest.mark.parametrize("args, message", [
     (["restart", "carol", "--group", "sales"], "name the instances, or give --group"),   # not both
+    (["restart", "--group", ""], "name the instances, or give --group"),   # not every instance
     (["unlock"], "name the instances, or give --group"),
     (["limits", "--cpu", "4"], "name the instances, or give --group"),
     (["move", "carol", "--group", "sales", "--to", "new"], "name the instances to move, or give --all or --group"),

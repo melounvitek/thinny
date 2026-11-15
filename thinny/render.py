@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
-import re
 from urllib.parse import urlsplit
 
 from .registry import SUBNET
@@ -50,7 +49,7 @@ def to_yaml(value, indent: int = 0) -> str:
     pad = "  " * indent
     lines = []
     for key, item in value.items():
-        key = key if re.fullmatch(r"[A-Za-z0-9_-]+", key) else json.dumps(key)
+        key = json.dumps(key)   # a group's too: unquoted, `on` and `123` are no strings
         if isinstance(item, dict) and item:
             lines.append(f"{pad}{key}:")
             lines.append(to_yaml(item, indent + 1))
