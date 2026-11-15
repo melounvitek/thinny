@@ -208,7 +208,8 @@ thinny instance move alice bob --to admin@new-server   # or --all; experimental
   restart. See its README.
 - `add` takes the same `--cpu`, `--memory-mb` and `--disk-gb`. Limits an instance was not given
   follow `[container]` in `site.toml`, also when it changes. `limits` applies at once, even to a
-  running instance.
+  running instance. The storage is compressed, and disk use and its limit count the compressed
+  size (about half of what the files take).
 - `lock` keeps the provider `alice` uses and allows the models given, the first by default; it
   pins effort and plugins as the site's lock does. `unlock` leaves `alice` on the model it was
   locked to, for its users to change. Either stays whatever `policy.model_lock` says. The model

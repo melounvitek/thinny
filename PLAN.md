@@ -352,6 +352,11 @@ Debian 13, kernel 6.12, Incus 6.0.4 (`incus-base`), Hermes v0.23.0 -> v0.23.1. A
   Idle container with Hermes ~370 MB private RAM; an empty one with Docker and Tailscale
   ~80 MB. ~2.8 GB own disk per instance for Hermes (copied from a template, so without the
   system packages).
+- Compression (2026-11-15, netcup): a fresh instance's 5.9 GB of files took 5.9 GB on disk,
+  3.5 GB with `compress=zstd:1` (btrfs's guess left most of Chromium and Claude Code
+  uncompressed) and 2.8 GB with `compress-force=zstd:1`; the quota counts the compressed size.
+  `incus storage set default btrfs.mount_options=...` remounted the pool at once with containers
+  running, and the option was back after a reboot.
 
 ### Access trace (2026-11-14)
 Debian 13, Incus 6.0.4, from Incus's stable-6.0 source and **[tested]** on the test server.
@@ -459,8 +464,9 @@ extras/, tests/     netcup snapshot and nightly watch (run off the server); pyte
 /var/lib/thinny/trace/<name>/admin-access.log  the instance's access trace, written by
                                 thinny-trace.service (also to the journal)
 /var/lib/thinny/trace-unsent/<name>/  each row for its Google Sheet as a file, until sent
-Incus                                   pool `default` (btrfs, sparse file), profile `thinny-instance`,
-                                        one container per instance, named after it
+Incus                                   pool `default` (btrfs, sparse file, compressed),
+                                        profile `thinny-instance`, one container per
+                                        instance, named after it
 ```
 
 - Names, ports and container addresses (`10.78.0.0/24`) are never reused; states `pending`,
