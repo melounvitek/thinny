@@ -11,11 +11,11 @@ Status: in development. Design notes: [`PLAN.md`](PLAN.md).
 - **Isolated instances:** one container each (Debian 13 with systemd), with CPU, memory,
   process and disk limits. A firewall lets it reach the internet and nothing else. Its users
   have `sudo` in it.
-- **One central policy** from `site.toml`, mounted read-only as each container's `/etc/hermes`
+- **One central policy** from `config.toml`, mounted read-only as each container's `/etc/hermes`
   (Hermes "managed scope"): approvals and the agent kept in its container. The optional **model
   lock** (`policy.model_lock`) also pins the provider, model, reasoning effort and plugins, and
   allows only `allowed_models`. Without it, users choose their own. One instance can have its own
-  lock, or none, whatever the site's (`thinny instance lock` and `unlock`).
+  lock, or none, whatever the server's (`thinny instance lock` and `unlock`).
 - **Built into every instance:** [Claude Code](https://code.claude.com/) with the Claude
   subscription plugin, and the [hermes-3310](https://github.com/melounvitek/hermes-3310) phone
   plugin with Docker.
@@ -135,9 +135,9 @@ bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/melounvitek/th
    Python 3), copies thinny to `/usr/local/lib/thinny` and links the `thinny` command to
    `/usr/local/sbin/thinny`.
 6. On the first run, `thinny init` asks for the settings below and writes them into
-   `/etc/thinny/site.toml`, a copy of the commented example. Without a terminal, it copies the
+   `/etc/thinny/config.toml`, a copy of the commented example. Without a terminal, it copies the
    example and stops.
-7. Once `site.toml` exists, it runs `thinny setup`: the Incus storage pool, the firewall, the
+7. Once `config.toml` exists, it runs `thinny setup`: the Incus storage pool, the firewall, the
    update timer and the shared policy.
 
 It does not add any instances.
@@ -150,7 +150,7 @@ suggests the interface and LAN address it detects and the language pack it finds
 catalog, shows a summary, and sets up the server once you confirm. Everything else keeps the
 example's defaults: change them with `thinny config edit`.
 
-Without a terminal, it stops after copying the example. Edit `/etc/thinny/site.toml` (at least
+Without a terminal, it stops after copying the example. Edit `/etc/thinny/config.toml` (at least
 `policy.model`, `network.interface` and `access.lan_address`, or `""` and another
 `access.default`), then run `sudo sh /usr/local/src/thinny/install.sh`.
 
@@ -159,7 +159,7 @@ A changed model guard loads at each gateway's next restart (`thinny instance res
 
 ## Settings
 
-Every key of `/etc/thinny/site.toml` is commented in [`site.example.toml`](site.example.toml).
+Every key of `/etc/thinny/config.toml` is commented in [`config.example.toml`](config.example.toml).
 
 ```sh
 thinny config edit    # edit a copy, check it, then apply it
@@ -188,7 +188,7 @@ thinny instance access alice tailscale  # lan | tailscale | url=<URL> | local
 thinny instance frontend alice webui    # webapp | webui
 thinny instance limits alice --cpu 4 --memory-mb 8192 --disk-gb 50
 thinny instance lock alice [model ...]  # only these models (default: the one it uses)
-thinny instance unlock alice            # its users choose, even with the site's lock
+thinny instance unlock alice            # its users choose, even with the server's lock
 thinny instance reset-password alice
 thinny instance disable alice           # stop it for good, keep its data
 thinny instance remove alice            # then delete its container and data; asks you to type its name
@@ -228,11 +228,11 @@ thinny instance move alice bob --to admin@new-server   # or --all; experimental
   Hermes 3310), then with `~/.hermes/plugins/hermes-3310/install-asterisk.sh` and a gateway
   restart. See its README.
 - `add` takes the same `--cpu`, `--memory-mb` and `--disk-gb`. Limits an instance was not given
-  follow `[container]` in `site.toml`, also when it changes. `limits` applies at once, even to a
+  follow `[container]` in `config.toml`, also when it changes. `limits` applies at once, even to a
   running instance. The storage is compressed, and disk use and its limit count the compressed
   size (about half of what the files take).
 - `lock` keeps the provider `alice` uses and allows the models given, the first by default; it
-  pins effort and plugins as the site's lock does. `unlock` leaves `alice` on the model it was
+  pins effort and plugins as the server's lock does. `unlock` leaves `alice` on the model it was
   locked to, for its users to change. Either stays whatever `policy.model_lock` says. The model
   picker keeps showing every model; the model guard refuses the others.
 - Names are 2-32 lowercase letters, digits and `-`, starting with a letter. Names and ports are
@@ -304,7 +304,7 @@ Each instance's user can get a Telegram bot of their own with one link, through 
 1. In Telegram, create the manager bot with [@BotFather](https://t.me/BotFather) (`/newbot`), e.g.
    `@acme_hermes_bot`.
 2. In BotFather's app (*Open*), choose the bot, then *Bot Settings*, and turn on *Bot Management Mode*.
-3. Put its token in `site.toml` with `thinny config edit`:
+3. Put its token in `config.toml` with `thinny config edit`:
 
    ```toml
    [telegram]
@@ -326,7 +326,7 @@ can write to it. Their chat is also Hermes's Telegram home channel, so Hermes do
 - Anyone who knows the manager bot can create a bot through it, also with the suggested name.
   Check the name and Telegram ID before you answer `y`.
 - The manager token gets the token of every bot created through it. It stays on the server, in
-  `site.toml`, which only root can read.
+  `config.toml`, which only root can read.
 - The bot belongs to its user: it is in their BotFather, where they can rename or delete it.
 - Ctrl+C stops the wait. A bot created meanwhile waits up to 24 hours: run the command again and
   confirm it. One wait at a time per server; other thinny commands run meanwhile.
@@ -337,7 +337,7 @@ can write to it. Their chat is also Hermes's Telegram home channel, so Hermes do
 
 Every night at `hermes.update_time`, thinny first updates itself: it pulls the clone it was
 installed from (`git pull --ff-only`) and, on a new commit, runs its `install.sh`, which also
-applies `site.toml`. If that fails, the run stops there. A private clone needs read access
+applies `config.toml`. If that fails, the run stops there. A private clone needs read access
 without a password, such as a deploy key.
 
 Then it installs the latest stable Hermes release once it is `min_release_age_hours` old. It

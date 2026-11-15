@@ -5,11 +5,11 @@ import pytest
 
 from thinny.settings import Settings, SettingsError, fill, parse
 
-EXAMPLE = Path(__file__).parent.parent / "site.example.toml"
+EXAMPLE = Path(__file__).parent.parent / "config.example.toml"
 
 
 def site(**changes):
-    """site.toml text: a minimal valid site with `section__key=value` changes (None removes)."""
+    """config.toml text: a minimal valid site with `section__key=value` changes (None removes)."""
     sections = {"policy": {"model": "m1", "allowed_models": ["m1", "m2"]},
                 "access": {"lan_address": "192.168.1.10"}}
     for name, value in changes.items():

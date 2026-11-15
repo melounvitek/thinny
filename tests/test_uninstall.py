@@ -19,7 +19,7 @@ def write(path, text="x"):
 
 def thinny_files():
     """thinny's files on the fake server that are still there."""
-    paths = [settings.SITE_TOML.parent, host.MANAGED, system.STATE_DIR, system.LOG_FILE, host.SYSCTL_FILE,
+    paths = [settings.CONFIG_TOML.parent, host.MANAGED, system.STATE_DIR, system.LOG_FILE, host.SYSCTL_FILE,
              *(host.SYSTEMD / unit for unit in UNITS), host.SYSTEMD / "incus.service.d", host.CADDYFILE,
              uninstall.SUDOERS, uninstall.CLONE, uninstall.LIB, uninstall.COMMAND, update.SELF_UPDATE_LOCK,
              system.LOCK_FILE, telegram.LOCK]
@@ -100,7 +100,7 @@ def server(tmp_path, monkeypatch):
     for module in (system, instances, host):
         monkeypatch.setattr(module, "run", srv.run)
     monkeypatch.setattr(host, "tailscale_status", lambda: srv.tailscale)
-    monkeypatch.setattr(settings, "SITE_TOML", write(tmp_path / "etc/thinny/site.toml"))
+    monkeypatch.setattr(settings, "CONFIG_TOML", write(tmp_path / "etc/thinny/config.toml"))
     write(tmp_path / "etc/thinny/thinny.nft")
     monkeypatch.setattr(host, "MANAGED", write(tmp_path / "etc/hermes/config.yaml").parent)
     monkeypatch.setattr(system, "STATE_DIR", tmp_path / "var/lib/thinny")
@@ -168,7 +168,7 @@ def test_tailscale_stops_serving_only_the_instances_ports(server):
 
 def test_an_install_that_stopped_before_setup_is_removed(server):
     srv = server
-    for path in (settings.SITE_TOML, system.STATE_DIR / "instances.json", host.CADDYFILE,
+    for path in (settings.CONFIG_TOML, system.STATE_DIR / "instances.json", host.CADDYFILE,
                  *(host.SYSTEMD / unit for unit in UNITS)):
         path.unlink()
     srv.containers, srv.served, srv.table, srv.profile, srv.pool = {}, set(), False, False, False
@@ -242,7 +242,7 @@ def test_a_rerun_continues_where_a_failed_uninstall_stopped(server, capsys, fail
     srv.fails = {failing: answer}
     assert cli.main(["uninstall"]) == 1
     assert failing in capsys.readouterr().err
-    assert {settings.SITE_TOML.parent, system.STATE_DIR, uninstall.LIB, uninstall.COMMAND} <= set(thinny_files())
+    assert {settings.CONFIG_TOML.parent, system.STATE_DIR, uninstall.LIB, uninstall.COMMAND} <= set(thinny_files())
 
     srv.fails, srv.answers = {}, ["office-server"]
     assert cli.main(["uninstall"]) == 0

@@ -1,5 +1,5 @@
 """`setup` (Incus and everything around the instances) and `apply` (bring everything in line with
-site.toml)."""
+config.toml)."""
 
 from __future__ import annotations
 

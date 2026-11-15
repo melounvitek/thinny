@@ -31,7 +31,7 @@ def run() -> None:
     print("\n".join(f"  {inst.name} ({inst.state})" for inst in reg.instances.values()) or "  (none)")
     print("It also removes what thinny set up: the Incus profile and storage pool (unless something else\n"
           "uses the pool), the firewall table, the nightly update, the access trace, the Webapps' Caddy and\n"
-          f"Tailscale sites, {settings.SITE_TOML.parent}, {host.MANAGED}, {system.STATE_DIR} and thinny itself.")
+          f"Tailscale sites, {settings.CONFIG_TOML.parent}, {host.MANAGED}, {system.STATE_DIR} and thinny itself.")
     hostname = socket.gethostname()
     try:
         answer = input(f"Type this server's hostname ({hostname}) to remove it all: ")
@@ -82,7 +82,7 @@ def run() -> None:
         system.run(["nft", "delete", "table", "inet", "thinny"])  # incus.service no longer loads it
     host.SYSCTL_FILE.unlink(missing_ok=True)  # the running values stay: Docker or Tailscale may need forwarding
     SUDOERS.unlink(missing_ok=True)
-    for path in (host.MANAGED, settings.SITE_TOML.parent, system.STATE_DIR):
+    for path in (host.MANAGED, settings.CONFIG_TOML.parent, system.STATE_DIR):
         if path.exists():
             shutil.rmtree(path)
     system.LOG_FILE.unlink(missing_ok=True)

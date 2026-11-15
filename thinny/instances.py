@@ -38,7 +38,7 @@ CLAUDE_PROVIDER = "claude-subscription-directsdk-experimental"
 # shift its root could remount it and write into the folder as the host's root. Without shift, it is just
 # another account there. "shift=false", not left out, so older disks lose their shift too.
 READ_ONLY = ("readonly=true", "shift=false")
-# The phone's voice and what it says itself on a site in Czech (else the phone plugin's English and Hermes's
+# The phone's voice and what it says itself on a server in Czech (else the phone plugin's English and Hermes's
 # English voice), from the plugin's README.
 PHONE_CZECH = {"tts.piper.voice": "cs_CZ-jirka-medium"} | {
     f"plugins.entries.hermes-3310.settings.{key}": value for key, value in {
@@ -148,7 +148,7 @@ def disk_used(name: str, sync: bool = False) -> int:
 
 
 def set_limits(name: str, cpu: int | None, memory_mb: int | None, disk_gb: int | None) -> None:
-    """The instance's own limits instead of the profile's (site.toml's [container]); None keeps
+    """The instance's own limits instead of the profile's (config.toml's [container]); None keeps
     the current one. A running container gets them at once."""
     if disk_gb:
         # A quota below what it counts half-applies and leaves the instance unable to write, even to
@@ -302,7 +302,7 @@ def webapp_settings(name: str) -> dict[str, str]:
 
 def configure_webapp(s: Settings, inst: Instance) -> bool:
     """The instance's frontend: the Webapp's settings in its config, on, or off for WebUI on its port with
-    WebUI's unit; True when something changed. WebUI starts in the site's look."""
+    WebUI's unit; True when something changed. WebUI starts in the server's look."""
     webui = inst.frontend == "webui"
     wanted = {"enabled": str(not webui).lower(), "host": "127.0.0.1", "port": str(inst.port), "public_url": inst.url}
     current = webapp_settings(inst.name)
@@ -463,7 +463,7 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
         cpu: int | None = None, memory_mb: int | None = None, disk_gb: int | None = None,
         phone: dict[str, str] | None = None, just_imported: bool = False) -> None:
     """Add an instance, or finish one whose add stopped. `frontend`: None keeps the one it has (a new instance:
-    the site's). `phone`: the settings of a phone line to connect. `just_imported`: it was moved here a moment
+    the server's). `phone`: the settings of a phone line to connect. `just_imported`: it was moved here a moment
     ago, with the Hermes release this server runs."""
     access = access or s.access_default
     check_access(s, reg, name, access, url)
@@ -563,7 +563,7 @@ def check_access(s: Settings, reg: Registry, name: str, access: str, url: str) -
     if access == "url":
         check_url(reg, name, url)
     if access == "lan" and not s.lan_address:
-        raise CommandError("set access.lan_address in site.toml first")
+        raise CommandError("set access.lan_address in config.toml first")
     if access == "tailscale" and host.tailscale_status() is None:
         raise CommandError("Tailscale is not running on this server")
 
@@ -648,7 +648,7 @@ def model_of(s: Settings, reg: Registry, name: str) -> tuple[str, str]:
 
 
 def lock(s: Settings, reg: Registry, name: str, models: list[str]) -> None:
-    """Lock the instance to these models (or the one it uses) of the provider it uses, whatever the site's lock."""
+    """Lock the instance to these models (or the one it uses) of the provider it uses, whatever the server's lock."""
     inst = _active(reg, name)
     provider, model = model_of(s, reg, name)
     inst.lock, inst.lock_provider = models or [model], provider
@@ -659,7 +659,7 @@ def lock(s: Settings, reg: Registry, name: str, models: list[str]) -> None:
 
 
 def unlock(s: Settings, reg: Registry, name: str) -> None:
-    """Let the instance's users choose their models, whatever the site's lock. It starts with the model it was
+    """Let the instance's users choose their models, whatever the server's lock. It starts with the model it was
     locked to: the lock took the model out of its own config."""
     inst = _active(reg, name)
     locked = settings_for(s, inst)

@@ -1,4 +1,4 @@
-"""Telegram for an instance: a bot of its user's own, created through the site's manager bot (Telegram's
+"""Telegram for an instance: a bot of its user's own, created through the server's manager bot (Telegram's
 managed bots). The user opens a link and taps Create; the manager bot learns who created which bot and can
 get its token. Only that user may then chat with the instance. The manager's token stays on the server: it
 gets the token of every bot created through it."""
@@ -18,7 +18,7 @@ from .settings import Settings
 from .system import CommandError, lock
 
 LOCK = Path("/run/thinny-telegram.lock")   # one wait at a time: Telegram gives the manager's updates to one reader
-# What the new bot first says to its user, in the site's language.
+# What the new bot first says to its user, in the server's language.
 READY = {"cs": "Hermes je připravený. Napište mi cokoli.", "en": "Hermes is ready. Write me anything."}
 
 
@@ -51,7 +51,7 @@ def connect(s: Settings, name: str) -> None:
     leaves thinny's lock to other runs, such as the nightly update; the update Telegram sent about the bot is
     done only once the bot is connected, so a failure leaves it for the next try."""
     if not s.telegram_manager_token:
-        raise CommandError("set telegram.manager_token in site.toml first (see README, Telegram)")
+        raise CommandError("set telegram.manager_token in config.toml first (see README, Telegram)")
     manager = s.telegram_manager_token
     _active(name)
     with lock(LOCK):
