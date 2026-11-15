@@ -84,7 +84,7 @@ class Incus:
 
     def run(self, cmd, *, check=True, input=None, timeout=600, env=None, cwd=None):
         self.calls.append(" ".join(cmd))
-        out, code = self.answer(cmd)
+        out, code = self.answer(cmd, input)
         if check and code:
             raise CommandError(f"{' '.join(cmd)} -> exit {code}")
         return subprocess.CompletedProcess(cmd, code, out, "")
@@ -93,7 +93,7 @@ class Incus:
         res = self.run(cmd, check=False)
         return res.returncode, res.stdout.encode(), b""
 
-    def answer(self, cmd):
+    def answer(self, cmd, input=None):
         if cmd[0] == "curl":
             return "302", 0
         if cmd[:2] == ["incus", "list"]:
@@ -135,7 +135,7 @@ class Incus:
         elif cmd[:2] == ["incus", "exec"]:
             if self.containers[cmd[2]]["state"] != "RUNNING":
                 return "Error: Instance is not running", 1
-            return self.inside(self.containers[cmd[2]], cmd[cmd.index("--") + 1:])
+            return self.inside(self.containers[cmd[2]], cmd[cmd.index("--") + 1:], input)
         elif cmd[:3] == ["btrfs", "qgroup", "show"]:   # what the instance's disk quota counts
             name = cmd[-1].rsplit("/", 1)[1]
             used = self.containers[name].get("used", 2**29) // (1 if "--sync" in cmd else 4)   # or stale
@@ -143,7 +143,7 @@ class Incus:
                     f"0/257       {used}   {used // 2}   containers/{name}\n"), 0
         return "", 0
 
-    def inside(self, c, cmd):
+    def inside(self, c, cmd, input=None):
         assert cmd[:2] == system.INTERNAL   # thinny's own, so not traced
         cmd = cmd[2:]
         if cmd[0] == "runuser":   # as the instance's account: runuser -u NAME -- env -i VAR=... command
@@ -152,6 +152,12 @@ class Incus:
             return "", 0 if c["account"] else 1
         if cmd[0] == "cat":
             return c.get("files", {}).get(cmd[1], ""), 0
+        if cmd[:2] == ["sh", "-c"] and 'cat > "$1.tmp"' in cmd[2]:   # write_user_file
+            c.setdefault("files", {})[cmd[4]] = input
+        if cmd[0].endswith("/plugins/hermes-3310/install-asterisk.sh"):   # the .env it reads
+            c["asterisk_read"] = c.get("files", {}).get(cmd[0].split("/plugins/")[0] + "/.env", "")
+        if cmd[:3] == ["docker", "exec", "hermes-3310-asterisk"]:
+            return f" sip-reg/sip:sip.odorik.cz  sip-auth  {c.get('sip', 'Registered')}  (exp. 290s)\n", 0
         if cmd[:3] == ["timeout", "10", "getent"]:
             return "", 0 if c.get("internet", True) else 2
         if cmd[0] == "useradd":
@@ -257,6 +263,48 @@ def test_a_new_instance_gets_its_own_container_with_hermes(incus):
     # git ignores the read-only mount before it appears (the installer stashes untracked files)
     assert next(i for i, c in enumerate(incus.calls) if "grep -qx /plugins/model-guard/" in c) \
         < incus.index("incus config device add alice model-guard")
+
+
+PHONE = {"SIP_SERVER": "sip.odorik.cz", "SIP_USER": "794000", "SIP_PASSWORD": "it's \"pa$$\" #word\\", "PHONE_PIN": "246813",
+         "PHONE_ALLOWED_CALLERS": "420777000111", "PHONE_HOME_NUMBER": "00420777000111",
+         "VOICE_TOOLS_OPENAI_KEY": "sk-key"}
+
+
+@pytest.mark.parametrize("language, czech", [("cs", True), ("en", False)])
+def test_a_new_instance_can_get_a_phone_line(incus, capsys, language, czech):
+    instances.add(dataclasses.replace(S, language=language), Registry(), "alice", "local", phone=PHONE)
+    env = incus.containers["alice"]["files"]["/home/alice/.hermes/.env"]
+    assert env.startswith(f"{instances.AUTH_PREFIX}USERNAME=alice\n")   # the Webapp sign-in stays
+    # double-quoted with \ and " escaped, as both python-dotenv (Hermes) and the plugin's install script read it
+    assert env.endswith('SIP_SERVER="sip.odorik.cz"\nSIP_USER="794000"\nSIP_PASSWORD="it\'s \\"pa$$\\" #word\\\\"\n'
+                        'PHONE_PIN="246813"\nPHONE_ALLOWED_CALLERS="420777000111"\n'
+                        'PHONE_HOME_NUMBER="00420777000111"\nVOICE_TOOLS_OPENAI_KEY="sk-key"\n')
+    assert not any(secret in call for call in incus.calls for secret in (PHONE["SIP_PASSWORD"], "246813", "sk-key"))
+    for setting in ("platforms.phone.enabled true", "tts.provider piper", "tts.streaming.provider piper_stream",
+                    "stt.provider openai", "stt.openai.model gpt-transcribe"):
+        assert incus.ran(f"hermes config set {setting}")
+    # in the language of the site, else the plugin's English and Hermes's English voice
+    assert incus.ran("hermes config set plugins.entries.hermes-3310.settings.phrase_pin Zadej kód a mřížku.") == czech
+    assert incus.ran("hermes config set tts.piper.voice cs_CZ-jirka-medium") == czech
+    # Asterisk, as alice, reads the line from .env, and the gateway starts with it
+    assert incus.containers["alice"]["asterisk_read"] == env
+    assert next(i for i, c in enumerate(incus.calls) if c.endswith(" runuser -u alice -- env -i HOME=/home/alice "
+        "USER=alice LOGNAME=alice PATH=/home/alice/.local/bin:/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 "
+        "XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus "
+        "/home/alice/.hermes/plugins/hermes-3310/install-asterisk.sh")) \
+        < next(i for i, c in enumerate(incus.calls) if c.endswith("hermes gateway install"))
+    assert "did not register" not in capsys.readouterr().err
+
+
+def test_a_phone_line_that_does_not_register_is_only_warned_about(incus, monkeypatch, capsys):
+    monkeypatch.setattr(instances.time, "sleep", lambda s: None)
+    reg = Registry()
+    reg.add("alice", "local", (9120, 9199))
+    incus.containers["alice"] = {"state": "STOPPED", "devices": {}, "account": True, "hermes": True,
+                                 "unit": False, "sip": "Rejected"}
+    instances.add(S, reg, "alice", "local", phone=PHONE)
+    assert reg.get("alice").state == "active"
+    assert "the phone line did not register with sip.odorik.cz" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("url", ["office.example.org", "https://office.example.org/a/b/",
