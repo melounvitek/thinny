@@ -483,6 +483,8 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
               f"thinny instance login {name}")
     else:
         print(f"Next: sign {name} in to {s.model_provider} before handing over: thinny instance login {name}")
+        if s.telegram_manager_token:
+            print(f"Then send its user a Telegram bot: thinny instance telegram {name}")
 
 
 def connect_phone(s: Settings, name: str, phone: dict[str, str]) -> bool:
