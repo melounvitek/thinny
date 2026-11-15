@@ -57,14 +57,17 @@ def new_server(server, monkeypatch):
 
 
 def answering(monkeypatch, *answers):
-    """The terminal gives `answers` in turn ("" is Enter), then ends."""
-    answers = list(answers)
+    """The terminal gives `answers` in turn ("" is Enter), then ends. Returns the prompts whose
+    answers it did not show."""
+    answers, hidden = list(answers), []
 
     def answer(prompt=""):
         if not answers:
             raise EOFError
         return answers.pop(0)
     monkeypatch.setattr("builtins.input", answer)
+    monkeypatch.setattr(cli.getpass, "getpass", lambda prompt="": hidden.append(prompt) or answer(prompt))
+    return hidden
 
 
 @pytest.mark.parametrize("typed, language", [("cs", "cs"), ("pt-BR", "pt-br")])
@@ -168,7 +171,8 @@ def test_a_failed_thinny_update_stops_the_update(server, monkeypatch, capsys):
 
 def test_instance_add_takes_the_limits_of_the_new_instance(server, monkeypatch):
     added = []
-    monkeypatch.setattr(instances, "add", lambda s, reg, name, access, url, **limits: added.append((name, limits)))
+    monkeypatch.setattr(instances, "add",
+                        lambda s, reg, name, access, url, phone, **limits: added.append((name, limits)))
     assert cli.main(["instance", "add", "alice", "--access", "local", "--cpu", "4", "--memory-mb", "8192",
                      "--disk-gb", "50"]) == 0
     assert cli.main(["instance", "add", "bob", "--access", "local"]) == 0
@@ -194,8 +198,8 @@ def added(monkeypatch):
 
 
 @pytest.mark.parametrize("answers, model", [
-    (["", ""], ("openai-codex", "m1")),   # the site's
-    (["2", ""], ("claude-subscription-directsdk-experimental", "claude-opus-5-5")),
+    (["", "", ""], ("openai-codex", "m1")),   # the site's
+    (["2", "", ""], ("claude-subscription-directsdk-experimental", "claude-opus-5-5")),
 ])
 def test_instance_add_asks_for_the_instances_provider_and_model(server, terminal, added, monkeypatch, answers, model):
     answering(monkeypatch, *answers)
@@ -206,9 +210,35 @@ def test_instance_add_asks_for_the_instances_provider_and_model(server, terminal
 def test_instance_add_leaves_the_model_to_the_lock(server, terminal, added, monkeypatch):
     site, _ = server
     site.write_text(VALID.replace('model = "m1"', 'model = "m1"\nmodel_lock = true'))
-    answering(monkeypatch)
+    answering(monkeypatch, "")   # no phone line
     assert cli.main(["instance", "add", "alice", "--access", "local"]) == 0
     assert added == [("openai-codex", "m1")]
+
+
+@pytest.fixture
+def phones(monkeypatch):
+    """The phone line of each instance `instance add` adds."""
+    phones = []
+    monkeypatch.setattr(instances, "add", lambda s, reg, name, access, url, phone, **kw: phones.append(phone))
+    return phones
+
+
+def test_instance_add_can_connect_a_phone_line_with_odoriks_defaults(server, terminal, phones, monkeypatch):
+    # the site's model; a line at Odorik, a password as typed, PINs too short and in other digits than the
+    # plugin's, callers, the number Hermes calls
+    hidden = answering(monkeypatch, "", "", "y", "", "794000", " secret", "12", "１２３４", "1234",
+                       "420777000111,420777000222", "", "sk-key")
+    assert cli.main(["instance", "add", "alice", "--access", "local"]) == 0
+    assert phones == [{"SIP_SERVER": "sip.odorik.cz", "SIP_USER": "794000", "SIP_PASSWORD": " secret",
+                       "PHONE_PIN": "1234", "PHONE_ALLOWED_CALLERS": "420777000111,420777000222",
+                       "PHONE_HOME_NUMBER": "00420777000111", "VOICE_TOOLS_OPENAI_KEY": "sk-key"}]
+    assert [prompt.split()[0] for prompt in hidden] == ["SIP", "PIN", "PIN", "PIN", "OpenAI"]   # the secrets
+
+
+def test_instance_add_connects_no_phone_line_unless_asked_to(server, terminal, phones, monkeypatch):
+    answering(monkeypatch, "", "", "")
+    assert cli.main(["instance", "add", "alice", "--access", "local"]) == 0
+    assert phones == [None]
 
 
 @pytest.fixture

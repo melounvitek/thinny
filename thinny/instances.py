@@ -33,6 +33,21 @@ CLAUDE_PROVIDER = "claude-subscription-directsdk-experimental"
 # shift its root could remount it and write into the folder as the host's root. Without shift, it is just
 # another account there. "shift=false", not left out, so older disks lose their shift too.
 READ_ONLY = ("readonly=true", "shift=false")
+# The phone's voice and what it says itself on a site in Czech (else the phone plugin's English and Hermes's
+# English voice), from the plugin's README.
+PHONE_CZECH = {"tts.piper.voice": "cs_CZ-jirka-medium"} | {
+    f"plugins.entries.hermes-3310.settings.{key}": value for key, value in {
+        "language": "cs",
+        "instructions": "Odpovídej česky, mluveným stylem.",
+        "phrase_pin": "Zadej kód a mřížku.",
+        "phrase_wrong_pin": "Špatný kód.",
+        "phrase_hello": "Ahoj, tady Hermes. Co potřebuješ?",
+        "phrase_bye": "Na shledanou.",
+        "phrase_not_understood": "Nerozuměl jsem, zopakuj to prosím.",
+        "phrase_stopped": "Zastaveno.",
+        "phrase_denied": "Tohle potřebuje schválení, to po telefonu nejde.",
+        "phrase_missed": "Zkoušel jsem ti volat.",
+    }.items()}
 
 
 def hermes(name: str, args: list[str], **kw):
@@ -384,9 +399,10 @@ def restart_all(s: Settings, instances: list[Instance], reg: Registry) -> None:
 # ---------- commands ----------
 
 def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = "", *, cpu: int | None = None,
-        memory_mb: int | None = None, disk_gb: int | None = None, just_imported: bool = False) -> None:
-    """Add an instance, or finish one whose add stopped. `just_imported`: it was moved here a moment ago, with
-    the Hermes release this server runs."""
+        memory_mb: int | None = None, disk_gb: int | None = None, phone: dict[str, str] | None = None,
+        just_imported: bool = False) -> None:
+    """Add an instance, or finish one whose add stopped. `phone`: the settings of a phone line to connect.
+    `just_imported`: it was moved here a moment ago, with the Hermes release this server runs."""
     access = access or s.access_default
     check_access(s, reg, name, access, url)
     if name in reg.instances:
@@ -422,11 +438,19 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
         configure_webapp(s, inst)
         if not inst.moved:  # a moved instance keeps its users' choices
             hermes(name, ["config", "set", "display.language", s.language])
+            # Piper (the phone's voice) speaks slowly at its own speed; lower is faster.
+            hermes(name, ["config", "set", "tts.piper.length_scale", "0.65"])
             if not s.model_lock:  # with the lock the policy sets them
                 for key, value in starting_model(s).items():
                     hermes(name, ["config", "set", key, value])
             seed_ui(s, name)
         password = ensure_sign_in(name)
+    if phone:
+        with step(f"{name}: phone line"):
+            registered = connect_phone(s, name, phone)
+        if not registered:
+            log(f"{name}: the phone line did not register with {phone['SIP_SERVER']}. Check the SIP user name and "
+                "password, and that the server's firewall (and its provider's) lets UDP from it in (see README).")
     host.reconcile_access(s, reg)  # outside a step: it logs when it installs Caddy
     with step(f"{name}: gateway"):
         start_or_restart_gateway(s, inst)
@@ -442,6 +466,27 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
               f"thinny instance login {name}")
     else:
         print(f"Next: sign {name} in to {s.model_provider} before handing over: thinny instance login {name}")
+
+
+def connect_phone(s: Settings, name: str, phone: dict[str, str]) -> bool:
+    """The phone line in the instance's .env and config, and its Asterisk, as hermes-3310's README sets them
+    up; the gateway gets them when it restarts. True when the line registered with its SIP server."""
+    lines = [line for line in _env_lines(name) if line.partition("=")[0] not in phone]
+    # Double-quoted with \ and " escaped: Hermes (python-dotenv) and the plugin's install script both read a
+    # password with $, #, quotes or backslashes so. In single quotes, a closing backslash breaks dotenv.
+    write_user_file(name, str(home(name) / ".env"), "\n".join(
+        lines + [f"{key}={json.dumps(value, ensure_ascii=False)}" for key, value in phone.items()]) + "\n")
+    config = {"platforms.phone.enabled": "true", "tts.provider": "piper", "tts.streaming.provider": "piper_stream",
+              "stt.provider": "openai", "stt.openai.model": "gpt-transcribe"}
+    for key, value in (config | (PHONE_CZECH if s.language == "cs" else {})).items():
+        hermes(name, ["config", "set", key, value])
+    as_user(name, [str(home(name) / "plugins/hermes-3310/install-asterisk.sh")], timeout=1800)
+    for _ in range(20):
+        if "Registered" in as_user(name, ["docker", "exec", "hermes-3310-asterisk", "asterisk", "-rx",
+                                          "pjsip show registrations"], check=False).stdout.split():
+            return True
+        time.sleep(3)
+    return False
 
 
 def check_access(s: Settings, reg: Registry, name: str, access: str, url: str) -> None:
