@@ -547,7 +547,8 @@ instance disable <name>           autostart off, container stopped (forced after
 instance remove <name>            a disabled or pending instance, once the admin types its name:
                                   container and policy folder deleted; registry entry and access
                                   trace stay
-instance list | restart           instances; one-by-one gateway restarts
+instance list | restart           instances with their CPU, RAM and disk use; one-by-one gateway
+                                  restarts
 instance move <name>... | --all --to [user@]host
                                   experimental: whole containers to another thinny server, one
                                   at a time. That server checks them all first (same Hermes
