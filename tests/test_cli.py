@@ -224,14 +224,15 @@ def phones(monkeypatch):
 
 
 def test_instance_add_can_connect_a_phone_line_with_odoriks_defaults(server, terminal, phones, monkeypatch):
-    # the site's model; a line at Odorik, a PIN too short and one long enough, callers, the number Hermes calls
-    hidden = answering(monkeypatch, "", "", "y", "", "794000", "secret", "12", "1234",
+    # the site's model; a line at Odorik, a password as typed, PINs too short and in other digits than the
+    # plugin's, callers, the number Hermes calls
+    hidden = answering(monkeypatch, "", "", "y", "", "794000", " secret", "12", "１２３４", "1234",
                        "420777000111,420777000222", "", "sk-key")
     assert cli.main(["instance", "add", "alice", "--access", "local"]) == 0
-    assert phones == [{"SIP_SERVER": "sip.odorik.cz", "SIP_USER": "794000", "SIP_PASSWORD": "secret",
+    assert phones == [{"SIP_SERVER": "sip.odorik.cz", "SIP_USER": "794000", "SIP_PASSWORD": " secret",
                        "PHONE_PIN": "1234", "PHONE_ALLOWED_CALLERS": "420777000111,420777000222",
                        "PHONE_HOME_NUMBER": "00420777000111", "VOICE_TOOLS_OPENAI_KEY": "sk-key"}]
-    assert [prompt.split()[0] for prompt in hidden] == ["SIP", "PIN", "PIN", "OpenAI"]   # the secrets
+    assert [prompt.split()[0] for prompt in hidden] == ["SIP", "PIN", "PIN", "PIN", "OpenAI"]   # the secrets
 
 
 def test_instance_add_connects_no_phone_line_unless_asked_to(server, terminal, phones, monkeypatch):
