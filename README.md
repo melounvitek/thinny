@@ -183,6 +183,7 @@ thinny instance lock alice [model ...]  # only these models (default: the one it
 thinny instance unlock alice            # its users choose, even with the site's lock
 thinny instance reset-password alice
 thinny instance disable alice           # stop it for good, keep its data
+thinny instance remove alice            # then delete its container and data; asks you to type its name
 thinny instance restart [alice ...]
 thinny instance move alice bob --to admin@new-server   # or --all; experimental
 ```
@@ -214,6 +215,8 @@ thinny instance move alice bob --to admin@new-server   # or --all; experimental
   picker keeps showing every model; the model guard refuses the others.
 - Names are 2-32 lowercase letters, digits and `-`, starting with a letter. Names and ports are
   never reused, and a disabled instance cannot be re-enabled.
+- `remove` takes a disabled instance, or a pending one whose `add` you give up on. Its name
+  stays taken and its [access trace](#access-trace) stays on the server.
 - Shell in a container: `sudo incus exec alice -- runuser -l alice` (or `-- bash` for root).
   Both show in the [access trace](#access-trace).
 - **`move` is experimental:** it has not moved an instance between two real servers yet.
