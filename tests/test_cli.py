@@ -124,6 +124,24 @@ def test_init_writes_nothing_without_a_valid_confirmed_answer(new_server, monkey
     assert message in capsys.readouterr().err
 
 
+def test_without_root_thinny_runs_itself_with_sudo_and_config_edit_keeps_the_editor(monkeypatch):
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(cli.sys, "argv", ["/usr/local/sbin/thinny"])
+    monkeypatch.setenv("VISUAL", "code --wait")
+    monkeypatch.delenv("EDITOR", raising=False)
+    started = []
+
+    def execvp(file, args):
+        started.append(args)
+        raise SystemExit(0)
+    monkeypatch.setattr(cli.os, "execvp", execvp)
+    for args in ("update", "--dry-run"), ("config", "edit"):
+        with pytest.raises(SystemExit):
+            cli.main(list(args))
+    assert started == [["sudo", "/usr/local/sbin/thinny", "update", "--dry-run"],
+                       ["sudo", "VISUAL=code --wait", "/usr/local/sbin/thinny", "config", "edit"]]
+
+
 def test_init_leaves_an_existing_site_toml_alone(server, capsys):
     site, _ = server
     assert cli.main(["init"]) == 1

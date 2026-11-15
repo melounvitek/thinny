@@ -53,7 +53,9 @@ private networks or the tailnet, and cannot change the shared policy.
 - About 0.4 GB RAM and 3 GB disk per idle instance, plus what its agent, Docker and Claude Code
   use. WebUI takes about 0.3 GB RAM more.
 
-With a sudo account, prefix the commands with `sudo` (`sudo thinny …`, `sudo incus …`).
+With a sudo account, thinny runs itself with sudo, which asks for your password. On Debian, whose
+`PATH` has `/usr/local/sbin` only for root, type `sudo thinny`. Prefix other commands with `sudo`
+(`sudo incus …`).
 
 ## Prerequisites
 
@@ -159,7 +161,7 @@ Without a terminal, it stops after copying the example. Edit `/etc/thinny/config
 Rerunning `install.sh` is safe. `thinny update` updates thinny itself too (see [Updates](#updates)).
 
 In bash, Tab completes thinny's commands and options. Instance names complete only in a root
-shell (`sudo -i`): with `sudo thinny`, the completion runs as you, and only root reads the instances.
+shell (`sudo -i`): elsewhere, the completion runs as you, and only root reads the instances.
 A changed model guard loads at each gateway's next restart (`thinny instance restart`).
 
 ## Settings
@@ -173,8 +175,8 @@ thinny config edit    # edit a copy, check it, then apply it
 thinny config apply   # apply after editing the file another way
 ```
 
-With sudo, name your editor in the command: `sudo EDITOR=vim thinny config edit` (sudo drops
-`EDITOR`). Avoid `sudo -E`: it also keeps your `HOME`, where Incus then leaves root-owned files.
+Without root, `thinny config edit` keeps your `VISUAL` or `EDITOR` through sudo; `sudo thinny config
+edit` drops them. Avoid `sudo -E`: it also keeps your `HOME`, where Incus then leaves root-owned files.
 
 Applying restarts gateways one by one where needed. `policy.language`, `port_range` and the
 `[webapp]` look apply only to instances added afterwards; `webapp.frontend` is what `instance add`
