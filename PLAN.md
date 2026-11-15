@@ -228,7 +228,8 @@ accounts on a separate v0.23.0 install, updated it to v0.23.1 and rebooted the s
   stay signed in side by side. Over Caddy 2.6.2 with `trusted_proxies` for a stand-in of
   Cloudflare's edge (Secure cookies need its `X-Forwarded-Proto`, the per-client sign-in limit its
   `X-Forwarded-For`) **[tested, without a model login]**. Instances on one host share the
-  browser's origin, and with it a few browser-side settings (e.g. `sidebar_state`).
+  browser's origin, and with it a few browser-side settings (e.g. `sidebar_state`). Dropped
+  (section 5).
 - Without a ChatGPT login, the Webapp's first screen invites the user to connect other
   providers **[tested]**: do the login before the hand-over.
 - `hermes -p <profile> webapp` does not lock a Webapp to one profile; profiles of one gateway
@@ -431,6 +432,10 @@ Debian 13, Incus 6.0.4, from Incus's stable-6.0 source and **[tested]** on the t
   `pm gc`, the Webapp build as root) and a per-account loopback firewall (section 4).
 - An Incus managed bridge: containers resolve each other's names through its DNS, reverse
   lookups even with `dns.mode=none`.
+- Own addresses under paths of one host: the instances share the browser's origin, so whoever is
+  root in one can serve a page whose script acts as another's signed-in user; `Path` on the
+  cookies does not stop that. Each gets a host of its own. Sibling hosts are still one site, but
+  over HTTPS Hermes names its cookies `__Host-`, which a sibling cannot set **[src]**.
 
 ## 6. Approach
 
@@ -589,10 +594,8 @@ URL entered, the admin points a proxy at the port; **local** `http://<name>.loca
 through `ssh -L <port>:127.0.0.1:<port> <you>@<server>`.
 
 With `access.tunnel_port`, Caddy also serves every own address at `http://127.0.0.1:<tunnel_port>`
-for one tunnel (cloudflared with a wildcard route): one site per host, with an instance on its
-root or one per path (`handle_path`, `X-Forwarded-Prefix`), 404 for anything else. An address is
-a host or a host and one path segment, and a host is never both an instance's root and another's
-path.
+for one tunnel (cloudflared with a wildcard route): one site per host, 404 for anything else. An
+address is a host of its own, without a path (section 5).
 
 ### 6.7 Settings (`site.toml`)
 

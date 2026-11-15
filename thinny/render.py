@@ -130,7 +130,7 @@ def instance_url(s: Settings, name: str, access: str, port: int, *, url: str = "
 
 def caddyfile(s: Settings, lan_ports: list[int], tunnel_routes: list[tuple[str, int]] = ()) -> str:
     """LAN sites, then the sites a tunnel on this host reaches at 127.0.0.1:<tunnel_port>: one per
-    host of the (url, port) routes, an instance on its root or one per path."""
+    host of the (url, port) routes."""
     sites = "".join(
         f"\nhttps://{host_for_url(s.lan_address)}:{port} {{\n\tbind {s.lan_address}\n\ttls internal\n"
         f"\treverse_proxy 127.0.0.1:{port}\n}}\n"
@@ -140,33 +140,18 @@ def caddyfile(s: Settings, lan_ports: list[int], tunnel_routes: list[tuple[str, 
         sites += (f"\nhttp://{host_for_url(s.lan_address)} {{\n\tbind {s.lan_address}\n"
                   "\thandle /office-root.crt {\n\t\troot * /etc/thinny\n\t\tfile_server\n\t}\n"
                   "\thandle {\n\t\trespond 404\n\t}\n}\n")
-    hosts: dict[str, list[tuple[str, int]]] = {}
-    for url, port in tunnel_routes:
-        parts = urlsplit(url)
-        hosts.setdefault(parts.hostname, []).append((parts.path.strip("/"), port))
-    for hostname, routes in hosts.items():
-        sites += f"\nhttp://{hostname}:{s.tunnel_port} {{\n\tbind 127.0.0.1\n"
-        for path, port in routes:
-            if path:
-                sites += f"\tredir /{path} /{path}/\n\thandle_path /{path}/* {{\n{_tunnel_proxy(port, path, 2)}\t}}\n"
-            else:
-                sites += _tunnel_proxy(port, path, 1)
-        if routes[0][0]:
-            sites += "\thandle {\n\t\trespond 404\n\t}\n"
-        sites += "}\n"
-    if hosts:
-        sites += f"\nhttp://:{s.tunnel_port} {{\n\tbind 127.0.0.1\n\trespond 404\n}}\n"
-    # No admin API: on localhost it would let any account rewrite the proxy.
-    return f"# {HEADER}\n{{\n\tadmin off\n\tskip_install_trust\n}}\n{sites}"
-
-
-def _tunnel_proxy(port: int, path: str, depth: int) -> str:
     # The tunnel (cloudflared on this host) passes on the client's address and https: Hermes limits
     # sign-in attempts per client and sets Secure cookies over https only. Hermes builds its links
     # under X-Forwarded-Prefix, so a client must not choose one.
-    prefix = f"header_up X-Forwarded-Prefix /{path}" if path else "header_up -X-Forwarded-Prefix"
-    lines = [f"reverse_proxy 127.0.0.1:{port} {{", "\ttrusted_proxies 127.0.0.1/32 ::1/128", f"\t{prefix}", "}"]
-    return "".join("\t" * depth + line + "\n" for line in lines)
+    sites += "".join(
+        f"\nhttp://{urlsplit(url).hostname}:{s.tunnel_port} {{\n\tbind 127.0.0.1\n"
+        f"\treverse_proxy 127.0.0.1:{port} {{\n\t\ttrusted_proxies 127.0.0.1/32 ::1/128\n"
+        "\t\theader_up -X-Forwarded-Prefix\n\t}\n}\n"
+        for url, port in tunnel_routes)
+    if tunnel_routes:
+        sites += f"\nhttp://:{s.tunnel_port} {{\n\tbind 127.0.0.1\n\trespond 404\n}}\n"
+    # No admin API: on localhost it would let any account rewrite the proxy.
+    return f"# {HEADER}\n{{\n\tadmin off\n\tskip_install_trust\n}}\n{sites}"
 
 
 def firewall(interface: str, blocked_networks: list[str]) -> str:

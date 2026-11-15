@@ -313,10 +313,11 @@ def test_a_phone_line_that_does_not_register_is_only_warned_about(incus, monkeyp
     assert "the phone line did not register with sip.odorik.cz" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("url", ["office.example.org", "https://office.example.org/a/b/",
-                                 "https://office.example.org/?a=1"])
-def test_an_address_is_a_host_or_a_host_and_one_path(incus, url):
-    with pytest.raises(CommandError, match="https://office.example.org/accounting/"):
+# Instances on one host would share the browser's origin: one's users could act as another's.
+@pytest.mark.parametrize("url", ["office.example.org", "https://office.example.org/accounting/",
+                                 "https://office.example.org/accounting", "https://office.example.org/?a=1"])
+def test_an_address_is_a_host_of_its_own_without_a_path(incus, url):
+    with pytest.raises(CommandError, match="a host of its own and no path"):
         instances.add(S, Registry(), "alice", "url", url)
     assert not incus.calls
 
@@ -326,15 +327,14 @@ def test_lan_access_gives_the_link_to_the_root_certificate_for_office_pcs(incus,
     assert "http://192.168.1.10/office-root.crt" in capsys.readouterr().out
 
 
-def test_a_host_has_one_instance_on_its_root_or_one_per_path(incus):
+def test_a_host_has_one_instance(incus):
     reg = Registry()
-    instances.add(S, reg, "accounting", "url", "https://office.example.org/accounting/")
-    instances.add(S, reg, "lawyers", "url", "https://office.example.org/lawyers")
-    for url in ("https://office.example.org/", "https://office.example.org/accounting"):
-        with pytest.raises(CommandError, match="accounting already uses https://office.example.org/accounting/"):
+    instances.add(S, reg, "accounting", "url", "https://accounting.example.org/")
+    for url in ("https://accounting.example.org", "https://accounting.example.org:8443/"):
+        with pytest.raises(CommandError, match="accounting already uses https://accounting.example.org/"):
             instances.add(S, reg, "alice", "url", url)
-    instances.change_access(S, reg, "accounting", "url", "https://office.example.org/accounting")
-    assert reg.get("accounting").url == "https://office.example.org/accounting"
+    instances.change_access(S, reg, "accounting", "url", "https://accounting.example.org")
+    assert reg.get("accounting").url == "https://accounting.example.org"
 
 
 def test_an_instance_can_get_its_own_limits_instead_of_the_sites(incus):
