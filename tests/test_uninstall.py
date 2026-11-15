@@ -21,8 +21,8 @@ def thinny_files():
     """thinny's files on the fake server that are still there."""
     paths = [settings.CONFIG_TOML.parent, host.MANAGED, system.STATE_DIR, system.LOG_FILE, host.SYSCTL_FILE,
              *(host.SYSTEMD / unit for unit in UNITS), host.SYSTEMD / "incus.service.d", host.CADDYFILE,
-             uninstall.SUDOERS, uninstall.CLONE, uninstall.LIB, uninstall.COMMAND, update.SELF_UPDATE_LOCK,
-             system.LOCK_FILE, telegram.LOCK]
+             uninstall.SUDOERS, uninstall.CLONE, uninstall.LIB, uninstall.COMMAND, uninstall.COMPLETION,
+             update.SELF_UPDATE_LOCK, system.LOCK_FILE, telegram.LOCK]
     return [path for path in paths if os.path.lexists(path)]
 
 
@@ -123,6 +123,9 @@ def server(tmp_path, monkeypatch):
     monkeypatch.setattr(uninstall, "COMMAND", tmp_path / "usr/local/sbin/thinny")
     uninstall.COMMAND.parent.mkdir(parents=True)
     uninstall.COMMAND.symlink_to(uninstall.LIB / "bin/thinny")
+    monkeypatch.setattr(uninstall, "COMPLETION", tmp_path / "usr/share/bash-completion/completions/thinny")
+    uninstall.COMPLETION.parent.mkdir(parents=True)
+    uninstall.COMPLETION.symlink_to(write(uninstall.LIB / "bin/thinny-completion.bash"))
     monkeypatch.setattr(host, "LIB", write(tmp_path / "checkout/thinny/cli.py").parent.parent)  # this code
     monkeypatch.setattr(update, "SELF_UPDATE_LOCK", write(tmp_path / "run/thinny-self-update.lock"))
     monkeypatch.setattr(system, "LOCK_FILE", write(tmp_path / "run/thinny.lock"))

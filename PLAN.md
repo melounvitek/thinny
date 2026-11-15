@@ -568,8 +568,9 @@ Tailscale socket are no longer needed: the host has no instance accounts.
 ### 6.4 `install.sh`
 
 Idempotent; a rerun repairs and never destroys data or updates Hermes: packages
-(`incus-base`, or `incus` on Ubuntu 24.04, `btrfs-progs`, `nftables`, `curl`, `git`, `python3`;
-Caddy later when LAN access needs it), the tool and the path of the clone it ran from,
+(`incus-base`, or `incus` on Ubuntu 24.04, `btrfs-progs`, `nftables`, `curl`, `git`, `python3`,
+`bash-completion`; Caddy later when LAN access needs it), the tool with its bash completion (the
+hidden `thinny complete`) and the path of the clone it ran from,
 `config.toml` from the example on the first run, then `thinny setup` and the commit it set up:
 the storage pool once (80% of the free space under `/var/lib`; no Incus network), then
 `config apply`: firewall first, units, sysctl, profile, instance policies, Webapp settings, access,

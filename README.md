@@ -134,8 +134,8 @@ bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/melounvitek/th
 3. Installs Git with apt if it is missing.
 4. Clones thinny to `/usr/local/src/thinny`. If a clone is already there, it uses it as it is.
 5. Runs its `install.sh`, which installs the packages (Incus, btrfs-progs, nftables, curl, Git,
-   Python 3), copies thinny to `/usr/local/lib/thinny` and links the `thinny` command to
-   `/usr/local/sbin/thinny`.
+   Python 3, bash-completion), copies thinny to `/usr/local/lib/thinny`, links the `thinny`
+   command to `/usr/local/sbin/thinny` and adds its Tab completion for bash.
 6. On the first run, `thinny init` asks for the settings below and writes them into
    `/etc/thinny/config.toml`, a copy of the commented example. Without a terminal, it copies the
    example and stops.
@@ -157,6 +157,9 @@ Without a terminal, it stops after copying the example. Edit `/etc/thinny/config
 `access.default`), then run `sudo sh /usr/local/src/thinny/install.sh`.
 
 Rerunning `install.sh` is safe. `thinny update` updates thinny itself too (see [Updates](#updates)).
+
+In bash, Tab completes thinny's commands and options. Instance names complete only in a root
+shell (`sudo -i`): with `sudo thinny`, the completion runs as you, and only root reads the instances.
 A changed model guard loads at each gateway's next restart (`thinny instance restart`).
 
 ## Settings
