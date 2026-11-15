@@ -140,6 +140,14 @@ def pinned_keys(s: Settings) -> list[str]:
     return keys
 
 
+def set_config(s: Settings, name: str, values: dict[str, str]) -> None:
+    """These values in the instance's own config, but those its policy pins: Hermes refuses them."""
+    pinned = pinned_keys(s)
+    for key, value in values.items():
+        if key not in pinned:
+            hermes(name, ["config", "set", key, value])
+
+
 def ensure_policy(s: Settings, inst: Instance) -> None:
     """The instance's own policy, read-only as Hermes's managed scope in its container."""
     host.write_policy(s, inst.name)
@@ -479,10 +487,10 @@ def restart_all(s: Settings, instances: list[Instance], reg: Registry) -> None:
 
 def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = "", *, frontend: str | None = None,
         cpu: int | None = None, memory_mb: int | None = None, disk_gb: int | None = None,
-        phone: dict[str, str] | None = None, just_imported: bool = False) -> None:
+        phone: dict[str, str] | None = None, group: str | None = None, just_imported: bool = False) -> None:
     """Add an instance, or finish one whose add stopped. `frontend`: None keeps the one it has (a new instance:
-    the server's). `phone`: the settings of a phone line to connect. `just_imported`: it was moved here a moment
-    ago, with the Hermes release this server runs."""
+    the server's). `phone`: the settings of a phone line to connect. `group`: None keeps the one it has (a new
+    instance: none). `just_imported`: it was moved here a moment ago, with the Hermes release this server runs."""
     access = access or s.access_default
     check_access(s, reg, name, access, url)
     if name in reg.instances:
@@ -498,6 +506,8 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
         inst.frontend = s.frontend
     inst.access, inst.url = access, url if access == "url" else ""
     inst.frontend = frontend or inst.frontend
+    inst.group = inst.group if group is None else group
+    s = settings_for(s, inst)
     reg.save()
 
     with step(f"{name}: container {inst.address}"):
@@ -522,12 +532,9 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
         reg.save()
         configure_webapp(s, inst)
         if not inst.moved:  # a moved instance keeps its users' choices
-            hermes(name, ["config", "set", "display.language", s.language])
             # Piper (the phone's voice) speaks slowly at its own speed; lower is faster.
-            hermes(name, ["config", "set", "tts.piper.length_scale", "0.65"])
-            if not s.model_lock:  # with the lock the policy sets them
-                for key, value in starting_model(s).items():
-                    hermes(name, ["config", "set", key, value])
+            set_config(s, name, {"display.language": s.language, "tts.piper.length_scale": "0.65",
+                                 **starting_model(s)})
             seed_ui(s, name)
         password = ensure_sign_in(inst)
     if phone:
@@ -563,8 +570,7 @@ def connect_phone(s: Settings, name: str, phone: dict[str, str]) -> bool:
     set_env(name, phone)
     config = {"platforms.phone.enabled": "true", "tts.provider": "piper", "tts.streaming.provider": "piper_stream",
               "stt.provider": "openai", "stt.openai.model": "gpt-transcribe"}
-    for key, value in (config | (PHONE_CZECH if s.language == "cs" else {})).items():
-        hermes(name, ["config", "set", key, value])
+    set_config(s, name, config | (PHONE_CZECH if s.language == "cs" else {}))
     as_user(name, [str(home(name) / "plugins/hermes-3310/install-asterisk.sh")], timeout=1800)
     for _ in range(20):
         if "Registered" in as_user(name, ["docker", "exec", "hermes-3310-asterisk", "asterisk", "-rx",
@@ -684,8 +690,7 @@ def unlock(s: Settings, reg: Registry, name: str) -> None:
     inst.lock, inst.lock_provider = [], ""
     update_policy(s, inst)
     if locked.model_lock:
-        for key, value in starting_model(locked).items():
-            hermes(name, ["config", "set", key, value])
+        set_config(settings_for(s, inst), name, starting_model(locked))
     reg.save()  # last: until then, unlock again gives it its model
     restart_all(s, [], reg)
     print(f"{name} is unlocked: its users choose their models")
@@ -772,15 +777,41 @@ def stop(name: str) -> None:
         raise CommandError(f"{name}'s container is still running")
 
 
-def list_instances(reg: Registry) -> None:
-    """CPU is the use over a second, as a share of the instance's own CPU limit."""
+def set_group(s: Settings, reg: Registry, name: str, group: str) -> None:
+    """Put the instance in the group ("": in none); its policy pins the group's Hermes settings."""
+    inst = _active(reg, name)
+    inst.group = group
+    reg.save()  # first: a failure on the way leaves the change for apply to finish
+    update_policy(s, inst)
+    restart_all(s, [], reg)
+    print(f"{name} is in the group {group}" if group else f"{name} is in no group")
+
+
+def list_groups(s: Settings, reg: Registry) -> None:
+    members: dict[str, list[str]] = {}
+    for inst in reg.current():
+        if inst.group:
+            members.setdefault(inst.group, []).append(inst.name)
+    rows = [("GROUP", "INSTANCES")]
+    for group in sorted(s.groups.keys() | members.keys()):
+        missing = "" if group in s.groups else "   (its file is missing)"
+        rows.append((group, (", ".join(members.get(group, [])) or "-") + missing))
+    width = max(len(group) for group, _ in rows)
+    for group, names in rows:
+        print(f"{group:<{width}}  {names}")
+
+
+def list_instances(reg: Registry, group: str | None = None) -> None:
+    """CPU is the use over a second, as a share of the instance's own CPU limit. `group`: its members only."""
     before = _containers()
     start = time.monotonic()
     time.sleep(1)
     containers = _containers()
     seconds = time.monotonic() - start
-    rows = [("NAME", "STATE", "ACCESS", "FRONTEND", "PORT", "GATEWAY", "CPU", "RAM", "DISK", "URL")]
+    rows = [("NAME", "STATE", "GROUP", "ACCESS", "FRONTEND", "PORT", "GATEWAY", "CPU", "RAM", "DISK", "URL")]
     for inst in sorted(reg.instances.values(), key=lambda inst: inst.port):
+        if group is not None and inst.group != group:
+            continue
         c = containers.get(inst.name)
         gateway = "-" if inst.state in ("disabled", "removed") or c is None else \
             ("active" if gateway_active(inst.name) else "INACTIVE")
@@ -793,8 +824,8 @@ def list_instances(reg: Registry) -> None:
                 if before.get(inst.name, {}).get("status") == "Running":   # not started in between
                     used = state["cpu"]["usage"] - before[inst.name]["state"]["cpu"]["usage"]   # in ns
                     cpu = f"{used / 1e9 / seconds / int(c['expanded_config']['limits.cpu']):.0%}"
-        rows.append((inst.name, inst.state, inst.access, inst.frontend, str(inst.port), gateway, cpu, ram, disk,
-                     inst.url))
+        rows.append((inst.name, inst.state, inst.group or "-", inst.access, inst.frontend, str(inst.port), gateway,
+                     cpu, ram, disk, inst.url))
     widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
     for r in rows:
         print("  ".join(c.ljust(w) for c, w in zip(r, widths)).rstrip())

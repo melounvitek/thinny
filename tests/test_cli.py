@@ -172,8 +172,8 @@ def test_a_failed_thinny_update_stops_the_update(server, monkeypatch, capsys):
 
 def test_instance_add_takes_the_limits_of_the_new_instance(server, monkeypatch):
     added = []
-    monkeypatch.setattr(instances, "add",
-                        lambda s, reg, name, access, url, phone, frontend, **limits: added.append((name, limits)))
+    monkeypatch.setattr(instances, "add", lambda s, reg, name, access, url, phone, frontend, group, **limits:
+                        added.append((name, limits)))
     assert cli.main(["instance", "add", "alice", "--access", "local", "--cpu", "4", "--memory-mb", "8192",
                      "--disk-gb", "50"]) == 0
     assert cli.main(["instance", "add", "bob", "--access", "local"]) == 0
@@ -495,3 +495,29 @@ def test_config_edit_refuses_an_invalid_group(server, monkeypatch, capsys, tmp_p
     assert cli.main(["config", "edit", "--group", "../sales"]) == 1
     assert "invalid name '../sales'" in capsys.readouterr().err
     assert not (tmp_path / "groups").exists() and calls == []
+
+
+def test_instances_join_and_leave_groups_that_exist(server, monkeypatch, tmp_path, capsys):
+    (tmp_path / "groups").mkdir()
+    (tmp_path / "groups/sales.toml").write_text('display.language = "cs"\n')
+    calls = []
+    monkeypatch.setattr(instances, "add", lambda s, reg, name, access, url, group, **kw: calls.append(("add", group)))
+    monkeypatch.setattr(instances, "set_group", lambda s, reg, name, group: calls.append(("set", name, group)))
+    monkeypatch.setattr(instances, "list_groups", lambda s, reg: calls.append(("groups", list(s.groups))))
+    monkeypatch.setattr(instances, "list_instances", lambda reg, group: calls.append(("list", group)))
+    assert cli.main(["instance", "add", "alice", "--access", "local", "--group", "sales"]) == 0
+    assert cli.main(["instance", "add", "bob", "--access", "local"]) == 0
+    assert cli.main(["instance", "group", "set", "alice", "sales"]) == 0
+    assert cli.main(["instance", "group", "set", "alice", "none"]) == 0
+    assert cli.main(["instance", "group", "list"]) == 0
+    assert cli.main(["instance", "list", "--group", "sales"]) == 0
+    assert cli.main(["instance", "list"]) == 0
+    assert calls == [("add", "sales"), ("add", None), ("set", "alice", "sales"), ("set", "alice", ""),
+                     ("groups", ["sales"]), ("list", "sales"), ("list", None)]
+    for args in (["instance", "add", "carol", "--access", "local", "--group", "support"],
+                 ["instance", "group", "set", "alice", "support"]):
+        assert cli.main(args) == 1
+        assert "no group support: create it with thinny config edit --group support" in capsys.readouterr().err
+    assert cli.main(["config", "edit", "--group", "none"]) == 1
+    assert "'none' means no group" in capsys.readouterr().err
+    assert len(calls) == 7

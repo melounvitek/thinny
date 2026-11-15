@@ -55,12 +55,20 @@ def main(argv: list[str] | None = None) -> int:
     cfg.add_parser("apply", help="bring the server in line with config.toml after editing it")
     inst = sub.add_parser("instance", help="instances, one container each")
     inst = inst.add_subparsers(dest="action", required=True, metavar="action")
-    inst.add_parser("list", help="instances, ports, URLs, gateway state, CPU, RAM and disk use")
+    inst.add_parser("list", help="instances, ports, URLs, gateway state, CPU, RAM and disk use") \
+        .add_argument("--group", help="its instances only")
     add = inst.add_parser("add", help="add an instance (or finish an interrupted add)",
                           description="Limits not given follow [container] in config.toml.")
     add.add_argument("name")
     add.add_argument("--access", help="lan | tailscale | url=<URL> | local (default: asked)")
     add.add_argument("--frontend", choices=settings.FRONTENDS, help="(default: asked)")
+    add.add_argument("--group", help="whose Hermes settings it gets (default: none)")
+    grp = inst.add_parser("group", help="groups: instances with the Hermes settings of a group's file")
+    grp = grp.add_subparsers(dest="group_action", required=True, metavar="action")
+    grp.add_parser("list", help="groups and their instances")
+    gset = grp.add_parser("set", help="put an instance in a group, or in none (it loses the group's settings)")
+    gset.add_argument("name")
+    gset.add_argument("group", metavar="GROUP|none")
     lim = inst.add_parser("limits", help="change an instance's CPU, memory or disk limits",
                           description="Limits not given stay as they are.")
     lim.add_argument("name")
@@ -126,6 +134,8 @@ def main(argv: list[str] | None = None) -> int:
         if command == "config edit":
             if a.group:
                 validate_name(a.group)
+                if a.group == "none":
+                    raise CommandError("'none' means no group; choose another name")
             with lock():  # before editing: a running update says so now, not after the edit
                 if edit_config(a.group):
                     apply.apply(load())
@@ -136,7 +146,10 @@ def main(argv: list[str] | None = None) -> int:
         if command == "status":
             return checks.status(s, Registry.load())
         if command == "instance list":
-            instances.list_instances(Registry.load())
+            instances.list_instances(Registry.load(), a.group)
+            return 0
+        if command == "instance group" and a.group_action == "list":
+            instances.list_groups(s, Registry.load())
             return 0
         if command == "instance telegram":   # takes thinny's lock only once its user created the bot
             telegram.connect(s, a.name)
@@ -154,6 +167,8 @@ def main(argv: list[str] | None = None) -> int:
             elif command == "update":
                 return update.run(s, reg, dry_run=a.dry_run, now=not a.scheduled)
             elif command == "instance add":
+                if a.group:
+                    check_group(s, a.group)
                 access, url = parse_access(a.access) if a.access else (
                     ask_access(f"How will users open {a.name}'s Webapp?", s.lan_address, s.access_default), "")
                 if access == "url" and not url:
@@ -167,8 +182,12 @@ def main(argv: list[str] | None = None) -> int:
                     provider, model = ask_model(f"Which model provider will {a.name} use?", s.model_provider, s.model)
                     s = dataclasses.replace(s, model_provider=provider, model=model)
                 phone = ask_phone(a.name) if asking else None
-                instances.add(s, reg, a.name, access, url, frontend=frontend, phone=phone, cpu=a.cpu,
+                instances.add(s, reg, a.name, access, url, frontend=frontend, phone=phone, group=a.group, cpu=a.cpu,
                               memory_mb=a.memory_mb, disk_gb=a.disk_gb)
+            elif command == "instance group":   # set
+                if a.group != "none":
+                    check_group(s, a.group)
+                instances.set_group(s, reg, a.name, "" if a.group == "none" else a.group)
             elif command == "instance limits":
                 instances.limits(reg, a.name, a.cpu, a.memory_mb, a.disk_gb)
             elif command == "instance access":
@@ -209,6 +228,11 @@ def main(argv: list[str] | None = None) -> int:
     except (SettingsError, RegistryError, CommandError) as e:
         print(f"thinny: {e}", file=sys.stderr)
         return 1
+
+
+def check_group(s: settings.Settings, group: str) -> None:
+    if group not in s.groups:
+        raise CommandError(f"no group {group}: create it with thinny config edit --group {group}")
 
 
 def edit_config(group: str | None = None) -> bool:

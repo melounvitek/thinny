@@ -419,14 +419,18 @@ def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_
     alice.mkdir(parents=True)
     (alice / "memory.current").write_text(f"{3 * 2**30}\n")
     (alice / "memory.stat").write_text(f"anon {2**30 - 4096}\nactive_file {2**30}\ninactive_file {2**30}\nshmem 4096\n")
+    reg.get("bob").group = reg.get("dave").group = "sales"
     instances.list_instances(reg)
     assert capsys.readouterr().out.splitlines() == [
-        "NAME   STATE   ACCESS  FRONTEND  PORT  GATEWAY   CPU  RAM          DISK          URL",
-        "alice  active  lan     webapp    9120  active    50%  1.0/4.0 GiB  3.0/30.0 GiB",
-        "bob    active  lan     webapp    9121  INACTIVE  -    -            1.0/30.0 GiB",
-        "carol  active  lan     webapp    9122  -         -    -            -",
-        "dave   active  lan     webui     9123  active    -    0.5/4.0 GiB  1.0/30.0 GiB",
+        "NAME   STATE   GROUP  ACCESS  FRONTEND  PORT  GATEWAY   CPU  RAM          DISK          URL",
+        "alice  active  -      lan     webapp    9120  active    50%  1.0/4.0 GiB  3.0/30.0 GiB",
+        "bob    active  sales  lan     webapp    9121  INACTIVE  -    -            1.0/30.0 GiB",
+        "carol  active  -      lan     webapp    9122  -         -    -            -",
+        "dave   active  sales  lan     webui     9123  active    -    0.5/4.0 GiB  1.0/30.0 GiB",
     ]
+    del incus.containers["dave"]   # started again during the next list
+    instances.list_instances(reg, "sales")
+    assert [line.split()[0] for line in capsys.readouterr().out.splitlines()] == ["NAME", "bob", "dave"]
 
 
 def test_with_the_model_lock_the_policy_sets_the_model_and_the_guard_must_be_on(incus):
@@ -505,6 +509,59 @@ def test_an_instance_unlocked_on_its_own_starts_with_the_model_it_was_locked_to(
     assert incus.containers["alice"]["hermes_config"] == \
         {"model.provider": "openai-codex", "model.default": "m1", "agent.reasoning_effort": "high"}
 
+
+
+SALES = {"display": {"language": "cs"}, "tts": {"provider": "edge"}}
+GROUPS = dataclasses.replace(S, groups={"sales": SALES, "support": {"display": {"skin": "mono"}}})
+
+
+def test_a_new_instance_in_a_group_starts_under_its_settings(incus):
+    reg = Registry()
+    instances.add(GROUPS, reg, "alice", "local", phone=PHONE, group="sales")
+    assert reg.get("alice").group == "sales"
+    assert (host.POLICIES / "alice/config.yaml").read_text() == \
+        render.managed_config(dataclasses.replace(GROUPS, hermes=SALES))
+    # Hermes refuses to set what the policy pins
+    assert not incus.ran("hermes config set display.language") and not incus.ran("hermes config set tts.provider")
+    assert incus.ran("hermes config set tts.piper.length_scale 0.65") and incus.ran("hermes config set stt.provider")
+
+    reg.get("alice").state = "pending"   # resumed: it keeps its group
+    instances.add(GROUPS, reg, "alice", "local")
+    assert reg.get("alice").group == "sales"
+
+
+def test_an_instance_joins_switches_and_leaves_a_group(incus, gateways, capsys):
+    restarted, _ = gateways
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {},
+                                 "hermes_config": {"display.language": "en", "display.skin": "default"}}
+    instances.set_group(GROUPS, reg, "alice", "sales")
+    assert reg.get("alice").group == "sales" and restarted == ["alice"]
+    assert host.policy_current(dataclasses.replace(GROUPS, hermes=SALES), "alice")
+    assert incus.containers["alice"]["hermes_config"] == {"display.skin": "default"}   # pinned now
+
+    instances.set_group(GROUPS, reg, "alice", "support")
+    assert host.policy_current(dataclasses.replace(GROUPS, hermes={"display": {"skin": "mono"}}), "alice")
+    instances.set_group(GROUPS, reg, "alice", "")
+    assert reg.get("alice").group == "" and host.policy_current(GROUPS, "alice")
+    assert restarted == ["alice"] * 3
+    assert capsys.readouterr().out.splitlines() == ["alice is in the group sales", "alice is in the group support",
+                                                    "alice is in no group"]
+
+
+def test_groups_are_listed_with_their_members(capsys):
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="active", group="sales"),
+                    "bob": Instance("bob", 9121, "local", state="pending", group="sales"),
+                    "carol": Instance("carol", 9122, "local", state="disabled", group="sales"),
+                    "dave": Instance("dave", 9123, "local", state="active", group="research"),
+                    "erin": Instance("erin", 9124, "local", state="active")})
+    instances.list_groups(GROUPS, reg)
+    assert capsys.readouterr().out.splitlines() == [
+        "GROUP     INSTANCES",
+        "research  dave   (its file is missing)",
+        "sales     alice, bob",
+        "support   -",
+    ]
 
 WEBUI_UNIT = "/home/alice/.config/systemd/user/hermes-webui.service"
 
