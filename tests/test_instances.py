@@ -396,7 +396,7 @@ def test_a_disk_limit_too_close_to_what_the_instance_uses_is_refused(incus):
 
 def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_path):
     reg = registry()
-    reg.instances["dave"] = Instance("dave", 9123, "lan", state="active")
+    reg.instances["dave"] = Instance("dave", 9123, "lan", state="active", frontend="webui")
     disk = {"root": {"total": 30 * 2**30}}
     incus.containers = {
         "alice": {"state": "RUNNING", "config": {"limits.cpu": "2"}, "used": 4 * 3 * 2**30,   # btrfs's stale count: 3 GiB
@@ -419,11 +419,11 @@ def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_
     (alice / "memory.stat").write_text(f"anon {2**30 - 4096}\nactive_file {2**30}\ninactive_file {2**30}\nshmem 4096\n")
     instances.list_instances(reg)
     assert capsys.readouterr().out.splitlines() == [
-        "NAME   STATE   ACCESS  PORT  GATEWAY   CPU  RAM          DISK          URL",
-        "alice  active  lan     9120  active    50%  1.0/4.0 GiB  3.0/30.0 GiB",
-        "bob    active  lan     9121  INACTIVE  -    -            1.0/30.0 GiB",
-        "carol  active  lan     9122  -         -    -            -",
-        "dave   active  lan     9123  active    -    0.5/4.0 GiB  1.0/30.0 GiB",
+        "NAME   STATE   ACCESS  FRONTEND  PORT  GATEWAY   CPU  RAM          DISK          URL",
+        "alice  active  lan     webapp    9120  active    50%  1.0/4.0 GiB  3.0/30.0 GiB",
+        "bob    active  lan     webapp    9121  INACTIVE  -    -            1.0/30.0 GiB",
+        "carol  active  lan     webapp    9122  -         -    -            -",
+        "dave   active  lan     webui     9123  active    -    0.5/4.0 GiB  1.0/30.0 GiB",
     ]
 
 

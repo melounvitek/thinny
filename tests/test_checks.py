@@ -104,6 +104,14 @@ def test_bypasses_are_reported_by_name_only():
     assert "/home/alice/mine" not in "".join(m + f for _, m, f in results)
 
 
+def test_webuis_unit_and_password_file_are_searched_for_bypasses_too():
+    unit = f'[Service]\nExecStart="{BINARY}" "gateway" "run"\n'
+    webui = "[Service]\nEnvironment=HERMES_MANAGED_DIR=/home/alice/mine\nHERMES_WEBUI_PASSWORD=secret\n"
+    results = checks.bypasses("alice", "", unit, own_guard=False, gateway_binary=BINARY, webui_text=webui)
+    assert [(level, message) for level, message, _ in results] == [
+        ("WARN", "alice: its hermes-webui.service sets HERMES_MANAGED_DIR")]
+
+
 def test_untouched_home_has_no_bypass():
     unit = f'[Service]\nExecStart="{BINARY}" "gateway" "run"\n'   # as `hermes gateway install` writes it
     results = checks.bypasses("alice", "HERMES_DASHBOARD_BASIC_AUTH_USERNAME=alice\n", unit, own_guard=False,
@@ -134,6 +142,30 @@ def test_missing_built_ins_are_reported(monkeypatch, plugins, has_claude, expect
     assert [(level, message) for level, message, _ in results] == expected
     assert all(fix.startswith("incus exec alice -- runuser -l alice -c ") for level, _, fix in results
                if level == "WARN")
+
+
+@pytest.mark.parametrize("auth, commit, expected", [
+    ({"password_auth_enabled": True}, "d1", [("OK", "alice: WebUI asks for a password"), ("OK", "alice: WebUI w1")]),
+    ({"password_auth_enabled": False}, "d1", [("FAIL", "alice: WebUI does not ask for a password"),
+                                             ("OK", "alice: WebUI w1")]),
+    ({"password_auth_enabled": True}, "d0", [("OK", "alice: WebUI asks for a password"),
+                                            ("WARN", "alice: WebUI is not at w1, the release of the instances that "
+                                                     "use it (changed by its users or its own updater)")]),
+])
+def test_a_webui_instance_must_ask_for_a_password_and_run_the_webui_release(monkeypatch, auth, commit, expected):
+    monkeypatch.setattr(system, "gateway_active", lambda name: True)
+    monkeypatch.setattr(system, "http_status", lambda url: "302")
+    monkeypatch.setattr(system, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, json.dumps(auth), ""))
+    monkeypatch.setattr(host, "release", lambda path=None: ("w1", "d1") if path == host.WEBUI_RELEASE_FILE
+                        else ("v1", "c1"))
+    monkeypatch.setattr(instances, "installed_commit", lambda name, webui=False: commit if webui else "c1")
+    alice = Instance("alice", 9120, "local", url="http://alice.localhost:9120/", state="active", frontend="webui")
+    results = [*checks.webapp(S, alice), *checks.version(S, alice)]
+    assert [(level, message) for level, message, _ in results] == [
+        ("OK", "alice: gateway active"), ("OK", "alice: WebUI answers (HTTP 302)"), expected[0],
+        ("OK", "alice: Hermes v1"), expected[1]]
+    assert {fix for level, _, fix in results if level != "OK"} <= {"thinny instance reset-password alice",
+                                                                  "thinny instance frontend alice webui"}
 
 
 @pytest.mark.parametrize("reboot, warned", [("02:00", True), ("03:00", True), ("04:30", False), ("now", False)])
@@ -214,12 +246,15 @@ def test_status_is_the_quick_look(tmp_path, monkeypatch, capsys):
                     "bob": Instance("bob", 9121, "local", state="active"),
                     "carol": Instance("carol", 9122, "local", state="disabled")})
     (tmp_path / "release").write_text("v0.23.1 abc123\n")
+    (tmp_path / "webui-release").write_text("v0.52.678 def456\n")
     monkeypatch.setattr(host, "RELEASE_FILE", tmp_path / "release")
+    monkeypatch.setattr(host, "WEBUI_RELEASE_FILE", tmp_path / "webui-release")
     monkeypatch.setattr(checks, "UPDATE_STATUS", tmp_path / "update-status.json")
     monkeypatch.setattr(instances, "container_state", lambda name: {"alice": "RUNNING", "bob": "STOPPED"}[name])
     monkeypatch.setattr(system, "gateway_active", lambda name: True)
     assert checks.status(S, reg) == 1
     assert capsys.readouterr().out == ("OK   Hermes release of all instances: v0.23.1\n"
+                                       "OK   WebUI release of the instances that use it: v0.52.678\n"
                                        "WARN no nightly update status yet (the update timer has not run)\n"
                                        "OK   alice: running, gateway active\n"
                                        "FAIL bob: container is STOPPED\n"

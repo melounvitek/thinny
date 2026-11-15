@@ -762,7 +762,7 @@ def list_instances(reg: Registry) -> None:
     time.sleep(1)
     containers = _containers()
     seconds = time.monotonic() - start
-    rows = [("NAME", "STATE", "ACCESS", "PORT", "GATEWAY", "CPU", "RAM", "DISK", "URL")]
+    rows = [("NAME", "STATE", "ACCESS", "FRONTEND", "PORT", "GATEWAY", "CPU", "RAM", "DISK", "URL")]
     for inst in sorted(reg.instances.values(), key=lambda inst: inst.port):
         c = containers.get(inst.name)
         gateway = "-" if inst.state in ("disabled", "removed") or c is None else \
@@ -776,7 +776,8 @@ def list_instances(reg: Registry) -> None:
                 if before.get(inst.name, {}).get("status") == "Running":   # not started in between
                     used = state["cpu"]["usage"] - before[inst.name]["state"]["cpu"]["usage"]   # in ns
                     cpu = f"{used / 1e9 / seconds / int(c['expanded_config']['limits.cpu']):.0%}"
-        rows.append((inst.name, inst.state, inst.access, str(inst.port), gateway, cpu, ram, disk, inst.url))
+        rows.append((inst.name, inst.state, inst.access, inst.frontend, str(inst.port), gateway, cpu, ram, disk,
+                     inst.url))
     widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
     for r in rows:
         print("  ".join(c.ljust(w) for c, w in zip(r, widths)).rstrip())
