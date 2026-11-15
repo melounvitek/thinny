@@ -1,5 +1,6 @@
 """The trace of admins' access to containers: every `incus exec` (`incus shell` too) and `incus console`
-that is not thinny's own, from Incus's lifecycle events. It goes to the journal (and so to syslog) and,
+that is not thinny's own, `incus file`, snapshots and exports, from Incus's lifecycle events and its log of
+API requests. It goes to the journal (and so to syslog) and,
 for an instance, to its trace directory, which its container sees read-only, and to its Google Sheet if
 it has one. A trace, not a guard: root on the host can stop it, or reach a container around Incus."""
 
@@ -24,19 +25,44 @@ UNSENT = STATE_DIR / "trace-unsent"   # each row for an instance's sheet as UNSE
 RETRY = 300   # seconds between tries to send the rows a sheet did not take
 # A sheet's Apps Script as a web app. Nothing else: the server would post the trace wherever an URL points.
 SHEET_URL = re.compile(r"https://script\.google\.com/macros/s/[\w-]+/exec")
-MONITOR = ["incus", "monitor", "--project", "default", "--type", "lifecycle", "--format", "json"]
+MONITOR = ["incus", "monitor", "--project", "default", "--type", "lifecycle", "--type", "logging", "--format", "json"]
+# An event's source or a request's URL: the instance and what of it ("", "sftp", "snapshots/snap0", ...).
+INSTANCE = re.compile(r"/1\.0/instances/([A-Za-z0-9][A-Za-z0-9-]*)/?([^?]*)(\?.*)?")
+# The other lifecycle events of access, as the admin's command. The file API's are other clients' than `incus`.
+COMMANDS = {"instance-console": "incus console {name}",
+            "instance-console-retrieved": "incus console {name} --show-log",
+            "instance-file-retrieved": "incus file pull {name}/{path}",
+            "instance-file-pushed": "incus file push {name}/{path}",
+            "instance-file-deleted": "incus file delete {name}/{path}",
+            "instance-snapshot-created": "incus snapshot create {name} {item}",
+            "instance-backup-created": "incus export {name}"}
 
 
-def line(event: dict) -> str | None:
-    """The admin's command; None for thinny's own commands and other events."""
+def entry(event: dict) -> tuple[str, str] | None:
+    """The instance and the admin's command; None for thinny's own commands and other events."""
     meta = event["metadata"]
-    if meta["action"] == "instance-console":
-        return f"incus console {meta['name']}"
-    if meta["action"] != "instance-exec" or meta["context"]["command"][:len(INTERNAL)] == INTERNAL:
-        return None
-    text = f"incus exec {meta['name']} -- {shlex.join(meta['context']['command'])}"
+    if event["type"] == "logging":
+        # `incus file` goes through SFTP, which sends no lifecycle event: only its request is logged.
+        url = (meta.get("context") or {}).get("url", "")
+        found = meta["message"] == "Handling API request" and INSTANCE.fullmatch(url)
+        if not found or found[2] != "sftp":
+            return None
+        name, text = found[1], f"incus file (pull, push, edit or mount) {found[1]}"
+    else:
+        found = INSTANCE.fullmatch(meta["source"])
+        action, context = meta["action"], meta.get("context") or {}
+        if not found or (action != "instance-exec" and action not in COMMANDS):
+            return None
+        name = found[1]
+        if action == "instance-exec":
+            if context["command"][:len(INTERNAL)] == INTERNAL:
+                return None
+            text = f"incus exec {name} -- {shlex.join(context['command'])}"
+        else:
+            text = COMMANDS[action].format(name=name, path=str(context.get("path", "")).lstrip("/"),
+                                           item=found[2].rpartition("/")[2])
     # One line, with nothing a terminal would act on.
-    return "".join(c if c.isprintable() else repr(c)[1:-1] for c in text)
+    return name, "".join(c if c.isprintable() else repr(c)[1:-1] for c in text)
 
 
 def send(url: str, row: dict) -> None:
@@ -127,12 +153,11 @@ def run() -> int:
         for raw in monitor.stdout:
             if not raw.strip():   # every event ends with an empty line
                 continue
-            event = json.loads(raw)
-            text = line(event)
-            if text is None:
+            found = entry(json.loads(raw))
+            if found is None:
                 continue
+            name, text = found
             print(text, flush=True)
-            name = event["metadata"]["name"]
             path = DIR / name
             if path.is_dir():   # an instance's
                 now = dt.datetime.now().astimezone().isoformat(timespec="seconds")

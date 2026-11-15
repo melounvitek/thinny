@@ -398,6 +398,13 @@ Debian 13, Incus 6.0.4, from Incus's stable-6.0 source and **[tested]** on the t
   line): `instance-exec` with only the argv as context, `instance-console`. `incus shell` is
   `incus exec -- su -l`. Over the unix socket the requestor is always root, so only the command
   tells thinny's own apart. `incus file` goes through SFTP and sends no event.
+- (2026-11-15) Only incusd's log of API requests shows `incus file` (pull, push, edit, mount):
+  `Handling API request` with `GET /1.0/instances/<name>/sftp` **[tested]**, not which files.
+  `incus monitor --type logging --format json` gets every level, debug too; `--loglevel` works
+  only with the pretty format. Snapshots (`instance-snapshot-created`) and exports
+  (`instance-backup-created`) name the instance only in their source, `/1.0/instances/<name>/...`;
+  the file API's `instance-file-retrieved`, `-pushed` and `-deleted` (other clients than `incus`)
+  give the path. Neither `incus copy` nor `incus publish` names the instance it reads **[src]**.
 - `systemctl restart incus` ends the monitor (websocket close 1006). Restarted 2 s later, it
   missed the execs of the first ~1.5 s after the restart.
 - A disk with `required=false` whose source is missing: the container still starts, and
@@ -538,8 +545,9 @@ Incus                                   pool `default` (btrfs, sparse file, comp
   required) as read-only disks without shift (section 4), and a proxy device from host
   `127.0.0.1:<port>` to the same port inside.
 - Access trace: the hidden `thinny trace` (thinny-trace.service, restarted at once and with
-  every apply) follows Incus's lifecycle events and notes each `instance-exec` and
-  `instance-console` that is not thinny's own: every command thinny runs in a container starts
+  every apply) follows Incus's lifecycle events and its log of API requests, and notes each
+  `instance-exec` that is not thinny's own, the console and its log, snapshots, exports, the file
+  API and the SFTP of `incus file`: every command thinny runs in a container starts
   with `env THINNY=1`. Transparency, not a guard: the admin is root. An instance with a Google
   Sheet gets each entry as a row too, posted to the sheet's Apps Script web app (only
   `https://script.google.com/macros/s/<id>/exec`, so the server can add rows and nothing else).

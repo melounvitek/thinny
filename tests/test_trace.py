@@ -16,10 +16,19 @@ from thinny.system import CommandError
 GOOGLE = trace.SHEET_URL   # before any test replaces it
 
 
-def event(action, name="alice", **context):
+def event(action, name="alice", of="", **context):
+    """An instance's lifecycle event, or one of its snapshot or backup `of` ("/snapshots/snap0"), which has no name."""
     return {"type": "lifecycle", "timestamp": "2026-11-14T10:23:45.123456789+01:00",
-            "metadata": {"action": action, "source": f"/1.0/instances/{name}", "name": name, "project": "default",
-                         "context": context, "requestor": {"username": "root", "protocol": "unix", "address": "@"}}}
+            "metadata": {"action": action, "source": f"/1.0/instances/{name}{of}", "project": "default",
+                         **({} if of else {"name": name}), "context": context,
+                         "requestor": {"username": "root", "protocol": "unix", "address": "@"}}}
+
+
+def request(url, method="GET"):
+    """Incus's log line of an API request."""
+    return {"type": "logging", "timestamp": "2026-11-14T10:23:45.123456789+01:00",
+            "metadata": {"message": "Handling API request", "level": "debug",
+                         "context": {"method": method, "url": url, "ip": "@", "protocol": "unix", "username": "root"}}}
 
 
 def exec_event(cmd):
@@ -65,9 +74,26 @@ def test_thinnys_own_commands_and_other_events_are_not_traced(traced, tmp_path, 
     monkeypatch.setattr(system, "run", lambda cmd, **kw: ran.append(cmd))
     system.in_container("alice", ["systemctl", "is-system-running"])
     traced(exec_event(ran[0]), exec_event(system.as_user_cmd("alice", ["hermes", "status"])),
-           event("instance-started"), event("instance-console-retrieved"))
+           event("instance-started"), event("instance-snapshot-deleted", of="/snapshots/snap0"),
+           request("/1.0/instances/alice?recursion=1"), request("/1.0/instances/alice/exec", "POST"),
+           {"type": "logging", "metadata": {"message": "Started operation", "level": "debug", "context": {}}})
     assert capsys.readouterr().out == ""
     assert not (tmp_path / "alice/admin-access.log").exists()
+
+
+def test_files_snapshots_exports_and_the_console_log_are_traced(traced, tmp_path, capsys):
+    traced(request("/1.0/instances/alice/sftp"),   # incus file pull, push, edit or mount
+           event("instance-file-retrieved", path="/home/alice/.hermes/.env"),   # the file API, of other clients
+           event("instance-file-pushed", path="/etc/hosts"), event("instance-file-deleted", path="/tmp/x"),
+           event("instance-snapshot-created", of="/snapshots/snap0"),
+           event("instance-backup-created", of="/backups/backup0"),   # incus export
+           event("instance-console-retrieved"),
+           request("/1.0/instances/bob/sftp?project=default"))
+    assert capsys.readouterr().out.splitlines() == [
+        "incus file (pull, push, edit or mount) alice", "incus file pull alice/home/alice/.hermes/.env",
+        "incus file push alice/etc/hosts", "incus file delete alice/tmp/x", "incus snapshot create alice snap0",
+        "incus export alice", "incus console alice --show-log", "incus file (pull, push, edit or mount) bob"]
+    assert len((tmp_path / "alice/admin-access.log").read_text().splitlines()) == 7
 
 
 def test_a_command_stays_one_line_a_terminal_shows_as_it_is(traced, tmp_path):
