@@ -173,7 +173,7 @@ the lock on removes the models users chose.
 ## Instances
 
 ```sh
-thinny instance add alice               # about 7 minutes; asks how users open the Webapp and the model
+thinny instance add alice               # about 7 minutes; asks how users open the Webapp, the model and a phone line
 thinny instance login alice             # sign in to a model provider; asks which
 thinny instance login alice --provider anthropic   # or name it: openai | anthropic
 thinny instance list
@@ -194,8 +194,17 @@ thinny instance move alice bob --to admin@new-server   # or --all; experimental
   signs in with their own account within about 15 minutes. Signed in to another provider, they
   choose its models in the Webapp's model picker (Anthropic: *Claude Subscription DirectSDK
   (Experimental)*). thinny offers OpenAI and Anthropic only; users set up others in Hermes.
-- The phone plugin stays idle until it is set up in the Webapp (Messaging → Hermes 3310), then
-  with `~/.hermes/plugins/hermes-3310/install-asterisk.sh` and a gateway restart. See its README.
+- `add` can connect a phone line to the phone plugin. Answer `y` and it asks for the SIP account
+  (Odorik's server by default), the PIN, the numbers that may call, the number Hermes calls back
+  and an OpenAI API key for speech recognition, then starts Asterisk in the container. With
+  `policy.language = "cs"` the phone speaks Czech. Every new instance gets a faster Piper voice
+  (`tts.piper.length_scale` 0.65).
+- If the line does not register, a stateless firewall at the hosting provider (such as a netcup
+  firewall policy) may drop the SIP provider's replies: let UDP from it in, from any port to any
+  port (Odorik: `81.31.45.0/24`).
+- Without a line, the phone plugin stays idle until it is set up in the Webapp (Messaging →
+  Hermes 3310), then with `~/.hermes/plugins/hermes-3310/install-asterisk.sh` and a gateway
+  restart. See its README.
 - `add` takes the same `--cpu`, `--memory-mb` and `--disk-gb`. Limits an instance was not given
   follow `[container]` in `site.toml`, also when it changes. `limits` applies at once, even to a
   running instance.

@@ -530,7 +530,8 @@ instance add <name> [--access ...]
                                   linger, docker), Hermes at the recorded release, Webapp build,
                                   Claude Code, language pack and built-in plugins (turned on),
                                   model-guard, Webapp password, language, look, without the
-                                  model lock the starting model, access, gateway
+                                  model lock the starting model, Piper's speed, a phone line
+                                  when asked (.env, config, Asterisk), access, gateway
 instance access | login [--provider] | reset-password <name>
                                   access method, OpenAI or Claude device login, new Webapp
                                   password
@@ -735,6 +736,14 @@ Google does); 2 `instance trace-sheet`, the `doctor` check; 3 README and this fi
 script deployed as a web app has no active spreadsheet (Google's docs), so it opens its sheet
 by ID.
 
+Phone line at `instance add` (2026-11-15): 1 Piper's speed for new instances; 2 the questions,
+secrets read without echo; 3 the line in the container: `.env` through stdin, never on a command
+line, the config, Asterisk, a warning when it does not register; 4 README and this file. Server
+test **[tested]**: netcup's firewall policies are stateless, so the test server's dropped the
+replies to SIP until it accepted UDP from Odorik (`81.31.45.0/24`, any port). On an instance set
+up by hand as `add` does it now, Asterisk registered through the container's NAT and a call in
+worked: PIN, Czech speech, Piper's replies. Piper's own speed (`length_scale` 1.0) was too slow.
+
 ## 9. Open questions
 
 - The Google Sheet of the access trace is tested against a stand-in only: check a real Apps
@@ -746,10 +755,7 @@ by ID.
 - Package drift: `render.PACKAGES` copies the official image's Dockerfile lists (v0.23.1).
   When Hermes adds a system dependency the list must follow; containers get the list at
   `instance add` and before each Hermes update.
-- Phone calls through a container are untested. The test server gets no SIP replies at all,
-  not even to the host itself (`tcpdump` on `eth0`: OPTIONS to Odorik and Linphone leave, nothing
-  comes back; the same OPTIONS from elsewhere get `200 OK`): the server's firewall in netcup's
-  control panel drops them. Open it for SIP before a call test.
+- Phone line: a whole `instance add` with one, and a call from Hermes, are untested on a server.
 - Per-instance SSH and Tailscale are left to the users; SSH needs the host as jump host.
 - Not tested: `systemctl restart nftables` with containers running (do Incus's per-NIC
   anti-spoofing rules come back without restarting the containers?).
