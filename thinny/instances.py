@@ -498,7 +498,7 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
         if inst.state == "active":
             raise CommandError(f"{name} already exists (use: thinny instance access {name} ...)")
         if inst.state in ("disabled", "removed"):
-            raise CommandError(f"{name} was {inst.state}; names are not reused")
+            raise CommandError(f"{name} was {inst.state}; to reuse its name: thinny instance remove {name} --purge")
         log(f"resuming the unfinished setup of {name}")
     else:
         check_free_name(name)
@@ -737,18 +737,22 @@ def disable(s: Settings, reg: Registry, name: str) -> None:
     print(f"{name} disabled: container stopped, Webapp and agent with it. Its data stays in the container {name}.")
 
 
-def remove(s: Settings, reg: Registry, name: str) -> None:
+def remove(s: Settings, reg: Registry, name: str, purge: bool = False) -> None:
     """Once the admin types its name, delete a disabled or pending instance's container, with all its data. Its
-    registry entry stays, so its name, port and address are never reused, and so does its access trace."""
+    registry entry stays, so its name, port and address are not reused, and so does its access trace. Purged, a
+    removed one too leaves the registry, freeing them, and its access trace stays under another name."""
     inst = reg.get(name)
     if inst.state == "active":
         raise CommandError(f"{name} is active; disable it first: thinny instance disable {name}")
-    if inst.state == "removed":
+    if inst.state == "removed" and not purge:
         print(f"{name} is already removed")
         return
     if not sys.stdin.isatty():
         raise CommandError("no terminal to confirm on; nothing removed")
-    print(f"This deletes {name}'s container, with all its data.")
+    if inst.state != "removed":
+        print(f"This deletes {name}'s container, with all its data.")
+    if purge:
+        print(f"This frees {name}'s name and port for a new instance.")
     try:
         answer = input(f"Type its name ({name}) to remove it: ")
     except (EOFError, KeyboardInterrupt):
@@ -761,10 +765,17 @@ def remove(s: Settings, reg: Registry, name: str) -> None:
         run(["incus", "delete", "--force", name])
     if (host.POLICIES / name).exists():
         shutil.rmtree(host.POLICIES / name)
-    inst.state = "removed"
+    kept = trace.DIR / name
+    if purge:
+        if kept.exists():   # a new instance of the name starts a trace of its own
+            kept = kept.rename(trace.DIR / f"{name}.purged-{time.strftime('%Y-%m-%dT%H%M%S')}")
+        shutil.rmtree(trace.UNSENT / name, ignore_errors=True)   # not for the sheet of a new instance of the name
+        del reg.instances[name]
+    else:
+        inst.state = "removed"
     host.reconcile_access(s, reg)   # a pending instance's Webapp may be published
     reg.save()   # last: a failure leaves a remove to run again
-    print(f"{name} removed. Its access trace stays in {trace.DIR / name}.")
+    print(f"{name} {'purged' if purge else 'removed'}. Its access trace stays in {kept}.")
 
 
 def stop(name: str) -> None:

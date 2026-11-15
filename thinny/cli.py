@@ -70,7 +70,8 @@ def complete(parser: argparse.ArgumentParser, words: list[str]) -> list[str]:
             offered = argument.choices
         elif argument and argument.dest in ("name", "names") and parser.prog != "thinny instance add" \
                 and os.geteuid() == 0:   # add takes a new name
-            offered = [inst.name for inst in Registry.load().instances.values() if inst.state != "removed"]
+            offered = [inst.name for inst in Registry.load().instances.values()
+                       if inst.state != "removed" or "--purge" in before]
     return [word for word in offered if word.startswith(typed)]
 
 
@@ -133,9 +134,12 @@ def main(argv: list[str] | None = None) -> int:
     trc.add_argument("name")
     trc.add_argument("url", metavar="URL|off", help="the URL of the sheet's script (see README, Access trace)")
     for name, text in (("reset-password", "give an instance a new Webapp password"),
-                       ("disable", "stop an instance's container for good, keep its data"),
-                       ("remove", "delete a disabled instance's container and data for good")):
+                       ("disable", "stop an instance's container for good, keep its data")):
         inst.add_parser(name, help=text).add_argument("name")
+    rmv = inst.add_parser("remove", help="delete a disabled instance's container and data for good")
+    rmv.add_argument("name")
+    rmv.add_argument("--purge", action="store_true",
+                     help="free its name and port too, also once removed (its access trace stays, renamed)")
     rst = inst.add_parser("restart", help="restart gateways one by one (all, or the named instances)")
     rst.add_argument("names", nargs="*")
     mov = inst.add_parser("move", help="move instances to another thinny server over SSH (experimental)")
@@ -263,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
             elif command == "instance disable":
                 instances.disable(s, reg, a.name)
             elif command == "instance remove":
-                instances.remove(s, reg, a.name)
+                instances.remove(s, reg, a.name, a.purge)
             elif command == "instance restart":
                 targets = [reg.get(n) for n in chosen(reg, a.names, a.group)] if a.names or a.group is not None \
                     else reg.current()
