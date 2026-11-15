@@ -663,8 +663,8 @@ def remove(s: Settings, reg: Registry, name: str) -> None:
     if (host.POLICIES / name).exists():
         shutil.rmtree(host.POLICIES / name)
     inst.state = "removed"
-    reg.save()
     host.reconcile_access(s, reg)   # a pending instance's Webapp may be published
+    reg.save()   # last: a failure leaves a remove to run again
     print(f"{name} removed. Its access trace stays in {trace.DIR / name}.")
 
 
@@ -681,7 +681,7 @@ def stop(name: str) -> None:
 def list_instances(reg: Registry) -> None:
     rows = [("NAME", "STATE", "ACCESS", "PORT", "GATEWAY", "URL")]
     for inst in sorted(reg.instances.values(), key=lambda inst: inst.port):
-        gateway = "-" if inst.state == "disabled" or container_state(inst.name) is None else \
+        gateway = "-" if inst.state in ("disabled", "removed") or container_state(inst.name) is None else \
             ("active" if gateway_active(inst.name) else "INACTIVE")
         rows.append((inst.name, inst.state, inst.access, str(inst.port), gateway, inst.url))
     widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]

@@ -524,6 +524,24 @@ def test_removing_a_pending_instance_withdraws_its_access(incus, typed, monkeypa
     assert "alice" not in incus.containers and published == [[]]
 
 
+def test_a_remove_whose_access_change_failed_runs_again(incus, typed, monkeypatch):
+    saved, failures = [], [CommandError("tailscale serve -> exit 1")]
+    monkeypatch.setattr(Registry, "save", lambda self, path=None: saved.append(self.get("alice").state))
+
+    def reconcile(s, reg):
+        if failures:
+            raise failures.pop()
+    monkeypatch.setattr(host, "reconcile_access", reconcile)
+    incus.containers["alice"] = {"state": "STOPPED"}
+    typed("alice")
+    with pytest.raises(CommandError, match="tailscale serve"):
+        instances.remove(S, Registry({"alice": Instance("alice", 9120, "tailscale", state="disabled")}), "alice")
+    assert saved == []   # the registry still says disabled
+
+    instances.remove(S, Registry({"alice": Instance("alice", 9120, "tailscale", state="disabled")}), "alice")
+    assert saved == ["removed"]
+
+
 def test_an_active_instance_must_be_disabled_before_it_is_removed(incus, typed):
     reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
     incus.containers["alice"] = {"state": "RUNNING"}
