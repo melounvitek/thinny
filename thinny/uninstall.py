@@ -16,6 +16,7 @@ from .system import CommandError, log
 
 SUDOERS = Path("/etc/sudoers.d/thinny-checks")   # README's rule for status and doctor
 COMMAND = Path(host.THINNY)
+COMPLETION = Path("/usr/share/bash-completion/completions/thinny")
 LIB = Path("/usr/local/lib/thinny")     # where install.sh put thinny; host.LIB is wherever this code runs from
 CLONE = Path("/usr/local/src/thinny")   # bin/install's clone
 
@@ -91,6 +92,7 @@ def run() -> None:
     if clone == str(CLONE) and CLONE.exists():
         shutil.rmtree(CLONE)
     # Last: until here a failure leaves a thinny to run again. Python has its modules loaded.
+    COMPLETION.unlink(missing_ok=True)
     COMMAND.unlink(missing_ok=True)
     if LIB.exists():
         shutil.rmtree(LIB)
@@ -99,8 +101,8 @@ def run() -> None:
     telegram.LOCK.unlink(missing_ok=True)
 
     print("thinny is removed.\n"
-          "  The packages stay (Incus, Caddy, btrfs-progs, nftables, curl, Git, Python 3);\n"
-          "  apt purge removes those nothing else uses.\n"
+          "  The packages stay (Incus, Caddy, btrfs-progs, nftables, curl, Git, Python 3,\n"
+          "  bash-completion); apt purge removes those nothing else uses.\n"
           "  IP forwarding and user namespaces stay on until the next reboot.")
     if pool_kept:
         print(f"  The Incus storage pool {render.POOL} stays (up to 80% of the disk): something else uses it.\n"

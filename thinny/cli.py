@@ -37,6 +37,43 @@ def at_least_1(value: str) -> int:
     return int(value)
 
 
+def complete(parser: argparse.ArgumentParser, words: list[str]) -> list[str]:
+    """What fits the last of `words`, the one being typed after `thinny`. Instance names only for root:
+    only root reads the registry."""
+    *before, typed = words or [""]
+    before = [word for word in before if word != "="]   # bash splits --option=value at the =
+    typed = "" if typed == "=" else typed
+    given, value_of = 0, None   # the arguments given to the command; the option the typed word is a value of
+    for word in before:
+        commands = next((a for a in parser._actions if isinstance(a, argparse._SubParsersAction)), None)
+        if value_of:
+            value_of = None
+        elif commands and word in commands.choices:
+            parser = commands.choices[word]
+        elif word.startswith("-"):
+            option = parser._option_string_actions.get(word)
+            value_of = option if option and option.nargs != 0 else None
+        else:
+            given += 1
+    commands = next((a for a in parser._actions if isinstance(a, argparse._SubParsersAction)), None)
+    if value_of:
+        offered = value_of.choices or []
+    elif typed.startswith("-"):
+        offered = list(parser._option_string_actions)
+    elif commands:
+        offered = [command.dest for command in commands._choices_actions]   # those with help
+    else:
+        argument = next((a for i, a in enumerate(parser._get_positional_actions()) if i == given or a.nargs == "*"),
+                        None)
+        offered = []
+        if argument and argument.choices:
+            offered = argument.choices
+        elif argument and argument.dest in ("name", "names") and parser.prog != "thinny instance add" \
+                and os.geteuid() == 0:   # add takes a new name
+            offered = [inst.name for inst in Registry.load().instances.values() if inst.state != "removed"]
+    return [word for word in offered if word.startswith(typed)]
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="thinny", description="Shared Hermes Agent server, one isolated container per instance.")
     sub = ap.add_subparsers(dest="command", required=True, metavar="command")
@@ -117,6 +154,11 @@ def main(argv: list[str] | None = None) -> int:
     rcv.add_argument("--check", action="store_true")
     sub.add_parser("uninstall", help="remove thinny and every instance, with all their data")
     sub.add_parser("trace")  # without help, so not listed: thinny-trace.service runs it
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["complete"]:   # not listed: the bash completion runs it, as whoever presses Tab
+        for word in complete(ap, argv[1:]):
+            print(word)
+        return 0
     a = ap.parse_args(argv)
     command = " ".join(filter(None, (a.command, getattr(a, "action", None))))
 

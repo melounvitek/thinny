@@ -24,7 +24,7 @@ INCUS=incus-base
 apt-cache show incus-base >/dev/null 2>&1 || INCUS=incus
 # NEEDRESTART_SUSPEND: Ubuntu's needrestart would list the services to restart after the install.
 DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y -q \
-	"$INCUS" btrfs-progs nftables curl git python3 >/dev/null
+	"$INCUS" btrfs-progs nftables curl git python3 bash-completion >/dev/null
 
 echo "Installing thinny into $LIB"
 mkdir -p "$LIB"
@@ -37,6 +37,7 @@ cp -r "$SRC/files/." "$LIB/files/"
 find "$LIB" -name __pycache__ -prune -exec rm -rf {} +
 chmod 755 "$LIB/bin/thinny"
 ln -sfn "$LIB/bin/thinny" /usr/local/sbin/thinny
+ln -sfn "$LIB/bin/thinny-completion.bash" /usr/share/bash-completion/completions/thinny
 echo "$SRC" >"$LIB/source" # thinny update pulls this clone
 # 755 whatever the umask: any account may fetch the office certificate in it.
 install -d -m 755 /etc/thinny

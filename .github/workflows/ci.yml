@@ -29,4 +29,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: shellcheck --severity=warning install.sh bin/install
+      - run: shellcheck --severity=warning install.sh bin/install bin/thinny-completion.bash

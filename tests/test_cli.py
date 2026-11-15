@@ -574,3 +574,42 @@ def test_a_group_without_active_instances_selects_nothing(sales, capsys):
         assert cli.main(["instance", *args, "--group", "support"]) == 1
         assert "no active instance is in the group support" in capsys.readouterr().err
     assert sales == []
+
+
+def tab(capsys, *words):
+    """What Tab offers after `thinny`, the last of `words` being the one typed."""
+    assert cli.main(["complete", *words]) == 0
+    return capsys.readouterr().out.splitlines()
+
+
+@pytest.mark.parametrize("words, offered", [
+    ([""], ["init", "setup", "status", "doctor", "update", "config", "instance", "uninstall"]),   # not trace
+    (["instance", "re"], ["reset-password", "remove", "restart"]),                                # not receive
+    (["instance", "group", ""], ["list", "set"]),
+    (["update", "--d"], ["--dry-run"]),
+    (["instance", "restart", "--"], ["--help", "--group"]),
+    (["instance", "login", "--provider", ""], ["openai", "anthropic"]),
+    (["instance", "login", "--provider", "="], ["openai", "anthropic"]),   # bash's words for --provider=
+    (["instance", "login", "--provider", "=", "op"], ["openai"]),
+    (["instance", "add", "alice", "--frontend", "webu"], ["webui"]),
+    (["instance", "frontend", "alice", ""], ["webapp", "webui"]),
+    (["instance", "login", ""], []),   # only root reads the instances
+])
+def test_tab_completes_commands_and_options_without_root(monkeypatch, capsys, words, offered):
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 1000)
+    assert tab(capsys, *words) == offered
+
+
+def test_tab_completes_the_names_of_instances_for_root(monkeypatch, capsys):
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 0)
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="active"),
+                    "bob": Instance("bob", 9121, "local", state="disabled"),
+                    "carol": Instance("carol", 9122, "local", state="removed")})
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
+    assert tab(capsys, "instance", "login", "") == ["alice", "bob"]
+    assert tab(capsys, "instance", "limits", "--cpu", "4", "") == ["alice", "bob"]
+    assert tab(capsys, "instance", "login", "--provider", "=", "openai", "") == ["alice", "bob"]
+    assert tab(capsys, "instance", "restart", "alice", "") == ["alice", "bob"]
+    assert tab(capsys, "instance", "group", "set", "a") == ["alice"]
+    assert tab(capsys, "instance", "lock", "alice", "") == []   # models
+    assert tab(capsys, "instance", "add", "") == []             # a new name
