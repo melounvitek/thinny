@@ -18,6 +18,8 @@ Status: in development. Design notes: [`PLAN.md`](PLAN.md).
 - **Built into every instance:** [Claude Code](https://code.claude.com/) with the Claude
   subscription plugin, and the [hermes-3310](https://github.com/melounvitek/hermes-3310) phone
   plugin with Docker.
+- **Telegram with one link:** each instance's user creates a bot of their own that only they can
+  write to (optional, see [Telegram](#telegram)).
 - **One Hermes release**, with an optional nightly update that moves instances one at a time.
 - **Four ways to open the Webapp:** office network (HTTPS), Tailscale, your own address, or an
   SSH tunnel.
@@ -176,6 +178,7 @@ the lock on removes the models users chose.
 thinny instance add alice               # about 7 minutes; asks how users open the Webapp, the model and a phone line
 thinny instance login alice             # sign in to a model provider; asks which
 thinny instance login alice --provider anthropic   # or name it: openai | anthropic
+thinny instance telegram alice          # a Telegram bot its user creates with a link (see Telegram)
 thinny instance list                    # with each one's CPU, RAM and disk use
 thinny instance access alice tailscale  # lan | tailscale | url=<URL> | local
 thinny instance limits alice --cpu 4 --memory-mb 8192 --disk-gb 50
@@ -274,6 +277,43 @@ thinny instance add jirka --access url=https://jirka.example.org/
 
 An address has no path, and no two instances share a host: they would share the browser's origin,
 and whoever is root in one could act as the other's signed-in user.
+
+## Telegram
+
+Each instance's user can get a Telegram bot of their own with one link, through a manager bot
+(Telegram's managed bots). Set it up once:
+
+1. In Telegram, create the manager bot with [@BotFather](https://t.me/BotFather) (`/newbot`), e.g.
+   `@acme_hermes_bot`.
+2. In BotFather's app (*Open*), choose the bot, then *Bot Settings*, and turn on *Bot Management Mode*.
+3. Put its token in `site.toml` with `thinny config edit`:
+
+   ```toml
+   [telegram]
+   manager_token = "123456:ABC-..."
+   ```
+
+Then, after `thinny instance login alice`:
+
+```sh
+thinny instance telegram alice
+```
+
+It prints a link for alice's user, such as
+`https://t.me/newbot/acme_hermes_bot/acme_hermes_alice_bot?name=Hermes`, and waits. They open it in
+Telegram and tap *Create*. thinny shows who created which bot and asks whether it is alice's; with
+`y`, it connects the bot and restarts alice's gateway, and the bot greets its user. Only that user
+can write to it. Their chat is also Hermes's Telegram home channel, so Hermes does not ask for one.
+
+- Anyone who knows the manager bot can create a bot through it, also with the suggested name.
+  Check the name and Telegram ID before you answer `y`.
+- The manager token gets the token of every bot created through it. It stays on the server, in
+  `site.toml`, which only root can read.
+- The bot belongs to its user: it is in their BotFather, where they can rename or delete it.
+- Ctrl+C stops the wait. A bot created meanwhile waits up to 24 hours: run the command again and
+  confirm it. One wait at a time per server; other thinny commands run meanwhile.
+- Run it again to give an instance another bot, e.g. when its user deleted theirs. A moved
+  instance keeps its bot.
 
 ## Updates
 

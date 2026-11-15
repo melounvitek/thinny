@@ -271,6 +271,14 @@ def test_a_new_instance_gets_its_own_container_with_hermes(incus):
         < incus.index("incus config device add alice model-guard")
 
 
+@pytest.mark.parametrize("token, step", [("", False), ("1000:" + "M" * 35, True)])
+def test_a_new_instance_ends_with_the_telegram_step_on_a_site_with_a_manager_bot(incus, capsys, token, step):
+    instances.add(dataclasses.replace(S, telegram_manager_token=token), Registry(), "alice", "local")
+    out = capsys.readouterr().out
+    assert "thinny instance login alice" in out
+    assert ("Then send its user a Telegram bot: thinny instance telegram alice" in out) == step
+
+
 PHONE = {"SIP_SERVER": "sip.odorik.cz", "SIP_USER": "794000", "SIP_PASSWORD": "it's \"pa$$\" #word\\", "PHONE_PIN": "246813",
          "PHONE_ALLOWED_CALLERS": "420777000111", "PHONE_HOME_NUMBER": "00420777000111",
          "VOICE_TOOLS_OPENAI_KEY": "sk-key"}

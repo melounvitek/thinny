@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from thinny import cli, host, instances, render, settings, system, uninstall, update
+from thinny import cli, host, instances, render, settings, system, telegram, uninstall, update
 from thinny.registry import Instance, Registry
 from thinny.system import CommandError
 
@@ -22,7 +22,7 @@ def thinny_files():
     paths = [settings.SITE_TOML.parent, host.MANAGED, system.STATE_DIR, system.LOG_FILE, host.SYSCTL_FILE,
              *(host.SYSTEMD / unit for unit in UNITS), host.SYSTEMD / "incus.service.d", host.CADDYFILE,
              uninstall.SUDOERS, uninstall.CLONE, uninstall.LIB, uninstall.COMMAND, update.SELF_UPDATE_LOCK,
-             system.LOCK_FILE]
+             system.LOCK_FILE, telegram.LOCK]
     return [path for path in paths if os.path.lexists(path)]
 
 
@@ -126,6 +126,7 @@ def server(tmp_path, monkeypatch):
     monkeypatch.setattr(host, "LIB", write(tmp_path / "checkout/thinny/cli.py").parent.parent)  # this code
     monkeypatch.setattr(update, "SELF_UPDATE_LOCK", write(tmp_path / "run/thinny-self-update.lock"))
     monkeypatch.setattr(system, "LOCK_FILE", write(tmp_path / "run/thinny.lock"))
+    monkeypatch.setattr(telegram, "LOCK", write(tmp_path / "run/thinny-telegram.lock"))
     monkeypatch.setattr(cli.os, "geteuid", lambda: 0)
     monkeypatch.setattr(cli.sys, "stdin", type("Terminal", (), {"isatty": lambda self: True})())
     monkeypatch.setattr(uninstall.socket, "gethostname", lambda: "office-server")

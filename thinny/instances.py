@@ -296,6 +296,15 @@ def _env_lines(name: str) -> list[str]:
     return read_user_file(name, str(home(name) / ".env")).splitlines()
 
 
+def set_env(name: str, values: dict[str, str]) -> None:
+    """`values` in the instance's .env, in place of what it had for their keys."""
+    lines = [line for line in _env_lines(name) if line.partition("=")[0] not in values]
+    # Double-quoted with \ and " escaped: Hermes (python-dotenv) and the phone plugin's install script both read
+    # a password with $, #, quotes or backslashes so. In single quotes, a closing backslash breaks dotenv.
+    write_user_file(name, str(home(name) / ".env"), "\n".join(
+        lines + [f"{key}={json.dumps(value, ensure_ascii=False)}" for key, value in values.items()]) + "\n")
+
+
 def ensure_sign_in(name: str) -> str | None:
     """Webapp username and password in the instance's .env; returns a new password, or None
     when it already has one."""
@@ -474,16 +483,14 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
               f"thinny instance login {name}")
     else:
         print(f"Next: sign {name} in to {s.model_provider} before handing over: thinny instance login {name}")
+        if s.telegram_manager_token:
+            print(f"Then send its user a Telegram bot: thinny instance telegram {name}")
 
 
 def connect_phone(s: Settings, name: str, phone: dict[str, str]) -> bool:
     """The phone line in the instance's .env and config, and its Asterisk, as hermes-3310's README sets them
     up; the gateway gets them when it restarts. True when the line registered with its SIP server."""
-    lines = [line for line in _env_lines(name) if line.partition("=")[0] not in phone]
-    # Double-quoted with \ and " escaped: Hermes (python-dotenv) and the plugin's install script both read a
-    # password with $, #, quotes or backslashes so. In single quotes, a closing backslash breaks dotenv.
-    write_user_file(name, str(home(name) / ".env"), "\n".join(
-        lines + [f"{key}={json.dumps(value, ensure_ascii=False)}" for key, value in phone.items()]) + "\n")
+    set_env(name, phone)
     config = {"platforms.phone.enabled": "true", "tts.provider": "piper", "tts.streaming.provider": "piper_stream",
               "stt.provider": "openai", "stt.openai.model": "gpt-transcribe"}
     for key, value in (config | (PHONE_CZECH if s.language == "cs" else {})).items():

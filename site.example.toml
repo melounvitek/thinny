@@ -41,3 +41,7 @@ tunnel_port = 0                 # e.g. 8080: Caddy serves every url instance at 
 interface = "eth0"              # the server's internet interface; containers go out through it
 blocked_networks = []           # public networks instance containers may not reach, e.g. ["203.0.113.0/24"]
                                 # (private networks and the tailnet are always out of reach)
+
+[telegram]
+manager_token = ""              # the token of the bot that creates each instance's own bot, "" = off
+                                # (see README, Telegram; only root can read this file)

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from thinny import apply, cli, host, instances, move, render, settings, system, trace, update
+from thinny import apply, cli, host, instances, move, render, settings, system, telegram, trace, update
 from thinny.registry import Instance, Registry
 
 VALID = '[policy]\nmodel = "m1"\nallowed_models = ["m1"]\n\n[access]\nlan_address = "192.168.1.10"\n'
@@ -80,6 +80,7 @@ def test_init_writes_the_answers_into_the_commented_example(new_server, monkeypa
         ("openai-codex", "gpt-5.5", language, f"hermes-lang-{language}", "enp1s0")
     assert (s.access_default, s.lan_address, s.tunnel_port) == ("url", "", 8080)
     assert "# default model" in new_server.read_text()
+    assert new_server.stat().st_mode & 0o777 == 0o600   # it may hold the Telegram manager bot's token
     assert "one tunnel at http://127.0.0.1:8080" in capsys.readouterr().out
 
 
@@ -305,6 +306,17 @@ def test_instance_limits_changes_only_the_given_limits(server, monkeypatch):
         cli.main(["instance", "limits", "alice", "--memory-mb", "lots"])
 
 
+def test_instance_telegram_waits_without_thinnys_lock(server, monkeypatch):
+    connected = []
+
+    def connect(s, name):
+        with system.lock():   # free for other runs, e.g. the nightly update
+            connected.append(name)
+    monkeypatch.setattr(telegram, "connect", connect)
+    assert cli.main(["instance", "telegram", "alice"]) == 0
+    assert connected == ["alice"]
+
+
 def test_instance_trace_sheet_takes_a_url_or_off(server, monkeypatch):
     connected = []
     monkeypatch.setattr(trace, "connect_sheet", lambda reg, name, url: connected.append((name, url)))
@@ -352,6 +364,7 @@ def test_config_edit_applies_a_valid_change_even_to_a_broken_site_toml(server, m
     assert cli.main(["config", "edit"]) == 0
     assert started == [["code", "--wait"]]
     assert site.read_text() == edited
+    assert site.stat().st_mode & 0o777 == 0o600   # it may hold the Telegram manager bot's token
     assert calls == [("apply", "m2")]
 
 
