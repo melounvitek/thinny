@@ -769,7 +769,8 @@ def remove(s: Settings, reg: Registry, name: str, purge: bool = False) -> None:
     if purge:
         if kept.exists():   # a new instance of the name starts a trace of its own
             kept = kept.rename(trace.DIR / f"{name}.purged-{time.strftime('%Y-%m-%dT%H%M%S')}")
-        shutil.rmtree(trace.UNSENT / name, ignore_errors=True)   # not for the sheet of a new instance of the name
+        if (trace.UNSENT / name).exists():   # not for the sheet of a new instance of the name
+            shutil.rmtree(trace.UNSENT / name)
         del reg.instances[name]
     else:
         inst.state = "removed"
