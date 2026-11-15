@@ -27,7 +27,7 @@ AUTH_PREFIX = "HERMES_DASHBOARD_BASIC_AUTH_"
 RESTART_TIMEOUT = 45 * 60  # a restart waits for a running reply (up to 30 min by default)
 RESTART_PENDING = STATE_DIR / "restart-pending"
 IMAGE = "images:debian/13"
-URL_RE = re.compile(r"https?://[a-z0-9.-]+(:\d+)?(/[a-z0-9-]+)?/?")
+URL_RE = re.compile(r"https?://[a-z0-9.-]+(:\d+)?/?")
 CLAUDE_INSTALLER = "https://claude.ai/install.sh"
 CGROUPS = Path("/sys/fs/cgroup")   # each container's as lxc.payload.<name>
 # The Claude subscription plugin's provider; it signs in through Claude Code.
@@ -523,20 +523,14 @@ def starting_model(s: Settings) -> dict[str, str]:
 
 
 def check_url(reg: Registry, name: str, url: str) -> None:
-    """An address no other instance uses: a host for one instance, or a host and one path each for
-    several (with a tunnel port, Caddy routes by both)."""
+    """A host no other instance uses: instances on one host would share the browser's origin, so one's
+    users could act as another's signed-in users."""
     if not URL_RE.fullmatch(url):
-        raise CommandError("url access needs an address like https://alice.example.org/ or "
-                           "https://office.example.org/accounting/")
-    parts = urlsplit(url)
-    path = parts.path.strip("/")
+        raise CommandError("url access needs an address with a host of its own and no path, like "
+                           "https://alice.example.org/")
     for other in reg.current():
-        other_parts = urlsplit(other.url)
-        other_path = other_parts.path.strip("/")
-        if other.name != name and other.access == "url" and other_parts.hostname == parts.hostname \
-                and (not path or not other_path or path == other_path):
-            raise CommandError(f"{other.name} already uses {other.url}; a host has one instance on its root "
-                               "or one on each path")
+        if other.name != name and other.access == "url" and urlsplit(other.url).hostname == urlsplit(url).hostname:
+            raise CommandError(f"{other.name} already uses {other.url}; a host has one instance")
 
 
 def _print_access_hint(s: Settings, inst: Instance) -> None:
