@@ -82,6 +82,13 @@ def test_a_moved_instance_keeps_its_users_settings_and_gets_this_servers_port_an
     assert "if alice did not use openai-codex on its old server, sign it in: thinny instance login alice" in out
 
 
+def test_a_moved_instance_keeps_webui_at_the_webui_release_of_this_server(target, incus):
+    move.receive(S, target, "alice", "local", "", RELEASE, render.BUILT_INS, archive(), frontend="webui")
+    assert target.get("alice").frontend == "webui"
+    assert incus.ran("/home/alice/hermes-webui https://github.com/nesquena/hermes-webui beef")
+    assert incus.containers["alice"]["hermes_config"]["webapp.enabled"] == "false"
+
+
 def test_on_a_server_with_the_model_lock_the_model_it_had_goes_at_once(target, incus, monkeypatch):
     # Hermes would leave it as invalid YAML under the lock, which refuses the unset itself. Its gateway
     # starts with the container, so before waiting for the boot to finish.
@@ -206,7 +213,7 @@ class Other:
 
 @pytest.fixture
 def source(incus, tmp_path, monkeypatch):
-    """This server: alice (local) and bob (url) run, carol is disabled, dave pending. Returns the
+    """This server: alice (local) and bob (url, WebUI) run, carol is disabled, dave pending. Returns the
     registry and the other server."""
     monkeypatch.setattr(move, "run", incus.run)
     monkeypatch.setattr(move, "STATE_DIR", tmp_path)
@@ -216,7 +223,8 @@ def source(incus, tmp_path, monkeypatch):
     for name, state in (("alice", "RUNNING"), ("bob", "RUNNING"), ("carol", "STOPPED"), ("dave", "RUNNING")):
         incus.containers[name] = {"state": state, "devices": {}}
     reg = Registry({"alice": Instance("alice", 9120, "local", state="active", built_ins="b1"),
-                    "bob": Instance("bob", 9121, "url", url="https://bob.example.org/", state="active", built_ins="b1"),
+                    "bob": Instance("bob", 9121, "url", url="https://bob.example.org/", state="active", built_ins="b1",
+                                    frontend="webui"),
                     "carol": Instance("carol", 9122, "local", state="disabled"),
                     "dave": Instance("dave", 9123, "local")})
     return reg, other
@@ -230,7 +238,8 @@ def test_every_active_instance_moves_one_at_a_time_and_stays_here_disabled(sourc
     reg, other = source
     move.move(S, reg, [], "admin@new")
     alice = ["--access", "local", "--release", "v2", "c0ffee", "--built-ins", "b1"]
-    bob = ["--access", "url", "--url", "https://bob.example.org/", "--release", "v2", "c0ffee", "--built-ins", "b1"]
+    bob = ["--access", "url", "--url", "https://bob.example.org/", "--frontend", "webui", "--release", "v2", "c0ffee",
+           "--built-ins", "b1"]
     # the other server checks both before either stops
     assert [args for _, args in other.calls] == [receive("alice", *alice, "--check"), receive("bob", *bob, "--check"),
                                                  receive("alice", *alice), receive("bob", *bob)]

@@ -29,6 +29,8 @@ RESTART_PENDING = STATE_DIR / "restart-pending"
 IMAGE = "images:debian/13"
 URL_RE = re.compile(r"https?://[a-z0-9.-]+(:\d+)?/?")
 CLAUDE_INSTALLER = "https://claude.ai/install.sh"
+WEBUI_GIT = f"https://github.com/{host.WEBUI_REPO}"
+FRONTEND_NAMES = {"webapp": "Webapp", "webui": "WebUI"}
 CGROUPS = Path("/sys/fs/cgroup")   # each container's as lxc.payload.<name>
 # The Claude subscription plugin's provider; it signs in through Claude Code.
 CLAUDE_PROVIDER = "claude-subscription-directsdk-experimental"
@@ -67,6 +69,13 @@ def password_hash(password: str) -> str:
 def home(name: str) -> PurePosixPath:
     """The instance's Hermes home inside its container (its path names the Webapp cookies)."""
     return PurePosixPath(f"/home/{name}/.hermes")
+
+
+def webui_files(name: str) -> dict[str, PurePosixPath]:
+    """Where hermes-webui lives in the instance's container: its checkout, unit, password and state."""
+    user = PurePosixPath(f"/home/{name}")
+    return {"checkout": user / "hermes-webui", "unit": user / ".config/systemd/user/hermes-webui.service",
+            "password": user / ".config/hermes-webui.env", "state": home(name) / "webui"}
 
 
 def url_for(s: Settings, inst: Instance) -> str:
@@ -253,10 +262,21 @@ def install_hermes(s: Settings, name: str, commit: str, enable: bool) -> None:
         hermes(name, ["pm", "gc"], check=False, timeout=600)
 
 
-def installed_commit(name: str) -> str:
-    """The commit of the instance's Hermes, as its container reports it."""
-    return as_user(name, ["git", "-C", str(home(name) / "hermes-agent"), "rev-parse", "HEAD"],
-                   check=False).stdout.strip()
+def install_webui(name: str, commit: str = "") -> None:
+    """hermes-webui at exactly `commit`, by default at the release the instances that use it run (the first one
+    to: the latest stable). A first install or an update, also back from where its own updater took it."""
+    if not commit:
+        _, commit = host.release(host.WEBUI_RELEASE_FILE) or host.first_release(host.WEBUI_REPO,
+                                                                                 host.WEBUI_RELEASE_FILE)
+    as_user(name, ["sh", "-c", 'git init -q "$1" && cd "$1" && git fetch -q --depth 1 "$2" "$3" && '
+                   'git checkout -q --force FETCH_HEAD', "sh", str(webui_files(name)["checkout"]), WEBUI_GIT, commit],
+            timeout=900)
+
+
+def installed_commit(name: str, webui: bool = False) -> str:
+    """The commit of the instance's Hermes (or WebUI), as its container reports it."""
+    checkout = webui_files(name)["checkout"] if webui else home(name) / "hermes-agent"
+    return as_user(name, ["git", "-C", str(checkout), "rev-parse", "HEAD"], check=False).stdout.strip()
 
 
 def ensure_model_guard(name: str) -> None:
@@ -281,15 +301,34 @@ def webapp_settings(name: str) -> dict[str, str]:
 
 
 def configure_webapp(s: Settings, inst: Instance) -> bool:
-    """Webapp settings in the instance's config; True when something changed."""
-    wanted = {"enabled": "true", "host": "127.0.0.1", "port": str(inst.port), "public_url": inst.url}
+    """The instance's frontend: the Webapp's settings in its config, on, or off for WebUI on its port with
+    WebUI's unit; True when something changed. WebUI starts in the site's look."""
+    webui = inst.frontend == "webui"
+    wanted = {"enabled": str(not webui).lower(), "host": "127.0.0.1", "port": str(inst.port), "public_url": inst.url}
     current = webapp_settings(inst.name)
     changes = {key: value for key, value in wanted.items() if current.get(key) != value}
-    if changes:
+    files = webui_files(inst.name)
+    unit = render.webui_unit(inst.name, inst.port, inst.url.startswith("https://")) if webui else ""
+    unit_changed = read_user_file(inst.name, str(files["unit"])) != unit
+    if changes or unit_changed:
         mark_restart([inst.name])
     for key, value in changes.items():
         hermes(inst.name, ["config", "set", f"webapp.{key}", value])
-    return bool(changes)
+    if unit_changed and webui:
+        as_user(inst.name, ["mkdir", "-p", str(files["unit"].parent)])
+        write_user_file(inst.name, str(files["unit"]), unit)
+    elif unit_changed:   # back to the Webapp: WebUI leaves its port, and does not start with the container
+        as_user(inst.name, ["systemctl", "--user", "disable", "--now", "hermes-webui"], timeout=RESTART_TIMEOUT)
+        as_user(inst.name, ["rm", "-f", str(files["unit"])])
+    if unit_changed:
+        as_user(inst.name, ["systemctl", "--user", "daemon-reload"])
+    if webui:
+        as_user(inst.name, ["systemctl", "--user", "enable", "hermes-webui"])
+        settings = files["state"] / "settings.json"
+        if not read_user_file(inst.name, str(settings)):
+            as_user(inst.name, ["mkdir", "-p", str(files["state"])])
+            write_user_file(inst.name, str(settings), json.dumps(render.webui_settings(s), indent=1) + "\n")
+    return bool(changes) or unit_changed
 
 
 def _env_lines(name: str) -> list[str]:
@@ -305,25 +344,28 @@ def set_env(name: str, values: dict[str, str]) -> None:
         lines + [f"{key}={json.dumps(value, ensure_ascii=False)}" for key, value in values.items()]) + "\n")
 
 
-def ensure_sign_in(name: str) -> str | None:
-    """Webapp username and password in the instance's .env; returns a new password, or None
-    when it already has one."""
-    lines = _env_lines(name)
-    if any(line.startswith(AUTH_PREFIX + "USERNAME=") for line in lines):
-        return None
-    return _write_sign_in(name, lines)
+def ensure_sign_in(inst: Instance) -> str | None:
+    """The sign-in of the instance's frontend; returns a new password, or None when it already has one. An
+    instance from before WebUI has none for WebUI: its Webapp's is kept as a hash only."""
+    has = any(line.startswith(AUTH_PREFIX + "USERNAME=") for line in _env_lines(inst.name)) and (
+        inst.frontend == "webapp" or read_user_file(inst.name, str(webui_files(inst.name)["password"])))
+    return None if has else reset_password(inst.name)
 
 
 def reset_password(name: str) -> str:
-    return _write_sign_in(name, [line for line in _env_lines(name) if not line.startswith(AUTH_PREFIX)])
-
-
-def _write_sign_in(name: str, lines: list[str]) -> str:
+    """A new password for both frontends: the Webapp's username and password in the instance's .env, and WebUI's.
+    WebUI must not run: it would keep the sessions it signs everyone out of."""
     password = secrets.token_urlsafe(12)
-    lines = lines + [f"{AUTH_PREFIX}USERNAME={name}",
-                     f"{AUTH_PREFIX}PASSWORD_HASH='{password_hash(password)}'",  # quoted: '$' in the hash
-                     f"{AUTH_PREFIX}SECRET={secrets.token_urlsafe(32)}"]
+    lines = [line for line in _env_lines(name) if not line.startswith(AUTH_PREFIX)] + [
+        f"{AUTH_PREFIX}USERNAME={name}",
+        f"{AUTH_PREFIX}PASSWORD_HASH='{password_hash(password)}'",  # quoted: '$' in the hash
+        f"{AUTH_PREFIX}SECRET={secrets.token_urlsafe(32)}"]
     write_user_file(name, str(home(name) / ".env"), "\n".join(lines) + "\n")
+    # In plain text: WebUI takes no hash from its environment. Its unit reads the file, the gateway does not.
+    files = webui_files(name)
+    as_user(name, ["mkdir", "-p", str(files["password"].parent)])
+    write_user_file(name, str(files["password"]), f"HERMES_WEBUI_PASSWORD={password}\n")
+    as_user(name, ["rm", "-f", str(files["state"] / ".sessions.json")])
     return password
 
 
@@ -379,6 +421,8 @@ def _gateway_up(s: Settings, inst: Instance) -> None:
         hermes(inst.name, ["gateway", "restart", "--yes"], timeout=RESTART_TIMEOUT)
     else:
         hermes(inst.name, ["gateway", "install"], timeout=600)
+    if inst.frontend == "webui":   # after the gateway: also after a Hermes update, which WebUI needs
+        as_user(inst.name, ["systemctl", "--user", "restart", "hermes-webui"], timeout=RESTART_TIMEOUT)
     check_gateway(s, inst)
 
 
@@ -415,11 +459,12 @@ def restart_all(s: Settings, instances: list[Instance], reg: Registry) -> None:
 
 # ---------- commands ----------
 
-def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = "", *, cpu: int | None = None,
-        memory_mb: int | None = None, disk_gb: int | None = None, phone: dict[str, str] | None = None,
-        just_imported: bool = False) -> None:
-    """Add an instance, or finish one whose add stopped. `phone`: the settings of a phone line to connect.
-    `just_imported`: it was moved here a moment ago, with the Hermes release this server runs."""
+def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = "", *, frontend: str | None = None,
+        cpu: int | None = None, memory_mb: int | None = None, disk_gb: int | None = None,
+        phone: dict[str, str] | None = None, just_imported: bool = False) -> None:
+    """Add an instance, or finish one whose add stopped. `frontend`: None keeps the one it has (a new instance:
+    the site's). `phone`: the settings of a phone line to connect. `just_imported`: it was moved here a moment
+    ago, with the Hermes release this server runs."""
     access = access or s.access_default
     check_access(s, reg, name, access, url)
     if name in reg.instances:
@@ -432,7 +477,9 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     else:
         check_free_name(name)
         inst = reg.add(name, access, s.port_range)
+        inst.frontend = s.frontend
     inst.access, inst.url = access, url if access == "url" else ""
+    inst.frontend = frontend or inst.frontend
     reg.save()
 
     with step(f"{name}: container {inst.address}"):
@@ -448,6 +495,9 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     if not just_imported or new_built_ins:
         log(f"{name}: Hermes {tag}")
         install_hermes(s, name, commit, enable=not inst.moved or new_built_ins)
+    if inst.frontend == "webui":   # a moved instance too: this server's release
+        with step(f"{name}: WebUI"):
+            install_webui(name)
     with step(f"{name}: settings"):
         ensure_model_guard(name)
         inst.url = url_for(s, inst)
@@ -461,7 +511,7 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
                 for key, value in starting_model(s).items():
                     hermes(name, ["config", "set", key, value])
             seed_ui(s, name)
-        password = ensure_sign_in(name)
+        password = ensure_sign_in(inst)
     if phone:
         with step(f"{name}: phone line"):
             registered = connect_phone(s, name, phone)
@@ -474,7 +524,9 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     inst.state, inst.built_ins = "active", render.BUILT_INS
     reg.save()
 
-    print(f"\n{name} is ready.\n  Webapp:   {inst.url}\n  Username: {name}")
+    print(f"\n{name} is ready.\n  {FRONTEND_NAMES[inst.frontend] + ':':<9} {inst.url}")
+    if inst.frontend == "webapp":   # WebUI asks for the password only
+        print(f"  Username: {name}")
     print(f"  Password: {password}   (shown once; reset with: thinny instance reset-password {name})" if password
           else "  Password: unchanged (reset with: thinny instance reset-password " + name + ")")
     _print_access_hint(s, inst)
@@ -565,6 +617,19 @@ def change_access(s: Settings, reg: Registry, name: str, access: str, url: str =
     _print_access_hint(s, inst)
 
 
+def change_frontend(s: Settings, reg: Registry, name: str, frontend: str) -> None:
+    inst = _active(reg, name)
+    if frontend == "webui":   # first: until the switch is saved, config apply keeps the Webapp
+        install_webui(name)
+    inst.frontend = frontend
+    if password := ensure_sign_in(inst):
+        print(f"{name}: new password: {password}   (for both frontends; shown once)")
+    reg.save()   # then config apply and a repeat finish the switch
+    configure_webapp(s, inst)
+    start_or_restart_gateway(s, inst)
+    print(f"{name}: {FRONTEND_NAMES[frontend]} at {inst.url}")
+
+
 def limits(reg: Registry, name: str, cpu: int | None, memory_mb: int | None, disk_gb: int | None) -> None:
     _active(reg, name)
     if not (cpu or memory_mb or disk_gb):
@@ -624,9 +689,13 @@ def login(reg: Registry, name: str, provider: str) -> None:
 
 def password(s: Settings, reg: Registry, name: str) -> None:
     inst = _active(reg, name)
+    if inst.frontend == "webui":
+        mark_restart([name])   # first: a failure leaves it for the next restart
+        as_user(name, ["systemctl", "--user", "stop", "hermes-webui"], timeout=RESTART_TIMEOUT)
     new = reset_password(name)
     start_or_restart_gateway(s, inst)
-    print(f"{name}: new Webapp password: {new}   (shown once; open browsers must sign in again)")
+    print(f"{name}: new {FRONTEND_NAMES[inst.frontend]} password: {new}   (shown once; open browsers must sign in "
+          "again)")
 
 
 def disable(s: Settings, reg: Registry, name: str) -> None:
@@ -692,7 +761,7 @@ def list_instances(reg: Registry) -> None:
     time.sleep(1)
     containers = _containers()
     seconds = time.monotonic() - start
-    rows = [("NAME", "STATE", "ACCESS", "PORT", "GATEWAY", "CPU", "RAM", "DISK", "URL")]
+    rows = [("NAME", "STATE", "ACCESS", "FRONTEND", "PORT", "GATEWAY", "CPU", "RAM", "DISK", "URL")]
     for inst in sorted(reg.instances.values(), key=lambda inst: inst.port):
         c = containers.get(inst.name)
         gateway = "-" if inst.state in ("disabled", "removed") or c is None else \
@@ -706,7 +775,8 @@ def list_instances(reg: Registry) -> None:
                 if before.get(inst.name, {}).get("status") == "Running":   # not started in between
                     used = state["cpu"]["usage"] - before[inst.name]["state"]["cpu"]["usage"]   # in ns
                     cpu = f"{used / 1e9 / seconds / int(c['expanded_config']['limits.cpu']):.0%}"
-        rows.append((inst.name, inst.state, inst.access, str(inst.port), gateway, cpu, ram, disk, inst.url))
+        rows.append((inst.name, inst.state, inst.access, inst.frontend, str(inst.port), gateway, cpu, ram, disk,
+                     inst.url))
     widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
     for r in rows:
         print("  ".join(c.ljust(w) for c, w in zip(r, widths)).rstrip())

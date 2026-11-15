@@ -11,6 +11,7 @@ from pathlib import Path
 
 SITE_TOML = Path("/etc/thinny/site.toml")
 ACCESS_METHODS = ("lan", "tailscale", "url", "local")
+FRONTENDS = ("webapp", "webui")   # Hermes's built-in Webapp, or hermes-webui
 
 
 class SettingsError(Exception):
@@ -35,6 +36,7 @@ class Settings:
     container_memory_mb: int = 4096
     container_disk_gb: int = 30
     port_range: tuple[int, int] = (9120, 9199)
+    frontend: str = "webapp"
     theme: str = "light"
     text_scale: int = 110
     interface: str = "simple"
@@ -65,6 +67,7 @@ KEYS = {
     ("container", "memory_mb"): "container_memory_mb",
     ("container", "disk_gb"): "container_disk_gb",
     ("webapp", "port_range"): "port_range",
+    ("webapp", "frontend"): "frontend",
     ("webapp", "theme"): "theme",
     ("webapp", "text_scale"): "text_scale",
     ("webapp", "interface"): "interface",
@@ -165,6 +168,8 @@ def _validate(s: Settings, source: str) -> None:
             fail(f"container.{name} must be at least 1")
     if not re.fullmatch(r"[A-Za-z0-9_.-]{1,15}", s.network_interface):
         fail("network.interface must be an interface name, e.g. eth0")
+    if s.frontend not in FRONTENDS:
+        fail("webapp.frontend must be webapp or webui")
     if s.theme not in ("light", "dark"):
         fail("webapp.theme must be light or dark")
     if s.access_default not in ACCESS_METHODS:

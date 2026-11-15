@@ -113,6 +113,47 @@ def ui_preferences(s: Settings) -> dict[str, str]:
     return prefs
 
 
+def webui_unit(name: str, port: int, secure: bool) -> str:
+    """hermes-webui's systemd user unit: WebUI on the instance's port in place of the Webapp (the gateway keeps
+    running for scheduled jobs and the phone). `secure`: users open it over HTTPS."""
+    return f"""# {HEADER}
+[Unit]
+Description=Hermes WebUI
+After=network.target
+
+[Service]
+WorkingDirectory=%h/hermes-webui
+# It goes on in the Python of the instance's Hermes.
+ExecStart=/usr/bin/python3 %h/hermes-webui/server.py
+# Its password, the Webapp's (thinny writes both).
+EnvironmentFile=%h/.config/hermes-webui.env
+Environment=HERMES_WEBUI_HOST=127.0.0.1 HERMES_WEBUI_PORT={port} HERMES_WEBUI_SKIP_ONBOARDING=1
+# Instances share a host name on the LAN and Tailscale, so cookies of their own.
+Environment=HERMES_WEBUI_COOKIE_NAME=hermes_session_{name} HERMES_WEBUI_PROFILE_COOKIE_NAME=hermes_profile_{name}
+{"Environment=HERMES_WEBUI_SECURE=1" if secure else "# Over plain HTTP: cookies without Secure."}
+Restart=on-failure
+RestartSec=5
+# A stop lets running replies finish (90 s).
+KillMode=mixed
+TimeoutStopSec=120
+
+[Install]
+WantedBy=default.target
+"""
+
+
+def webui_settings(s: Settings) -> dict:
+    """WebUI's settings for an instance that starts using it (keys of its settings.json); then its users'.
+    A simpler look than its own: large text, Chat and Todos only in the sidebar, a plain message box."""
+    return {"language": s.language, "theme": s.theme,
+            "skin": "graphite",   # its server refuses the GitHub and Codex skins its picker offers (v0.52.678)
+            "font_size": "large",
+            "hidden_tabs": ["kanban", "tasks", "skills", "memory", "workspaces", "profiles", "insights", "logs"],
+            "hide_composer_context": True, "hide_composer_profile": True, "hide_composer_workspace": True,
+            # its own update check offers WebUI and Hermes beyond the releases thinny installs
+            "check_for_updates": False}
+
+
 def host_for_url(address: str) -> str:
     return f"[{address}]" if ipaddress.ip_address(address).version == 6 else address
 

@@ -64,8 +64,9 @@ def move(s: Settings, reg: Registry, names: list[str], to: str) -> None:
 def receive_args(inst: Instance, release: tuple[str, str], check: bool = False) -> list[str]:
     """The other server's `thinny instance receive` for the instance."""
     return ["instance", "receive", inst.name, "--access", inst.access,
-            *(["--url", inst.url] if inst.access == "url" else []), "--release", *release,
-            "--built-ins", inst.built_ins, *(["--check"] if check else [])]
+            *(["--url", inst.url] if inst.access == "url" else []),
+            *(["--frontend", inst.frontend] if inst.frontend != "webapp" else []),   # an older thinny knows none
+            "--release", *release, "--built-ins", inst.built_ins, *(["--check"] if check else [])]
 
 
 def remote(to: str, args: list[str], stdin: BinaryIO | None = None) -> int:
@@ -81,7 +82,7 @@ def remote(to: str, args: list[str], stdin: BinaryIO | None = None) -> int:
 
 
 def receive(s: Settings, reg: Registry, name: str, access: str, url: str, release: tuple[str, str], built_ins: str,
-            archive: BinaryIO | None) -> None:
+            archive: BinaryIO | None, frontend: str = "webapp") -> None:
     """Take an instance another server moves here: `archive` is its `incus export`, which comes with
     the Hermes `release` and `built_ins` it has. Without an archive, only check that it could."""
     if name in reg.instances:
@@ -109,7 +110,7 @@ def receive(s: Settings, reg: Registry, name: str, access: str, url: str, releas
     finally:
         path.unlink(missing_ok=True)
     inst = reg.add(name, access, s.port_range)
-    inst.moved, inst.built_ins = True, built_ins
+    inst.moved, inst.built_ins, inst.frontend = True, built_ins, frontend
     reg.save()
     if here is None:
         host.write_release(*release)

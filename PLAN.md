@@ -42,7 +42,8 @@ In priority order.
    possible (nesting, `/dev/net/tun`). No Docker daemon on the host (docker group = root).
    Built into every instance: Claude Code with the Claude subscription plugin and the hermes-3310
    phone plugin.
-5. **Built-in Hermes Webapp per instance** on loopback, always behind sign-in. How users
+5. **Built-in Hermes Webapp per instance**, or hermes-webui in its place, on loopback, always
+   behind sign-in. How users
    reach it is chosen per instance when it is added (section 6.6). The tool assumes
    nothing about the site's network.
 6. **Unattended operation:** optional automatic nightly Hermes update with careful one-by-one
@@ -234,6 +235,37 @@ accounts on a separate v0.23.0 install, updated it to v0.23.1 and rebooted the s
   providers **[tested]**: do the login before the hand-over.
 - `hermes -p <profile> webapp` does not lock a Webapp to one profile; profiles of one gateway
   share it **[docs]**.
+
+### WebUI (hermes-webui, 2026-11-15)
+- Python's standard library and plain JS, no build. `python3 server.py` with Debian's Python
+  finds `~/.hermes/hermes-agent`, goes on in the Python of the instance's Hermes and imports the
+  agent: chats run in WebUI's process, not the gateway's. Scheduled jobs and the phone still need
+  the gateway, with `webapp.enabled false` **[tested]**. About 330 MB RSS idle **[tested]**.
+- `HERMES_WEBUI_PASSWORD` (plain text) beats a hash in its `settings.json`; then its UI can neither
+  change nor turn off the password **[src]**. Sessions live 30 days in memory and
+  `webui/.sessions.json`, not tied to the password: delete the file while WebUI is stopped
+  **[src, tested]**. Hermes does not strip the variable from the environment of the agent's tools
+  **[src]**.
+- Cookies `hermes_session` and a profile cookie, `Path=/`, named by
+  `HERMES_WEBUI_COOKIE_NAME`/`_PROFILE_COOKIE_NAME`; `Secure` only with `HERMES_WEBUI_SECURE`
+  **[src]**. Over Tailscale and `http://<name>.localhost` through SSH: sign-in, Secure cookie of
+  its own name **[tested]**. Requests must come from the origin of their `Host`, which the proxy
+  device, Caddy and `tailscale serve` keep **[src, tested over Tailscale]**.
+- A real chat with the Claude subscription plugin, the terminal tool with Hermes's tools and
+  `claude` on its `PATH` although the unit sets none **[tested]**.
+- After a Hermes update, chats fail until WebUI restarts **[docs]**. Its own updater can move
+  WebUI and Hermes's checkout; `check_for_updates: false` hides the offer **[src]**.
+- Its model picker reads only the user's config and sends the chosen model with each chat:
+  the managed model lock does not narrow it, model-guard still refuses the turn, but not WebUI's
+  chat titles **[src]**.
+- Theme and language: the server's `settings.json` wins in a browser without its own choice
+  **[src, tested]**. Its server refuses the GitHub and Codex skins its picker offers: they stay in
+  the browser, the server keeps `default` (v0.52.678, also its master) **[src, tested]**. thinny
+  starts it with Graphite, large text, only Chat and Todos in the sidebar and a plain message box
+  (the look the admin chose on the test server). On a page load WebUI takes the hidden sidebar
+  tabs from the browser only; the server's reach a browser once it opens Settings **[src, tested]**.
+- Not addressed: 5 failed sign-ins a minute per client, and behind the proxy device every client
+  is 127.0.0.1; a built-in terminal that cannot be turned off; public share links **[src]**.
 
 ### Network
 - nft output rules: non-root accounts may not reach the tailnet (100.64.0.0/10,
@@ -439,7 +471,6 @@ Hermes v0.23.1 **[src]**; managed bots tried with a real manager bot and phone *
 - Hermes's built-in "Web Access" (desktop app): needs a Nous account per user, plain
   HTTP on the LAN.
 - Plain HTTP as the LAN default: unencrypted, and the browser turns off Webapp features.
-- Third-party web UI (hermes-webui): worse than the built-in Webapp for this use.
 - One shared ChatGPT subscription for several users: against the provider's terms.
 - Editing Hermes source: everything works through managed scope, bundled-but-excluded
   plugins and catalog plugins. Keep it that way so updates stay safe.
@@ -559,16 +590,21 @@ update [--dry-run] [--scheduled]  update now (6.8); the timer runs --scheduled, 
                                   for the minimum age and respects auto_update
 config edit | apply               visudo-like edit of site.toml, then apply; re-render and
                                   restart where needed
-instance add <name> [--access ...]
+instance add <name> [--access ...] [--frontend webapp|webui]
                                   port, address, container, packages, account (uid 1000, sudo,
                                   linger, docker), Hermes at the recorded release, Webapp build,
                                   Claude Code, language pack and built-in plugins (turned on),
-                                  model-guard, Webapp password, language, look, without the
+                                  WebUI at its recorded release when chosen, model-guard,
+                                  password, language, look, without the
                                   model lock the starting model, Piper's speed, a phone line
                                   when asked (.env, config, Asterisk), access, gateway
 instance access | login [--provider] | reset-password <name>
-                                  access method, OpenAI or Claude device login, new Webapp
-                                  password
+                                  access method, OpenAI or Claude device login, new password
+                                  (both frontends; WebUI stopped meanwhile, its sessions deleted)
+instance frontend <name> webapp|webui
+                                  the Webapp, or WebUI on its port with the Webapp off; WebUI
+                                  stops before the Webapp takes the port. An instance from
+                                  before WebUI gets a new password for both
 instance lock <name> [model ...] | unlock <name>
                                   its own model lock (the provider it uses, these models or the
                                   one it uses) or none, whatever the site's; unlock puts the model
@@ -612,8 +648,8 @@ uninstall                         after the hostname is typed: every container, 
 ### 6.6 Access per instance
 
 `instance add` asks for one method per instance (`--access`, default from `site.toml`), since a
-Webapp accepts only its own `public_url`. The Webapp listens on `127.0.0.1:<port>` inside the
-container; the proxy device publishes it on the same host loopback port, and every method
+Webapp accepts only its own `public_url`. The Webapp, or WebUI, listens on `127.0.0.1:<port>` inside
+the container; the proxy device publishes it on the same host loopback port, and every method
 points there: **LAN** a Caddy site with its local CA (`tls internal`), whose root certificate
 office PCs download at `http://<lan_address>/office-root.crt`; **Tailscale**
 `tailscale serve --bg --https=<port>`, offered only when Tailscale runs; **own address** the
@@ -628,7 +664,7 @@ address is a host of its own, without a path (section 5).
 
 `[hermes]` update timing, `[policy]` provider, models, effort, `model_lock`, approvals, language and
 `language_pack` (a catalog plugin name), `[container]` `cpu`, `memory_mb`, `disk_gb`,
-`[webapp]` port range and the look for new instances (`text_scale` 110), `[access]` `default`,
+`[webapp]` port range, `frontend` and the look for new instances (`text_scale` 110), `[access]` `default`,
 `lan_address`, `tunnel_port`, `[network]` `interface` (`eth0`) and `blocked_networks` (public networks;
 private ones and the tailnet are always blocked), `[telegram]` `manager_token` (only root reads
 `site.toml`). `site.example.toml` lists every key.
@@ -659,6 +695,12 @@ private ones and the tailnet are always blocked), `[telegram]` `manager_token` (
   waits, through the same one-by-one rollout; `auto_update = false` only reports it. Plugins are
   installed with `--enable` only then and at `instance add`, so a Hermes update keeps what
   users turned off.
+- WebUI: then the same for nesquena/hermes-webui's latest stable release, recorded in
+  `webui-release`, on the active instances that use it and are not at its commit: a shallow fetch
+  of the commit, the checked restart. Stop at the first failure; the record moves last, so the
+  next run goes on without an unfinished file. Every gateway restart restarts WebUI too, which a
+  new Hermes needs. `instance add` and `instance frontend` install the recorded release (the
+  latest stable one when none is recorded yet).
 - Every run that is not a dry run also runs `claude update` for every instance, best effort: the
   Claude subscription plugin starts `claude` with `DISABLE_AUTOUPDATER=1`.
 - No pre-update backup: `/etc/hermes`, model-guard and the language pack can all be
@@ -680,8 +722,9 @@ private ones and the tailnet are always blocked), `[telegram]` `manager_token` (
 - Per instance: container running and reaching the internet (FAIL; the fix shows the
   forward-chain lines); gateway active and Webapp answering (FAIL), `public_url` as recorded
   (WARN); Hermes at the recorded commit (WARN); Claude Code and the built-in plugins installed
-  (WARN); no bypass (WARN): `HERMES_MANAGED_DIR`, `HERMES_BUNDLED_PLUGINS` or
-  `HERMES_ENABLE_PROJECT_PLUGINS` in `.env` or the gateway unit, their own `model-guard` in
+  (WARN); with WebUI instead of the Webapp: it answers and asks for a password (FAIL), and runs
+  the recorded WebUI release (WARN); no bypass (WARN): `HERMES_MANAGED_DIR`, `HERMES_BUNDLED_PLUGINS` or
+  `HERMES_ENABLE_PROJECT_PLUGINS` in `.env`, the gateway unit or WebUI's unit and password file, their own `model-guard` in
   `~/.hermes/plugins` (with the model lock), a gateway unit that does not start their own
   `hermes`.
 - A check that crashes is reported as FAIL; the others still run.
@@ -789,7 +832,21 @@ Telegram bots (2026-11-15): 0 managed bots with a real manager bot (section 4); 
 telegram` and `site.toml` readable by root only; 2 `instance add` points to it after `login`
 (waiting in `add` would greet the user before Hermes is signed in); 3 README and this file.
 
+WebUI per instance (2026-11-15): 1 the setting, the choice at `instance add` and `instance frontend`,
+the unit on the instance's port, the nightly update of WebUI's release; 2 one password for both
+frontends; 3 `doctor`, the frontend in `instance list`; 4 README and this file. Server test
+**[tested]** on the test server (Debian 13, Hermes v0.23.1, WebUI v0.52.678): `install.sh` over the
+previous thinny kept the Webapp instance as it was, `doctor` all OK. A new WebUI instance over
+Tailscale in 7 min: sign-in with the printed password, Czech and light. The Webapp instance from
+before switched to WebUI in 33 s with a new password; a real chat; `reset-password` signed the
+open session out, the old password refused; back to the Webapp, which took the same password.
+WebUI's release recorded as the one before, `thinny update` moved the instance to the latest and
+restarted it. After `incus restart`, WebUI answered in 9 s.
+
 ## 9. Open questions
+
+- WebUI after a real Hermes update (its restart with the gateway is tested with fakes only), and
+  with Firefox and over LAN through Caddy.
 
 - The Google Sheet of the access trace is tested against a stand-in only: check a real Apps
   Script web app, its "ok" after the redirect, and the answer of one not open to anyone.

@@ -208,13 +208,25 @@ def container(s: Settings, inst: Instance):
 
 
 def webapp(s: Settings, inst: Instance):
+    """The instance's frontend: the Webapp, or WebUI."""
     url = f"http://127.0.0.1:{inst.port}/"
     fix = f"thinny instance restart {inst.name}"
+    frontend = instances.FRONTEND_NAMES[inst.frontend]
     yield (ok(f"{inst.name}: gateway active") if system.gateway_active(inst.name)
            else fail(f"{inst.name}: gateway not active", fix))
     code = system.http_status(url)
-    yield (ok(f"{inst.name}: Webapp answers (HTTP {code})") if code[0] in "23"
-           else fail(f"{inst.name}: Webapp does not answer at {url} (HTTP {code})", fix))
+    yield (ok(f"{inst.name}: {frontend} answers (HTTP {code})") if code[0] in "23"
+           else fail(f"{inst.name}: {frontend} does not answer at {url} (HTTP {code})", fix))
+    if inst.frontend == "webui":
+        if code[0] in "23":   # its users are root in their container
+            status = system.run(["curl", "-s", "-m", "5", url + "api/auth/status"], check=False, timeout=15).stdout
+            try:
+                asks = json.loads(status).get("password_auth_enabled") is True
+            except (ValueError, AttributeError):
+                asks = False
+            yield (ok(f"{inst.name}: WebUI asks for a password") if asks else
+                   fail(f"{inst.name}: WebUI does not ask for a password", f"thinny instance reset-password {inst.name}"))
+        return
     public_url = instances.webapp_settings(inst.name).get("public_url", "")
     yield (ok(f"{inst.name}: Webapp address {inst.url}") if public_url == inst.url
            else warn(f"{inst.name}: Webapp public_url is {public_url or 'not set'}, not {inst.url}",
@@ -226,6 +238,11 @@ def version(s: Settings, inst: Instance):
     yield (ok(f"{inst.name}: Hermes {tag}") if instances.installed_commit(inst.name) == commit
            else warn(f"{inst.name}: Hermes is not at {tag}, the release all instances run (changed by its users, or an "
                      "update is unfinished); the next update puts it back"))
+    if inst.frontend == "webui":
+        tag, commit = host.release(host.WEBUI_RELEASE_FILE) or ("none", "")
+        yield (ok(f"{inst.name}: WebUI {tag}") if instances.installed_commit(inst.name, webui=True) == commit
+               else warn(f"{inst.name}: WebUI is not at {tag}, the release of the instances that use it (changed by its "
+                         "users or its own updater)", f"thinny instance frontend {inst.name} webui"))
 
 
 def built_ins(s: Settings, inst: Instance):
@@ -249,14 +266,19 @@ def bypass(s: Settings, inst: Instance):
     unit = home.parent / ".config/systemd/user/hermes-gateway.service"
     own_guard = instances.settings_for(s, inst).model_lock and system.as_user(
         inst.name, ["test", "-e", str(home / "plugins/model-guard")], check=False, timeout=30).returncode == 0
+    # WebUI runs the agent in its own process
+    webui = "".join(system.read_user_file(inst.name, str(instances.webui_files(inst.name)[f]))
+                    for f in ("unit", "password")) if inst.frontend == "webui" else ""
     yield from bypasses(inst.name, system.read_user_file(inst.name, str(home / ".env")),
                         system.read_user_file(inst.name, str(unit)), own_guard,
-                        str(home / "hermes-agent/.hermes/bin/hermes"))
+                        str(home / "hermes-agent/.hermes/bin/hermes"), webui)
 
 
-def bypasses(name: str, env_text: str, unit_text: str, own_guard: bool, gateway_binary: str) -> list:
-    """Ways around the central policy in an instance's own files. A guardrail (its users are root in its
-    container), so WARN. Reports variable names only, never file contents."""
+def bypasses(name: str, env_text: str, unit_text: str, own_guard: bool, gateway_binary: str,
+             webui_text: str = "") -> list:
+    """Ways around the central policy in an instance's own files (`webui_text`: WebUI's unit and password file).
+    A guardrail (its users are root in its container), so WARN. Reports variable names only, never file
+    contents."""
     found = []
     names = [v for v in BYPASS_VARS if re.search(rf"^\s*(export\s+)?{v}\s*=", env_text, re.M)]
     if names:
@@ -270,6 +292,9 @@ def bypasses(name: str, env_text: str, unit_text: str, own_guard: bool, gateway_
     commands = {c for c in re.findall(r'^\s*ExecStart\s*=\s*[-@:+!]*"?([^\s"]*)', unit_text, re.M) if c}
     if unit_text and commands != {gateway_binary}:
         found.append(warn(f"{name}: its hermes-gateway.service does not start {gateway_binary}"))
+    names = [v for v in BYPASS_VARS if v in webui_text]
+    if names:
+        found.append(warn(f"{name}: its hermes-webui.service sets {', '.join(names)}"))
     return found or [ok(f"{name}: no way around the policy found")]
 
 
@@ -277,6 +302,8 @@ def bypasses(name: str, env_text: str, unit_text: str, own_guard: bool, gateway_
 
 def overview(s: Settings, reg: Registry):
     yield ok(f"Hermes release of all instances: {(host.release() or ('none yet',))[0]}")
+    if webui := host.release(host.WEBUI_RELEASE_FILE):
+        yield ok(f"WebUI release of the instances that use it: {webui[0]}")
     yield update_status(UPDATE_STATUS, dt.datetime.now(dt.UTC))
 
 

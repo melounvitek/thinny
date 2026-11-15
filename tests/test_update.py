@@ -15,8 +15,9 @@ S = Settings(model="m1", allowed_models=("m1",), lan_address="10.0.0.5")
 
 
 class Server:
-    """All instances run v1 (commit c1); v2 (commit c2) came out `age` hours ago. Hermes installs and
-    gateway restarts are recorded instead of run; `broken` instances fail theirs."""
+    """All instances run v1 (commit c1); v2 (commit c2) came out `age` hours ago. The same for WebUI: w1 (d1),
+    w2 (d2) `webui_age` hours ago. Installs and gateway restarts are recorded instead of run; `broken` instances
+    fail theirs."""
 
     def __init__(self, tmp_path):
         self.tmp = tmp_path
@@ -24,6 +25,7 @@ class Server:
         self.release = ("v1", "c1")
         self.commits = {"alice": "c1", "bob": "c1", "carol": "c1"}
         self.age = 72
+        self.webui_release, self.webui_commits, self.webui_age = ("w1", "d1"), {"bob": "d1"}, 72
         self.broken = set()
         self.stops_after_checkout = set()   # their installer moves the checkout, then fails
         self.claude, self.claude_broken = [], set()   # Claude Code updates
@@ -38,6 +40,12 @@ class Server:
         self.commits[name] = commit
         if name in self.stops_after_checkout:
             raise CommandError(f"{name}: hermes webapp --build-only -> exit 1")
+
+    def install_webui(self, name, commit):
+        if name in self.broken:
+            raise CommandError(f"{name}: git fetch -> exit 128")
+        self.calls.append(f"webui {name} {commit}")
+        self.webui_commits[name] = commit
 
     def restart(self, s, inst):
         if inst.name in self.broken:
@@ -59,13 +67,20 @@ def server(tmp_path, monkeypatch):
     monkeypatch.setattr(update, "UNFINISHED", tmp_path / "update-unfinished")
     monkeypatch.setattr(update, "REBOOT_REQUIRED", tmp_path / "reboot-required")
     monkeypatch.setattr(instances, "RESTART_PENDING", tmp_path / "restart-pending")
-    monkeypatch.setattr(host, "latest_release",
-                        lambda: ("v2", dt.datetime.now(dt.UTC) - dt.timedelta(hours=srv.age)))
-    monkeypatch.setattr(host, "commit_of", lambda tag: {"v1": "c1", "v2": "c2"}[tag])
-    monkeypatch.setattr(host, "release", lambda: srv.release)
-    monkeypatch.setattr(host, "write_release", lambda tag, commit: setattr(srv, "release", (tag, commit)))
-    monkeypatch.setattr(instances, "installed_commit", lambda name: srv.commits[name])
+    webui = host.WEBUI_RELEASE_FILE
+
+    def latest_release(repo):
+        tag, age = ("w2", srv.webui_age) if repo == host.WEBUI_REPO else ("v2", srv.age)
+        return tag, dt.datetime.now(dt.UTC) - dt.timedelta(hours=age)
+    monkeypatch.setattr(host, "latest_release", latest_release)
+    monkeypatch.setattr(host, "commit_of", lambda tag, repo=None: {"v1": "c1", "v2": "c2", "w1": "d1", "w2": "d2"}[tag])
+    monkeypatch.setattr(host, "release", lambda path=None: srv.webui_release if path == webui else srv.release)
+    monkeypatch.setattr(host, "write_release", lambda tag, commit, path=None: setattr(
+        srv, "webui_release" if path == webui else "release", (tag, commit)))
+    monkeypatch.setattr(instances, "installed_commit",
+                        lambda name, webui=False: (srv.webui_commits if webui else srv.commits)[name])
     monkeypatch.setattr(instances, "install_hermes", srv.install_hermes)
+    monkeypatch.setattr(instances, "install_webui", srv.install_webui)
     monkeypatch.setattr(instances, "ensure_packages", lambda name: srv.calls.append(f"packages {name}"))
     monkeypatch.setattr(instances, "ensure_account", lambda name: srv.calls.append(f"account {name}"))
     monkeypatch.setattr(instances, "_gateway_up", srv.restart)
@@ -95,6 +110,73 @@ def test_only_a_due_release_is_installed(server, release, age, auto_update, now,
     assert (status["result"], status["detail"]) == (result, detail)
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d", status["time"])
     assert ("install alice c2" in server.calls) == (result == "ok")
+
+
+@pytest.mark.parametrize("webui_age, auto_update, now, result, detail", [
+    (72, True, False, "ok", "v2; WebUI updated to w2"),
+    (1, True, False, "up-to-date", "v2; WebUI w2 is 1 h old, waiting for 48 h"),
+    (1, True, True, "ok", "v2; WebUI updated to w2"),
+    (72, False, False, "available", "v2; WebUI w2; automatic updates are off"),
+])
+def test_instances_with_webui_get_its_latest_release_like_hermes(server, webui_age, auto_update, now, result, detail):
+    server.release, server.commits, server.webui_age = ("v2", "c2"), {"alice": "c2", "bob": "c2"}, webui_age
+    reg = registry()
+    reg.get("bob").frontend = "webui"
+    assert update.run(dataclasses.replace(S, auto_update=auto_update), reg, now=now) == 0
+    assert (server.status()["result"], server.status()["detail"]) == (result, detail)
+    # only bob uses WebUI; its restart restarts WebUI too
+    assert server.calls == (["webui bob d2", "restart bob"] if result == "ok" else [])
+    assert server.webui_release == (("w2", "d2") if result == "ok" else ("w1", "d1"))
+
+
+def test_an_interrupted_webui_update_goes_on_the_next_night(server):
+    server.release, server.commits = ("v2", "c2"), {"alice": "c2", "bob": "c2"}
+    server.webui_commits["alice"] = "d1"
+    reg = registry()
+    for name in ("alice", "bob"):
+        reg.get(name).frontend = "webui"
+    server.broken.add("bob")
+    assert update.run(S, reg) == 1
+    assert server.webui_release == ("w1", "d1")   # new instances still get w1
+
+    server.broken.clear()
+    server.calls.clear()
+    assert update.run(S, reg) == 0
+    # alice is done; bob first gets the restart the failed run owes him
+    assert server.calls == ["restart bob", "webui bob d2", "restart bob"]
+    assert server.webui_release == ("w2", "d2")
+
+
+def test_a_webui_restart_that_failed_comes_before_any_other_instance(server, monkeypatch):
+    server.release, server.commits = ("v2", "c2"), {"alice": "c2", "bob": "c2"}
+    server.webui_commits["alice"] = "d1"
+    reg = registry()
+    for name in ("alice", "bob"):
+        reg.get(name).frontend = "webui"
+
+    def broken(s, inst):
+        if inst.name == "alice":
+            raise CommandError("alice: gateway not active")
+        server.restart(s, inst)
+    monkeypatch.setattr(instances, "_gateway_up", broken)
+    assert update.run(S, reg) == 1
+    assert update.run(S, reg) == 1   # alice's checkout is at d2, her restart still fails
+    assert server.calls == ["webui alice d2"] and server.webui_release == ("w1", "d1")   # bob untouched
+
+    monkeypatch.setattr(instances, "_gateway_up", server.restart)
+    server.calls.clear()
+    assert update.run(S, reg) == 0
+    assert server.calls == ["restart alice", "webui bob d2", "restart bob"]
+    assert server.webui_release == ("w2", "d2")
+
+
+def test_instances_with_webui_restart_it_after_a_hermes_update(server):
+    reg = registry()
+    reg.get("bob").frontend = "webui"
+    server.webui_release = ("w2", "d2")
+    assert update.run(S, reg) == 0
+    assert server.status()["detail"] == "updated to v2; WebUI w2"
+    assert "restart bob" in server.calls   # the gateway and WebUI, which a new Hermes needs
 
 
 def test_check_only_reports(server):

@@ -1,7 +1,10 @@
+import base64
 import dataclasses
+import hashlib
 import itertools
 import json
 import os
+import re
 import subprocess
 import sys
 import types
@@ -158,6 +161,8 @@ class Incus:
             return "", 0 if c["account"] else 1
         if cmd[0] == "cat":
             return c.get("files", {}).get(cmd[1], ""), 0
+        if cmd[:2] == ["sh", "-c"] and "git fetch" in cmd[2] and c.get("github_down"):
+            return "", 128
         if cmd[:2] == ["sh", "-c"] and 'cat > "$1.tmp"' in cmd[2]:   # write_user_file
             c.setdefault("files", {})[cmd[4]] = input
         if cmd[0].endswith("/plugins/hermes-3310/install-asterisk.sh"):   # the .env it reads
@@ -180,8 +185,12 @@ class Incus:
             c.setdefault("hermes_config", {})[cmd[3]] = cmd[4]
         elif cmd[:3] == ["hermes", "config", "unset"]:
             c.get("hermes_config", {}).pop(cmd[3], None)
-        elif cmd[:3] == ["hermes", "config", "get"]:
-            return c.get("hermes_config", {}).get(cmd[3], ""), 0
+        elif cmd[:3] == ["hermes", "config", "get"]:   # a key, or a section's keys as YAML
+            config = c.get("hermes_config", {})
+            return config.get(cmd[3]) or "".join(f"{k.removeprefix(cmd[3] + '.')}: {v}\n" for k, v in config.items()
+                                                 if k.startswith(cmd[3] + ".")), 0
+        elif cmd[:2] == ["rm", "-f"]:
+            c.get("files", {}).pop(cmd[2], None)
         elif cmd[:3] == ["hermes", "plugins", "list"]:
             return json.dumps([{"name": "model-guard", "status": "enabled" if c.get("guard", True) else "not enabled",
                                 "version": "1.0", "source": "bundled"}]), 0
@@ -196,6 +205,10 @@ class Incus:
     def ran(self, text):
         return any(text in call for call in self.calls)
 
+    def where(self, text):
+        """Position of the first command with `text` in it."""
+        return next(i for i, call in enumerate(self.calls) if text in call)
+
 
 S = Settings(model="m1", allowed_models=("m1",), access_default="local", language_pack="hermes-lang-cs")
 LOCKED = dataclasses.replace(S, model_lock=True)
@@ -208,7 +221,8 @@ def incus(tmp_path, monkeypatch):
         monkeypatch.setattr(module, "run", fake.run)
     monkeypatch.setattr(system, "run_bytes", fake.run_bytes)
     monkeypatch.setattr(instances, "uid_of", lambda name: None)
-    monkeypatch.setattr(host, "release", lambda: ("v2", "c0ffee"))
+    monkeypatch.setattr(host, "release",   # of Hermes, or of WebUI
+                        lambda path=None: ("w1", "beef") if path == host.WEBUI_RELEASE_FILE else ("v2", "c0ffee"))
     monkeypatch.setattr(host, "installer", lambda: "#!/bin/sh\n")
     monkeypatch.setattr(host, "reconcile_access", lambda s, reg: None)
     monkeypatch.setattr(host, "POLICIES", tmp_path / "policies")
@@ -384,7 +398,7 @@ def test_a_disk_limit_too_close_to_what_the_instance_uses_is_refused(incus):
 
 def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_path):
     reg = registry()
-    reg.instances["dave"] = Instance("dave", 9123, "lan", state="active")
+    reg.instances["dave"] = Instance("dave", 9123, "lan", state="active", frontend="webui")
     disk = {"root": {"total": 30 * 2**30}}
     incus.containers = {
         "alice": {"state": "RUNNING", "config": {"limits.cpu": "2"}, "used": 4 * 3 * 2**30,   # btrfs's stale count: 3 GiB
@@ -407,11 +421,11 @@ def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_
     (alice / "memory.stat").write_text(f"anon {2**30 - 4096}\nactive_file {2**30}\ninactive_file {2**30}\nshmem 4096\n")
     instances.list_instances(reg)
     assert capsys.readouterr().out.splitlines() == [
-        "NAME   STATE   ACCESS  PORT  GATEWAY   CPU  RAM          DISK          URL",
-        "alice  active  lan     9120  active    50%  1.0/4.0 GiB  3.0/30.0 GiB",
-        "bob    active  lan     9121  INACTIVE  -    -            1.0/30.0 GiB",
-        "carol  active  lan     9122  -         -    -            -",
-        "dave   active  lan     9123  active    -    0.5/4.0 GiB  1.0/30.0 GiB",
+        "NAME   STATE   ACCESS  FRONTEND  PORT  GATEWAY   CPU  RAM          DISK          URL",
+        "alice  active  lan     webapp    9120  active    50%  1.0/4.0 GiB  3.0/30.0 GiB",
+        "bob    active  lan     webapp    9121  INACTIVE  -    -            1.0/30.0 GiB",
+        "carol  active  lan     webapp    9122  -         -    -            -",
+        "dave   active  lan     webui     9123  active    -    0.5/4.0 GiB  1.0/30.0 GiB",
     ]
 
 
@@ -490,6 +504,120 @@ def test_an_instance_unlocked_on_its_own_starts_with_the_model_it_was_locked_to(
     assert reg.get("alice").lock == [] and host.policy_current(S, "alice") and restarted == ["alice"]
     assert incus.containers["alice"]["hermes_config"] == \
         {"model.provider": "openai-codex", "model.default": "m1", "agent.reasoning_effort": "high"}
+
+
+WEBUI_UNIT = "/home/alice/.config/systemd/user/hermes-webui.service"
+
+
+def test_a_new_instance_can_open_webui_instead_of_the_webapp(incus, capsys):
+    reg = Registry()
+    instances.add(dataclasses.replace(S, language="cs"), reg, "alice", "local", frontend="webui")
+    alice = incus.containers["alice"]
+    assert reg.get("alice").frontend == "webui"
+    # at the WebUI release the instances that use it run
+    assert incus.ran("/home/alice/hermes-webui https://github.com/nesquena/hermes-webui beef")
+    # on the instance's port in place of the Webapp, which stays off
+    assert alice["hermes_config"]["webapp.enabled"] == "false"
+    assert alice["files"][WEBUI_UNIT] == render.webui_unit("alice", 9120, secure=False)   # http://alice.localhost
+    assert incus.ran("systemctl --user enable hermes-webui")
+    # it starts in the site's language and theme, and a simpler look
+    settings = json.loads(alice["files"]["/home/alice/.hermes/webui/settings.json"])
+    assert (settings["language"], settings["theme"], settings["skin"], settings["font_size"]) == \
+        ("cs", "light", "graphite", "large")
+    assert settings["hidden_tabs"] == ["kanban", "tasks", "skills", "memory", "workspaces", "profiles", "insights", "logs"]
+    assert settings["hide_composer_context"] and settings["hide_composer_profile"] and settings["hide_composer_workspace"]
+    assert settings["check_for_updates"] is False
+    # the gateway first (scheduled jobs, the phone), then WebUI on the port the gateway leaves it
+    assert incus.where("hermes gateway install") < incus.where("systemctl --user restart hermes-webui")
+    out = capsys.readouterr().out
+    assert "  WebUI:    http://alice.localhost:9120/\n" in out and "Username" not in out
+
+
+def test_an_instance_switches_to_webui_and_back_on_its_port(incus):
+    reg = Registry({"alice": Instance("alice", 9120, "local", url="http://alice.localhost:9120/", state="active")})
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {}, "unit": True, "files": {
+        "/home/alice/.hermes/webui/settings.json": '{"theme": "dark"}'}}   # its users' WebUI of before
+    instances.change_frontend(S, reg, "alice", "webui")
+    alice = incus.containers["alice"]
+    assert reg.get("alice").frontend == "webui" and alice["hermes_config"]["webapp.enabled"] == "false"
+    assert incus.ran("https://github.com/nesquena/hermes-webui beef")
+    assert incus.where("hermes gateway restart --yes") < incus.where("systemctl --user restart hermes-webui")
+    assert alice["files"]["/home/alice/.hermes/webui/settings.json"] == '{"theme": "dark"}'   # their look stays
+
+    incus.calls.clear()
+    instances.change_frontend(S, reg, "alice", "webapp")
+    assert reg.get("alice").frontend == "webapp" and alice["hermes_config"]["webapp.enabled"] == "true"
+    # WebUI leaves the port before the Webapp takes it, and does not start with the container any more
+    assert incus.where("systemctl --user disable --now hermes-webui") < incus.where("hermes gateway restart --yes")
+    assert WEBUI_UNIT not in alice["files"]
+    assert not incus.ran("restart hermes-webui")
+
+
+def test_a_switch_to_webui_that_cannot_fetch_it_leaves_the_webapp_on(incus):
+    reg = Registry({"alice": Instance("alice", 9120, "local", url="http://alice.localhost:9120/", state="active")})
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {}, "unit": True, "github_down": True}
+    with pytest.raises(CommandError, match="git fetch .* -> exit 128"):
+        instances.change_frontend(S, reg, "alice", "webui")
+    assert reg.get("alice").frontend == "webapp"   # so config apply keeps the Webapp too
+    assert not incus.ran("webapp.enabled") and not incus.ran("hermes-webui.env")
+
+
+@pytest.mark.parametrize("frontend", ["webapp", "webui"])
+def test_applying_the_settings_again_keeps_the_frontend_and_changes_nothing(incus, frontend):
+    alice = Instance("alice", 9120, "lan", url="https://192.168.1.10:9120/", state="active", frontend=frontend)
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {}}
+    assert instances.configure_webapp(S, alice) is True
+    assert incus.containers["alice"]["hermes_config"]["webapp.enabled"] == str(frontend == "webapp").lower()
+    instances._set_pending([])
+    assert instances.configure_webapp(S, alice) is False
+    assert not instances._pending()
+    if frontend == "webui":   # over HTTPS: Secure cookies
+        assert incus.containers["alice"]["files"][WEBUI_UNIT] == render.webui_unit("alice", 9120, secure=True)
+    else:   # nothing to stop
+        assert not any("systemctl" in call and "hermes-webui" in call for call in incus.calls)
+
+
+def signs_in(c, password):
+    """Whether the Webapp and WebUI of alice's container take `password`."""
+    stored = re.search(rf"^{instances.AUTH_PREFIX}PASSWORD_HASH='(.*)'$", c["files"]["/home/alice/.hermes/.env"], re.M)
+    _, n, r, p, salt, key = stored[1].split("$")
+    webapp = hashlib.scrypt(password.encode(), salt=base64.b64decode(salt), n=int(n), r=int(r), p=int(p), dklen=32,
+                            maxmem=0) == base64.b64decode(key)
+    return webapp, c["files"].get("/home/alice/.config/hermes-webui.env") == f"HERMES_WEBUI_PASSWORD={password}\n"
+
+
+def printed_password(capsys):
+    return re.search(r"(?i)password: (\S+)", capsys.readouterr().out)[1]
+
+
+def test_one_password_signs_in_to_either_frontend_and_a_reset_changes_both(incus, capsys):
+    reg = Registry()
+    instances.add(S, reg, "alice", "local")
+    alice, first = incus.containers["alice"], printed_password(capsys)
+    assert signs_in(alice, first) == (True, True)
+    instances.change_frontend(S, reg, "alice", "webui")
+    assert "Password" not in capsys.readouterr().out and signs_in(alice, first) == (True, True)
+
+    incus.calls.clear()
+    instances.password(S, reg, "alice")
+    second = printed_password(capsys)
+    assert signs_in(alice, second) == (True, True) and signs_in(alice, first) == (False, False)
+    # everyone signed in to WebUI signs in again: it keeps its sessions in memory, so it stops first
+    assert incus.where("systemctl --user stop hermes-webui") < incus.where("rm -f /home/alice/.hermes/webui/.sessions.json") \
+        < incus.where("systemctl --user restart hermes-webui")
+
+
+def test_an_instance_from_before_webui_gets_a_new_password_when_it_switches(incus, capsys):
+    # the Webapp's password is kept as a hash only, and WebUI takes none
+    reg = Registry({"alice": Instance("alice", 9120, "local", url="http://alice.localhost:9120/", state="active")})
+    old = {"/home/alice/.hermes/.env": f"{instances.AUTH_PREFIX}USERNAME=alice\n"
+                                       f"{instances.AUTH_PREFIX}PASSWORD_HASH='{instances.password_hash('old')}'\n"}
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {}, "unit": True, "files": old}
+    instances.change_frontend(S, reg, "alice", "webui")
+    new = printed_password(capsys)
+    assert signs_in(incus.containers["alice"], new) == (True, True)
+    instances.change_frontend(S, reg, "alice", "webapp")
+    assert "Password" not in capsys.readouterr().out
 
 
 def test_an_interrupted_add_resumes_where_it_stopped(incus):
