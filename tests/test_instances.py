@@ -230,6 +230,7 @@ def incus(tmp_path, monkeypatch):
     monkeypatch.setattr(instances, "RESTART_PENDING", tmp_path / "restart-pending")
     monkeypatch.setattr(system, "LOG_FILE", tmp_path / "log")
     monkeypatch.setattr(trace, "DIR", tmp_path / "trace")
+    monkeypatch.setattr(trace, "UNSENT", tmp_path / "trace-unsent")
     return fake
 
 
@@ -738,10 +739,41 @@ def test_removing_a_disabled_instance_deletes_its_container_but_keeps_its_name_a
     assert (trace.DIR / "alice/admin-access.log").exists()
     assert str(trace.DIR / "alice") in capsys.readouterr().out
     assert reg.get("alice").state == "removed"
-    with pytest.raises(CommandError, match="alice was removed; names are not reused"):
+    with pytest.raises(CommandError, match="alice was removed; to reuse its name: thinny instance remove alice --purge"):
         instances.add(S, reg, "alice", "local")
     with pytest.raises(RegistryError, match="alice is removed"):
         instances.disable(S, reg, "alice")
+
+
+def test_purging_an_instance_frees_its_name_and_port_and_keeps_its_trace_renamed(incus, typed, capsys):
+    reg = Registry({"alice": Instance("alice", 9120, "local", address="10.78.0.1", state="disabled")})
+    incus.containers["alice"] = {"state": "STOPPED"}
+    host.write_policy(S, "alice")
+    (trace.DIR / "alice").mkdir(parents=True)
+    (trace.DIR / "alice/admin-access.log").write_text("2026-11-15T10:00:00+01:00 incus exec alice -- bash\n")
+    (trace.UNSENT / "alice").mkdir(parents=True)
+    (trace.UNSENT / "alice/000000000001.json").write_text("{}")
+    typed("alice")
+    instances.remove(S, reg, "alice", purge=True)
+    assert "alice" not in incus.containers and not (host.POLICIES / "alice").exists()
+    [kept] = trace.DIR.glob("alice.purged-*")
+    assert (kept / "admin-access.log").read_text().endswith("incus exec alice -- bash\n")
+    assert str(kept) in capsys.readouterr().out
+    assert not (trace.UNSENT / "alice").exists()   # not for the sheet of a new alice
+    assert "alice" not in reg.instances
+    new = reg.add("alice", "local", (9120, 9199))
+    assert (new.port, new.address) == (9120, "10.78.0.1")
+
+
+def test_an_instance_removed_before_can_be_purged_once_the_admin_types_its_name(incus, typed):
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="removed")})
+    typed("bob")
+    with pytest.raises(CommandError, match="nothing removed"):
+        instances.remove(S, reg, "alice", purge=True)
+    assert reg.get("alice").state == "removed"
+    typed("alice")
+    instances.remove(S, reg, "alice", purge=True)
+    assert "alice" not in reg.instances
 
 
 def test_removing_a_pending_instance_withdraws_its_access(incus, typed, monkeypatch):

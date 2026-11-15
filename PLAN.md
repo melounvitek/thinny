@@ -529,8 +529,8 @@ Incus                                   pool `default` (btrfs, sparse file, comp
                                         instance, named after it
 ```
 
-- Names, ports and container addresses (`10.78.0.0/24`) are never reused; states `pending`,
-  `active`, `disabled`, `removed`.
+- Names, ports and container addresses (`10.78.0.0/24`) are not reused until `instance remove
+  --purge` deletes the entry; states `pending`, `active`, `disabled`, `removed`.
 - Profile `thinny-instance`: root disk with the `disk_gb` quota, `/dev/net/tun`,
   `security.idmap.isolated`, `security.nesting`, `limits.cpu`, `limits.memory`,
   `limits.processes=2000`, `boot.autostart`. Per container: a routed NIC `thinny-<port>`, its
@@ -623,7 +623,9 @@ instance disable <name>           autostart off, container stopped (forced after
                                   removed; container and data stay
 instance remove <name>            a disabled or pending instance, once the admin types its name:
                                   container and policy folder deleted; registry entry and access
-                                  trace stay
+                                  trace stay. --purge, also once removed: registry entry deleted,
+                                  access trace renamed <name>.purged-<time>, rows for its sheet
+                                  dropped
 instance list | restart           instances with their CPU, RAM and disk use; one-by-one gateway
                                   restarts
 instance group set <name> <group|none> | group list
@@ -634,8 +636,8 @@ instance group set <name> <group|none> | group list
 instance move <name>... | --all --to [user@]host
                                   experimental: whole containers to another thinny server, one
                                   at a time. That server checks them all first (same Hermes
-                                  release, no unfinished update on either side, a name it never
-                                  had, the access method); then autostart off, stop, `incus
+                                  release, no unfinished update on either side, a name it does
+                                  not have, the access method); then autostart off, stop, `incus
                                   export` streamed over SSH (as root or `sudo -n`) to its hidden
                                   `instance receive`: `incus import`, registered at once, then a
                                   resumed add with its own port, address and settings that keeps

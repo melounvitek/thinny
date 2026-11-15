@@ -611,5 +611,6 @@ def test_tab_completes_the_names_of_instances_for_root(monkeypatch, capsys):
     assert tab(capsys, "instance", "login", "--provider", "=", "openai", "") == ["alice", "bob"]
     assert tab(capsys, "instance", "restart", "alice", "") == ["alice", "bob"]
     assert tab(capsys, "instance", "group", "set", "a") == ["alice"]
+    assert tab(capsys, "instance", "remove", "--purge", "") == ["alice", "bob", "carol"]
     assert tab(capsys, "instance", "lock", "alice", "") == []   # models
     assert tab(capsys, "instance", "add", "") == []             # a new name

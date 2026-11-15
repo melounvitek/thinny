@@ -1,7 +1,7 @@
 """Instance registry (/var/lib/thinny/instances.json), the source of truth for which instances exist.
 
-Instances are never deleted: a disabled or removed instance stays, so its name, its
-address and its Webapp port are never handed to another instance.
+A disabled or removed instance stays, so its name, its address and its Webapp port are not
+handed to another instance, until `instance remove --purge` deletes it.
 """
 
 from __future__ import annotations
