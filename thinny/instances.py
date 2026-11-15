@@ -422,6 +422,8 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
         configure_webapp(s, inst)
         if not inst.moved:  # a moved instance keeps its users' choices
             hermes(name, ["config", "set", "display.language", s.language])
+            # Piper (the phone's voice) speaks slowly at its own speed; lower is faster.
+            hermes(name, ["config", "set", "tts.piper.length_scale", "0.65"])
             if not s.model_lock:  # with the lock the policy sets them
                 for key, value in starting_model(s).items():
                     hermes(name, ["config", "set", key, value])

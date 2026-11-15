@@ -241,6 +241,7 @@ def test_a_new_instance_gets_its_own_container_with_hermes(incus):
     # without the model lock, the policy's model is only where the instance starts
     for setting in ("model.provider openai-codex", "model.default m1", "agent.reasoning_effort high"):
         assert incus.ran(f"hermes config set {setting}")
+    assert incus.ran("hermes config set tts.piper.length_scale 0.65")   # Piper's normal speed is slow
     # network before packages, packages before the account, model guard into the finished checkout
     assert incus.index("incus exec alice -- env THINNY=1 sh -c cat > /etc/systemd/network/eth0.network") \
         < incus.index("incus exec alice -- env THINNY=1 sh -c export DEBIAN_FRONTEND") \
