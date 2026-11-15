@@ -40,8 +40,9 @@ def api(token: str, method: str, **params):
 
 
 def suggested_username(manager: str, name: str) -> str:
-    """The new bot's username: the manager's without its "bot", then the instance's name, at most 32 characters."""
-    stem = re.sub(r"_?bot$", "", manager, flags=re.IGNORECASE) + "_" + name.replace("-", "_")
+    """The new bot's username: the manager's without its "bot", then the instance's name, at most 32 characters.
+    The manager's part is cut first, so a long one leaves room for the name."""
+    stem = re.sub(r"_?bot$", "", manager, flags=re.IGNORECASE)[:20] + "_" + name.replace("-", "_")
     return stem[:28].rstrip("_") + "_bot"
 
 

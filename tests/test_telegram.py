@@ -184,6 +184,7 @@ def test_an_instance_needs_the_sites_manager_bot(alice, bot_api):
     ("acme_hermes_bot", "alice", "acme_hermes_alice_bot"),
     ("AcmeHermesBot", "office-accounting", "AcmeHermes_office_accounting_bot"),
     ("acme_bot", "a" * 32, "acme_" + "a" * 23 + "_bot"),   # Telegram takes up to 32 characters
+    ("m" * 28 + "_bot", "alice", "m" * 20 + "_alice_bot"),   # not the manager's own
 ])
 def test_the_link_suggests_a_username_after_the_manager_and_the_instance(manager, name, username):
     assert telegram.suggested_username(manager, name) == username
