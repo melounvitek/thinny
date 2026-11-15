@@ -344,25 +344,28 @@ def set_env(name: str, values: dict[str, str]) -> None:
         lines + [f"{key}={json.dumps(value, ensure_ascii=False)}" for key, value in values.items()]) + "\n")
 
 
-def ensure_sign_in(name: str) -> str | None:
-    """Webapp username and password in the instance's .env; returns a new password, or None
-    when it already has one."""
-    lines = _env_lines(name)
-    if any(line.startswith(AUTH_PREFIX + "USERNAME=") for line in lines):
-        return None
-    return _write_sign_in(name, lines)
+def ensure_sign_in(inst: Instance) -> str | None:
+    """The sign-in of the instance's frontend; returns a new password, or None when it already has one. An
+    instance from before WebUI has none for WebUI: its Webapp's is kept as a hash only."""
+    has = any(line.startswith(AUTH_PREFIX + "USERNAME=") for line in _env_lines(inst.name)) and (
+        inst.frontend == "webapp" or read_user_file(inst.name, str(webui_files(inst.name)["password"])))
+    return None if has else reset_password(inst.name)
 
 
 def reset_password(name: str) -> str:
-    return _write_sign_in(name, [line for line in _env_lines(name) if not line.startswith(AUTH_PREFIX)])
-
-
-def _write_sign_in(name: str, lines: list[str]) -> str:
+    """A new password for both frontends: the Webapp's username and password in the instance's .env, and WebUI's.
+    WebUI must not run: it would keep the sessions it signs everyone out of."""
     password = secrets.token_urlsafe(12)
-    lines = lines + [f"{AUTH_PREFIX}USERNAME={name}",
-                     f"{AUTH_PREFIX}PASSWORD_HASH='{password_hash(password)}'",  # quoted: '$' in the hash
-                     f"{AUTH_PREFIX}SECRET={secrets.token_urlsafe(32)}"]
+    lines = [line for line in _env_lines(name) if not line.startswith(AUTH_PREFIX)] + [
+        f"{AUTH_PREFIX}USERNAME={name}",
+        f"{AUTH_PREFIX}PASSWORD_HASH='{password_hash(password)}'",  # quoted: '$' in the hash
+        f"{AUTH_PREFIX}SECRET={secrets.token_urlsafe(32)}"]
     write_user_file(name, str(home(name) / ".env"), "\n".join(lines) + "\n")
+    # In plain text: WebUI takes no hash from its environment. Its unit reads the file, the gateway does not.
+    files = webui_files(name)
+    as_user(name, ["mkdir", "-p", str(files["password"].parent)])
+    write_user_file(name, str(files["password"]), f"HERMES_WEBUI_PASSWORD={password}\n")
+    as_user(name, ["rm", "-f", str(files["state"] / ".sessions.json")])
     return password
 
 
@@ -508,7 +511,7 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
                 for key, value in starting_model(s).items():
                     hermes(name, ["config", "set", key, value])
             seed_ui(s, name)
-        password = ensure_sign_in(name)
+        password = ensure_sign_in(inst)
     if phone:
         with step(f"{name}: phone line"):
             registered = connect_phone(s, name, phone)
@@ -620,9 +623,12 @@ def change_frontend(s: Settings, reg: Registry, name: str, frontend: str) -> Non
     reg.save()   # first: config apply and a repeat finish the switch
     if frontend == "webui":
         install_webui(name)
+    password = ensure_sign_in(inst)
     configure_webapp(s, inst)
     start_or_restart_gateway(s, inst)
     print(f"{name}: {FRONTEND_NAMES[frontend]} at {inst.url}")
+    if password:
+        print(f"  Password: {password}   (new, for both frontends; shown once)")
 
 
 def limits(reg: Registry, name: str, cpu: int | None, memory_mb: int | None, disk_gb: int | None) -> None:
@@ -684,9 +690,13 @@ def login(reg: Registry, name: str, provider: str) -> None:
 
 def password(s: Settings, reg: Registry, name: str) -> None:
     inst = _active(reg, name)
+    if inst.frontend == "webui":
+        mark_restart([name])   # first: a failure leaves it for the next restart
+        as_user(name, ["systemctl", "--user", "stop", "hermes-webui"], timeout=RESTART_TIMEOUT)
     new = reset_password(name)
     start_or_restart_gateway(s, inst)
-    print(f"{name}: new Webapp password: {new}   (shown once; open browsers must sign in again)")
+    print(f"{name}: new {FRONTEND_NAMES[inst.frontend]} password: {new}   (shown once; open browsers must sign in "
+          "again)")
 
 
 def disable(s: Settings, reg: Registry, name: str) -> None:

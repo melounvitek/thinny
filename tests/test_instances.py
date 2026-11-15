@@ -1,7 +1,10 @@
+import base64
 import dataclasses
+import hashlib
 import itertools
 import json
 import os
+import re
 import subprocess
 import sys
 import types
@@ -557,6 +560,49 @@ def test_applying_the_settings_again_keeps_the_frontend_and_changes_nothing(incu
         assert incus.containers["alice"]["files"][WEBUI_UNIT] == render.webui_unit("alice", 9120, secure=True)
     else:   # nothing to stop
         assert not any("systemctl" in call and "hermes-webui" in call for call in incus.calls)
+
+
+def signs_in(c, password):
+    """Whether the Webapp and WebUI of alice's container take `password`."""
+    stored = re.search(rf"^{instances.AUTH_PREFIX}PASSWORD_HASH='(.*)'$", c["files"]["/home/alice/.hermes/.env"], re.M)
+    _, n, r, p, salt, key = stored[1].split("$")
+    webapp = hashlib.scrypt(password.encode(), salt=base64.b64decode(salt), n=int(n), r=int(r), p=int(p), dklen=32,
+                            maxmem=0) == base64.b64decode(key)
+    return webapp, c["files"].get("/home/alice/.config/hermes-webui.env") == f"HERMES_WEBUI_PASSWORD={password}\n"
+
+
+def printed_password(capsys):
+    return re.search(r"(?i)password: (\S+)", capsys.readouterr().out)[1]
+
+
+def test_one_password_signs_in_to_either_frontend_and_a_reset_changes_both(incus, capsys):
+    reg = Registry()
+    instances.add(S, reg, "alice", "local")
+    alice, first = incus.containers["alice"], printed_password(capsys)
+    assert signs_in(alice, first) == (True, True)
+    instances.change_frontend(S, reg, "alice", "webui")
+    assert "Password" not in capsys.readouterr().out and signs_in(alice, first) == (True, True)
+
+    incus.calls.clear()
+    instances.password(S, reg, "alice")
+    second = printed_password(capsys)
+    assert signs_in(alice, second) == (True, True) and signs_in(alice, first) == (False, False)
+    # everyone signed in to WebUI signs in again: it keeps its sessions in memory, so it stops first
+    assert incus.where("systemctl --user stop hermes-webui") < incus.where("rm -f /home/alice/.hermes/webui/.sessions.json") \
+        < incus.where("systemctl --user restart hermes-webui")
+
+
+def test_an_instance_from_before_webui_gets_a_new_password_when_it_switches(incus, capsys):
+    # the Webapp's password is kept as a hash only, and WebUI takes none
+    reg = Registry({"alice": Instance("alice", 9120, "local", url="http://alice.localhost:9120/", state="active")})
+    old = {"/home/alice/.hermes/.env": f"{instances.AUTH_PREFIX}USERNAME=alice\n"
+                                       f"{instances.AUTH_PREFIX}PASSWORD_HASH='{instances.password_hash('old')}'\n"}
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {}, "unit": True, "files": old}
+    instances.change_frontend(S, reg, "alice", "webui")
+    new = printed_password(capsys)
+    assert signs_in(incus.containers["alice"], new) == (True, True)
+    instances.change_frontend(S, reg, "alice", "webapp")
+    assert "Password" not in capsys.readouterr().out
 
 
 def test_an_interrupted_add_resumes_where_it_stopped(incus):
