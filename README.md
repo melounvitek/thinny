@@ -159,7 +159,9 @@ A changed model guard loads at each gateway's next restart (`thinny instance res
 
 ## Settings
 
-Every key of `/etc/thinny/config.toml` is commented in [`config.example.toml`](config.example.toml).
+Every key of `/etc/thinny/config.toml` is commented in [`config.example.toml`](config.example.toml),
+also on the server at `/usr/local/lib/thinny/config.example.toml`. Settings that a later thinny adds
+appear there, not in your `config.toml`: thinny uses their defaults until you add them.
 
 ```sh
 thinny config edit    # edit a copy, check it, then apply it
