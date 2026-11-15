@@ -13,7 +13,7 @@ import secrets
 import shutil
 import sys
 import time
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 from . import host, render, trace
@@ -29,6 +29,7 @@ RESTART_PENDING = STATE_DIR / "restart-pending"
 IMAGE = "images:debian/13"
 URL_RE = re.compile(r"https?://[a-z0-9.-]+(:\d+)?(/[a-z0-9-]+)?/?")
 CLAUDE_INSTALLER = "https://claude.ai/install.sh"
+CGROUPS = Path("/sys/fs/cgroup")   # each container's as lxc.payload.<name>
 # The Claude subscription plugin's provider; it signs in through Claude Code.
 CLAUDE_PROVIDER = "claude-subscription-directsdk-experimental"
 # Host folders in a container. Incus does not lock a disk added to a running container read-only, and with
@@ -700,7 +701,7 @@ def list_instances(reg: Registry) -> None:
             state = c["state"]
             disk = _gib(disk_used(inst.name), state["disk"]["root"]["total"])
             if c["status"] == "Running":
-                ram = _gib(state["memory"]["usage"], state["memory"]["total"])
+                ram = _gib(_memory_used(inst.name, state["memory"]["usage"]), state["memory"]["total"])
                 if before.get(inst.name, {}).get("status") == "Running":   # not started in between
                     used = state["cpu"]["usage"] - before[inst.name]["state"]["cpu"]["usage"]   # in ns
                     cpu = f"{used / 1e9 / seconds / int(c['expanded_config']['limits.cpu']):.0%}"
@@ -713,6 +714,17 @@ def list_instances(reg: Registry) -> None:
 def _containers() -> dict[str, dict]:
     """Every container as Incus describes it, with its state: name -> container."""
     return {c["name"]: c for c in json.loads(run(["incus", "list", "--format", "json"]).stdout)}
+
+
+def _memory_used(name: str, usage: int) -> int:
+    """Bytes the container uses without its file cache, which the kernel frees when it needs the memory. Incus's
+    `usage` counts the cache, so an idle instance looked near its limit; it is the answer without the cgroup."""
+    cgroup = CGROUPS / f"lxc.payload.{name}"
+    try:
+        stat = dict(line.split() for line in (cgroup / "memory.stat").read_text().splitlines())
+        return int((cgroup / "memory.current").read_text()) - int(stat["active_file"]) - int(stat["inactive_file"])
+    except OSError:
+        return usage
 
 
 def _gib(used: int, total: int) -> str:

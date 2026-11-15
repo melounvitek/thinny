@@ -374,13 +374,13 @@ def test_a_disk_limit_too_close_to_what_the_instance_uses_is_refused(incus):
     assert incus.ran("incus config device override alice root size=7GiB")
 
 
-def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys):
+def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_path):
     reg = registry()
     reg.instances["dave"] = Instance("dave", 9123, "lan", state="active")
     disk = {"root": {"total": 30 * 2**30}}
     incus.containers = {
         "alice": {"state": "RUNNING", "config": {"limits.cpu": "2"}, "used": 4 * 3 * 2**30,   # btrfs's stale count: 3 GiB
-                  "incus_state": {"cpu": {"usage": 0}, "memory": {"usage": 2**30, "total": 4 * 2**30}, "disk": disk}},
+                  "incus_state": {"cpu": {"usage": 0}, "memory": {"usage": 3 * 2**30, "total": 4 * 2**30}, "disk": disk}},
         "bob": {"state": "STOPPED", "used": 4 * 2**30, "incus_state": {"disk": disk}},
     }   # carol has no container
     clock = [0.0]
@@ -391,6 +391,12 @@ def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys):
         incus.containers["dave"] = {"state": "RUNNING", "used": 4 * 2**30,   # its container started meanwhile
                                     "incus_state": {"memory": {"usage": 2**29, "total": 4 * 2**30}, "disk": disk}}
     monkeypatch.setattr(instances, "time", types.SimpleNamespace(sleep=sleep, monotonic=lambda: clock[0]))
+    # Of alice's 3 GiB, 2 GiB are file cache. dave has no cgroup there: Incus's usage.
+    monkeypatch.setattr(instances, "CGROUPS", tmp_path / "cgroup")
+    alice = tmp_path / "cgroup/lxc.payload.alice"
+    alice.mkdir(parents=True)
+    (alice / "memory.current").write_text(f"{3 * 2**30}\n")
+    (alice / "memory.stat").write_text(f"anon {2**30 - 4096}\nactive_file {2**30}\ninactive_file {2**30}\nshmem 4096\n")
     instances.list_instances(reg)
     assert capsys.readouterr().out.splitlines() == [
         "NAME   STATE   ACCESS  PORT  GATEWAY   CPU  RAM          DISK          URL",
