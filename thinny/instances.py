@@ -129,16 +129,21 @@ def ensure_device(name: str, device: str, kind: str, *props: str) -> None:
         run(["incus", "config", "device", "set", name, device, *changed])
 
 
+def disk_used(name: str, sync: bool = False) -> int:
+    """Bytes the instance's disk quota counts. btrfs's quota counts data shared with the image or a
+    snapshot too, unlike Incus's usage, and its counters lag behind writes until synced."""
+    out = run(["btrfs", "qgroup", "show", *(["--sync"] if sync else []), "--raw", "-f",
+               f"/var/lib/incus/storage-pools/{render.POOL}/containers/{name}"]).stdout
+    return int(out.splitlines()[-1].split()[1])   # the Referenced column
+
+
 def set_limits(name: str, cpu: int | None, memory_mb: int | None, disk_gb: int | None) -> None:
     """The instance's own limits instead of the profile's (site.toml's [container]); None keeps
     the current one. A running container gets them at once."""
     if disk_gb:
-        # btrfs's quota counts data shared with the image or a snapshot too, unlike Incus's usage, and
-        # its counters lag behind writes until synced. A quota below that half-applies and leaves the
-        # instance unable to write, even to raise the quota again.
-        out = run(["btrfs", "qgroup", "show", "--sync", "--raw", "-f",
-                   f"/var/lib/incus/storage-pools/{render.POOL}/containers/{name}"]).stdout
-        used = int(out.splitlines()[-1].split()[1])   # the Referenced column
+        # A quota below what it counts half-applies and leaves the instance unable to write, even to
+        # raise the quota again.
+        used = disk_used(name, sync=True)
         needed = math.ceil(used / 2**30 + 1)   # and a GiB of room to work in
         if disk_gb < needed:
             raise CommandError(f"{name} uses {used / 2**30:.1f} GiB of disk; give it at least {needed} GiB")
@@ -679,14 +684,39 @@ def stop(name: str) -> None:
 
 
 def list_instances(reg: Registry) -> None:
-    rows = [("NAME", "STATE", "ACCESS", "PORT", "GATEWAY", "URL")]
+    """CPU is the use over a second, as a share of the instance's own CPU limit."""
+    before = _containers()
+    start = time.monotonic()
+    time.sleep(1)
+    containers = _containers()
+    seconds = time.monotonic() - start
+    rows = [("NAME", "STATE", "ACCESS", "PORT", "GATEWAY", "CPU", "RAM", "DISK", "URL")]
     for inst in sorted(reg.instances.values(), key=lambda inst: inst.port):
-        gateway = "-" if inst.state in ("disabled", "removed") or container_state(inst.name) is None else \
+        c = containers.get(inst.name)
+        gateway = "-" if inst.state in ("disabled", "removed") or c is None else \
             ("active" if gateway_active(inst.name) else "INACTIVE")
-        rows.append((inst.name, inst.state, inst.access, str(inst.port), gateway, inst.url))
+        cpu = ram = disk = "-"
+        if c:
+            state = c["state"]
+            disk = _gib(disk_used(inst.name), state["disk"]["root"]["total"])
+            if c["status"] == "Running":
+                ram = _gib(state["memory"]["usage"], state["memory"]["total"])
+                if before.get(inst.name, {}).get("status") == "Running":   # not started in between
+                    used = state["cpu"]["usage"] - before[inst.name]["state"]["cpu"]["usage"]   # in ns
+                    cpu = f"{used / 1e9 / seconds / int(c['expanded_config']['limits.cpu']):.0%}"
+        rows.append((inst.name, inst.state, inst.access, str(inst.port), gateway, cpu, ram, disk, inst.url))
     widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
     for r in rows:
         print("  ".join(c.ljust(w) for c, w in zip(r, widths)).rstrip())
+
+
+def _containers() -> dict[str, dict]:
+    """Every container as Incus describes it, with its state: name -> container."""
+    return {c["name"]: c for c in json.loads(run(["incus", "list", "--format", "json"]).stdout)}
+
+
+def _gib(used: int, total: int) -> str:
+    return f"{used / 2**30:.1f}/{total / 2**30:.1f} GiB"
 
 
 def _active(reg: Registry, name: str) -> Instance:

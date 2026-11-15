@@ -176,7 +176,7 @@ the lock on removes the models users chose.
 thinny instance add alice               # about 7 minutes; asks how users open the Webapp, the model and a phone line
 thinny instance login alice             # sign in to a model provider; asks which
 thinny instance login alice --provider anthropic   # or name it: openai | anthropic
-thinny instance list
+thinny instance list                    # with each one's CPU, RAM and disk use
 thinny instance access alice tailscale  # lan | tailscale | url=<URL> | local
 thinny instance limits alice --cpu 4 --memory-mb 8192 --disk-gb 50
 thinny instance lock alice [model ...]  # only these models (default: the one it uses)

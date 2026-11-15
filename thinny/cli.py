@@ -54,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg.add_parser("apply", help="bring the server in line with site.toml after editing it")
     inst = sub.add_parser("instance", help="instances, one container each")
     inst = inst.add_subparsers(dest="action", required=True, metavar="action")
-    inst.add_parser("list", help="instances, ports, URLs, gateway state")
+    inst.add_parser("list", help="instances, ports, URLs, gateway state, CPU, RAM and disk use")
     add = inst.add_parser("add", help="add an instance (or finish an interrupted add)",
                           description="Limits not given follow [container] in site.toml.")
     add.add_argument("name")

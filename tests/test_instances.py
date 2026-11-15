@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -96,6 +97,9 @@ class Incus:
     def answer(self, cmd, input=None):
         if cmd[0] == "curl":
             return "302", 0
+        if cmd[:2] == ["incus", "list"] and "json" in cmd:   # every container, with its state
+            return json.dumps([{"name": name, "status": c["state"].title(), "expanded_config": c.get("config", {}),
+                                "state": c.get("incus_state", {})} for name, c in self.containers.items()]), 0
         if cmd[:2] == ["incus", "list"]:
             c = self.containers.get(cmd[-1].strip("^$"))
             return (c["state"] + "\n" if c else ""), 0
@@ -368,6 +372,33 @@ def test_a_disk_limit_too_close_to_what_the_instance_uses_is_refused(incus):
     assert not incus.ran("incus config set") and not incus.ran("incus config device override")
     instances.limits(reg, "alice", None, None, 7)
     assert incus.ran("incus config device override alice root size=7GiB")
+
+
+def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys):
+    reg = registry()
+    reg.instances["dave"] = Instance("dave", 9123, "lan", state="active")
+    disk = {"root": {"total": 30 * 2**30}}
+    incus.containers = {
+        "alice": {"state": "RUNNING", "config": {"limits.cpu": "2"}, "used": 4 * 3 * 2**30,   # btrfs's stale count: 3 GiB
+                  "incus_state": {"cpu": {"usage": 0}, "memory": {"usage": 2**30, "total": 4 * 2**30}, "disk": disk}},
+        "bob": {"state": "STOPPED", "used": 4 * 2**30, "incus_state": {"disk": disk}},
+    }   # carol has no container
+    clock = [0.0]
+
+    def sleep(seconds):
+        clock[0] += seconds
+        incus.containers["alice"]["incus_state"]["cpu"]["usage"] += 10**9   # one of its two CPUs busy
+        incus.containers["dave"] = {"state": "RUNNING", "used": 4 * 2**30,   # its container started meanwhile
+                                    "incus_state": {"memory": {"usage": 2**29, "total": 4 * 2**30}, "disk": disk}}
+    monkeypatch.setattr(instances, "time", types.SimpleNamespace(sleep=sleep, monotonic=lambda: clock[0]))
+    instances.list_instances(reg)
+    assert capsys.readouterr().out.splitlines() == [
+        "NAME   STATE   ACCESS  PORT  GATEWAY   CPU  RAM          DISK          URL",
+        "alice  active  lan     9120  active    50%  1.0/4.0 GiB  3.0/30.0 GiB",
+        "bob    active  lan     9121  INACTIVE  -    -            1.0/30.0 GiB",
+        "carol  active  lan     9122  -         -    -            -",
+        "dave   active  lan     9123  active    -    0.5/4.0 GiB  1.0/30.0 GiB",
+    ]
 
 
 def test_with_the_model_lock_the_policy_sets_the_model_and_the_guard_must_be_on(incus):
