@@ -410,6 +410,25 @@ Debian 13, Incus 6.0.4, from Incus's stable-6.0 source and **[tested]** on the t
   the code from stdin. The Claude subscription plugin starts `claude` with
   `DISABLE_AUTOUPDATER=1`, so it never updates itself there **[src, tested locally]**.
 
+### Telegram (2026-11-15)
+Hermes v0.23.1 **[src]**; managed bots tried with a real manager bot and phone **[tested]**.
+
+- Hermes reads `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS` (numeric user ids only) and
+  `TELEGRAM_HOME_CHANNEL` from `.env` when the gateway starts. Without an allowlist an unknown
+  sender gets a pairing code and "open a terminal and run `hermes pairing approve ...`"; any
+  allowlist turns pairing off. Without a home channel the first message gets a "No home channel
+  is set" notice **[src]**.
+- One token, one reader: a second gateway polling it gets 409 Conflict. Webhooks have one URL,
+  and Hermes routes one bot to several profiles only inside one gateway process **[src]**.
+- Managed bots: with *Bot Management Mode* on (BotFather's app), the link
+  `https://t.me/newbot/<manager>/<suggested username>?name=<name>` opens a pre-filled "Create
+  bot" window. On *Create*, the manager gets a `managed_bot` update (the creator and the new bot)
+  and a `managed_bot_created` message, and `getManagedBotToken` gives the bot's token. The new
+  bot could write to its creator before they opened it. A message the creator sent it before
+  the token was fetched never arrived; one sent later did **[tested]**.
+- `getMe` kept answering `can_manage_bots: false` with the mode on, also after the bot was
+  created, so thinny does not check it **[tested]**.
+
 ## 5. Rejected options (and why)
 
 - Docker: docker group = root.
@@ -436,6 +455,10 @@ Debian 13, Incus 6.0.4, from Incus's stable-6.0 source and **[tested]** on the t
   root in one can serve a page whose script acts as another's signed-in user; `Path` on the
   cookies does not stop that. Each gets a host of its own. Sibling hosts are still one site, but
   over HTTPS Hermes names its cookies `__Host-`, which a sibling cannot set **[src]**.
+- Telegram through the Webapp's "Create with QR": a Nous-hosted service creates the bot and
+  passes its token on; users found it confusing. A bot from BotFather with Hermes's pairing:
+  the pairing message tells users to run a command in a terminal. One bot for all instances:
+  one gateway per token (section 4).
 
 ## 6. Approach
 
@@ -550,6 +573,10 @@ instance lock <name> [model ...] | unlock <name>
                                   its own model lock (the provider it uses, these models or the
                                   one it uses) or none, whatever the site's; unlock puts the model
                                   it was locked to back in its own config
+instance telegram <name>          prints the link to a bot of its own through the site's manager
+                                  bot, waits (without the lock) for a bot whose creator the admin
+                                  confirms, then its token and the creator in .env, gateway
+                                  restart, a greeting; Telegram's update is done only after that
 instance trace-sheet <name> <URL|off>
                                   its users' Google Sheet gets its access trace too, once it took
                                   a test row; the sheet it had gets a last row
@@ -603,7 +630,8 @@ address is a host of its own, without a path (section 5).
 `language_pack` (a catalog plugin name), `[container]` `cpu`, `memory_mb`, `disk_gb`,
 `[webapp]` port range and the look for new instances (`text_scale` 110), `[access]` `default`,
 `lan_address`, `tunnel_port`, `[network]` `interface` (`eth0`) and `blocked_networks` (public networks;
-private ones and the tailnet are always blocked). `site.example.toml` lists every key.
+private ones and the tailnet are always blocked), `[telegram]` `manager_token` (only root reads
+`site.toml`). `site.example.toml` lists every key.
 
 ### 6.8 Nightly update
 
@@ -757,6 +785,10 @@ replies to SIP until it accepted UDP from Odorik (`81.31.45.0/24`, any port). On
 up by hand as `add` does it now, Asterisk registered through the container's NAT and a call in
 worked: PIN, Czech speech, Piper's replies. Piper's own speed (`length_scale` 1.0) was too slow.
 
+Telegram bots (2026-11-15): 0 managed bots with a real manager bot (section 4); 1 `instance
+telegram` and `site.toml` readable by root only; 2 `instance add` points to it after `login`
+(waiting in `add` would greet the user before Hermes is signed in); 3 README and this file.
+
 ## 9. Open questions
 
 - The Google Sheet of the access trace is tested against a stand-in only: check a real Apps
@@ -769,6 +801,7 @@ worked: PIN, Czech speech, Piper's replies. Piper's own speed (`length_scale` 1.
   When Hermes adds a system dependency the list must follow; containers get the list at
   `instance add` and before each Hermes update.
 - Phone line: a whole `instance add` with one, and a call from Hermes, are untested on a server.
+- Telegram: `instance telegram` against a real instance is untested on a server.
 - Per-instance SSH and Tailscale are left to the users; SSH needs the host as jump host.
 - Not tested: `systemctl restart nftables` with containers running (do Incus's per-NIC
   anti-spoofing rules come back without restarting the containers?).
