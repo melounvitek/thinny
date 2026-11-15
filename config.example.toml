@@ -1,5 +1,6 @@
 # thinny server settings: /etc/thinny/config.toml
 # Edit with: thinny config edit (or edit it directly, then run: thinny config apply)
+# Every setting with its default, also those added later: /usr/local/lib/thinny/config.example.toml
 
 [hermes]
 auto_update = true              # false: the nightly job leaves thinny as it is and only reports a new release
