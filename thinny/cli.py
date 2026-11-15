@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import getpass
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -143,10 +145,13 @@ def main(argv: list[str] | None = None) -> int:
                 if access == "url" and not url:
                     url = input("Address users will open (https://...): ").strip()
                 moved = a.name in reg.instances and reg.get(a.name).moved
-                if not s.model_lock and not moved and sys.stdin.isatty():  # else the lock or its old server decides
+                asking = not moved and sys.stdin.isatty()  # a moved instance keeps its model and line
+                if asking and not s.model_lock:  # else the lock decides
                     provider, model = ask_model(f"Which model provider will {a.name} use?", s.model_provider, s.model)
                     s = dataclasses.replace(s, model_provider=provider, model=model)
-                instances.add(s, reg, a.name, access, url, cpu=a.cpu, memory_mb=a.memory_mb, disk_gb=a.disk_gb)
+                phone = ask_phone(a.name) if asking else None
+                instances.add(s, reg, a.name, access, url, phone=phone, cpu=a.cpu, memory_mb=a.memory_mb,
+                              disk_gb=a.disk_gb)
             elif command == "instance limits":
                 instances.limits(reg, a.name, a.cpu, a.memory_mb, a.disk_gb)
             elif command == "instance access":
@@ -278,6 +283,30 @@ def ask(question: str, default: str | None = None) -> str:
         answer = input(f"{question}{f' [{default}]' if default else ''}: ").strip() or default
         if answer is not None:
             return answer
+
+
+def ask_secret(question: str) -> str:
+    """An answer typed without showing it; asks until answered."""
+    while True:
+        if answer := getpass.getpass(f"{question}: ").strip():
+            return answer
+
+
+def ask_phone(name: str) -> dict[str, str] | None:
+    """The phone line's settings for the instance's .env (see the hermes-3310 plugin), with Odorik's defaults;
+    None without a line."""
+    if not input(f"Connect a phone line (SIP) to {name}? [y/N] ").strip().lower().startswith("y"):
+        return None
+    line = {"SIP_SERVER": ask("SIP server", "sip.odorik.cz"), "SIP_USER": ask("SIP user name"),
+            "SIP_PASSWORD": ask_secret("SIP password")}
+    while not re.fullmatch(r"\d{4,32}", pin := ask_secret("PIN callers type before talking, 4 to 32 digits "
+                                                          "(better 6 or more)")):
+        print("The PIN must be 4 to 32 digits.")
+    callers = ask("Numbers that may call, with the country code (e.g. 420777000111; several: comma-separated)")
+    first = re.sub(r"\D", "", callers.split(",")[0]).removeprefix("00")
+    return line | {"PHONE_PIN": pin, "PHONE_ALLOWED_CALLERS": callers,
+                   "PHONE_HOME_NUMBER": ask("Number Hermes calls you on, as your provider dials it", f"00{first}"),
+                   "VOICE_TOOLS_OPENAI_KEY": ask_secret("OpenAI API key, for speech recognition on calls")}
 
 
 def ask_provider(question: str, default: str) -> str:

@@ -384,9 +384,10 @@ def restart_all(s: Settings, instances: list[Instance], reg: Registry) -> None:
 # ---------- commands ----------
 
 def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = "", *, cpu: int | None = None,
-        memory_mb: int | None = None, disk_gb: int | None = None, just_imported: bool = False) -> None:
-    """Add an instance, or finish one whose add stopped. `just_imported`: it was moved here a moment ago, with
-    the Hermes release this server runs."""
+        memory_mb: int | None = None, disk_gb: int | None = None, phone: dict[str, str] | None = None,
+        just_imported: bool = False) -> None:
+    """Add an instance, or finish one whose add stopped. `phone`: the settings of a phone line to connect.
+    `just_imported`: it was moved here a moment ago, with the Hermes release this server runs."""
     access = access or s.access_default
     check_access(s, reg, name, access, url)
     if name in reg.instances:
