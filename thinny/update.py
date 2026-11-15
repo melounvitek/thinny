@@ -108,7 +108,7 @@ def due(s: Settings, *, dry_run: bool, now: bool, repo: str = host.HERMES_REPO,
     tag, published = host.latest_release(repo)
     running = (host.release(path) or ("nothing",))[0]
     age = (dt.datetime.now(dt.UTC) - published).total_seconds() / 3600
-    log(f"running: {running}; latest stable: {tag}, out {age:.0f} h")
+    log(f"{repo}: running: {running}; latest stable: {tag}, out {age:.0f} h")
     if running == "nothing":
         return "up-to-date", "no instance has Hermes yet", tag
     if tag == running:

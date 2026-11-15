@@ -2,7 +2,8 @@
 
 Turns a Debian 13 or Ubuntu server into a shared [Hermes Agent](https://github.com/NousResearch/hermes-agent)
 server for a small organisation. Each instance is an [Incus](https://linuxcontainers.org/incus/)
-system container with its own Hermes and a password-protected Webapp. All instances share one
+system container with its own Hermes and a password-protected Webapp, or
+[hermes-webui](https://github.com/nesquena/hermes-webui) in its place. All instances share one
 central policy and one Hermes release.
 
 Status: in development. Design notes: [`PLAN.md`](PLAN.md).
@@ -21,6 +22,8 @@ Status: in development. Design notes: [`PLAN.md`](PLAN.md).
 - **Telegram with one link:** each instance's user creates a bot of their own that only they can
   write to (optional, see [Telegram](#telegram)).
 - **One Hermes release**, with an optional nightly update that moves instances one at a time.
+- **Webapp or WebUI per instance:** Hermes's built-in Webapp, or hermes-webui, with the same
+  password. WebUI follows its stable releases like Hermes.
 - **Four ways to open the Webapp:** office network (HTTPS), Tailscale, your own address, or an
   SSH tunnel.
 - **`thinny status`** for a quick look, **`thinny doctor`** for every isolation and health
@@ -46,7 +49,7 @@ private networks or the tailnet, and cannot change the shared policy.
 - Internet access for GitHub, the Hermes and Claude Code installers, `images.linuxcontainers.org`,
   Debian mirrors and the model provider.
 - About 0.4 GB RAM and 3 GB disk per idle instance, plus what its agent, Docker and Claude Code
-  use.
+  use. WebUI takes about 0.3 GB RAM more.
 
 With a sudo account, prefix the commands with `sudo` (`sudo thinny …`, `sudo incus …`).
 
@@ -167,7 +170,8 @@ With sudo, name your editor in the command: `sudo EDITOR=vim thinny config edit`
 `EDITOR`). Avoid `sudo -E`: it also keeps your `HOME`, where Incus then leaves root-owned files.
 
 Applying restarts gateways one by one where needed. `policy.language`, `port_range` and the
-`[webapp]` look apply only to instances added afterwards. A new `language_pack` reaches existing
+`[webapp]` look apply only to instances added afterwards; `webapp.frontend` is what `instance add`
+suggests. A new `language_pack` reaches existing
 instances with their next Hermes update. Without the model lock, `model_provider` and `model`
 are only what `instance add` suggests, and `reasoning_effort` where new instances start; turning
 the lock on removes the models users chose.
@@ -175,12 +179,13 @@ the lock on removes the models users chose.
 ## Instances
 
 ```sh
-thinny instance add alice               # about 7 minutes; asks how users open the Webapp, the model and a phone line
+thinny instance add alice               # about 7 minutes; asks how users open it, Webapp or WebUI, the model and a phone line
 thinny instance login alice             # sign in to a model provider; asks which
 thinny instance login alice --provider anthropic   # or name it: openai | anthropic
 thinny instance telegram alice          # a Telegram bot its user creates with a link (see Telegram)
 thinny instance list                    # with each one's CPU, RAM and disk use
 thinny instance access alice tailscale  # lan | tailscale | url=<URL> | local
+thinny instance frontend alice webui    # webapp | webui
 thinny instance limits alice --cpu 4 --memory-mb 8192 --disk-gb 50
 thinny instance lock alice [model ...]  # only these models (default: the one it uses)
 thinny instance unlock alice            # its users choose, even with the site's lock
@@ -191,8 +196,19 @@ thinny instance restart [alice ...]
 thinny instance move alice bob --to admin@new-server   # or --all; experimental
 ```
 
-- `add` prints the Webapp address, username and password. **The password is shown only
-  once.** If `add` fails, fix the cause and run it again: it continues where it stopped.
+- `add` prints the address, the username (Webapp only) and the password. **The password is shown
+  only once.** If `add` fails, fix the cause and run it again: it continues where it stopped.
+- **WebUI** ([hermes-webui](https://github.com/nesquena/hermes-webui), `--frontend webui`) runs on
+  the instance's port in place of the Webapp; the gateway keeps running for scheduled jobs and the
+  phone. It starts in `policy.language` and `webapp.theme`, then keeps its users' settings.
+  `frontend` switches an instance either way; one added before thinny had WebUI gets a new
+  password when it first switches (the Webapp keeps only a hash of it).
+- WebUI takes the password in plain text, in `~/.config/hermes-webui.env` in the container. The
+  agent runs inside WebUI and can read it from its environment, so it could end up in a chat, and
+  at the model provider. `reset-password` signs everyone out of WebUI, but its public share links
+  stay.
+- WebUI's model picker ignores the model lock and lists every model; the model guard refuses
+  chats with the others, but not WebUI's chat titles.
 - Run `login` before the hand-over. Enter takes the provider `alice` uses; with the model lock,
   `login` signs in to the lock's provider without asking. Whoever uses `alice` opens the link and
   signs in with their own account within about 15 minutes. Signed in to another provider, they
@@ -226,8 +242,8 @@ thinny instance move alice bob --to admin@new-server   # or --all; experimental
 - **`move` is experimental:** it has not moved an instance between two real servers yet.
   Snapshot both servers first.
 - `move` takes whole containers over SSH to another server that runs thinny, one at a time, each
-  down for a few minutes. Everything inside comes along: data, sign-ins, the Webapp password,
-  the model (unless the new server's model lock pins it), language, look and limits; its own
+  down for a few minutes. Everything inside comes along: data, sign-ins, the password, Webapp or
+  WebUI (at the new server's WebUI release), the model (unless the new server's model lock pins it), language, look and limits; its own
   `lock` or `unlock` does not: it follows the new server's `policy.model_lock`. The new
   server gives it its own port, address, policy and packages: `lan`, `tailscale` and `local`
   instances get a new address; for `url` ones, point your DNS or tunnel at the new server. The
@@ -324,13 +340,15 @@ without a password, such as a deploy key.
 
 Then it installs the latest stable Hermes release once it is `min_release_age_hours` old. It
 updates one instance at a time and stops at the first failure; the next run finishes the job.
+Then the same for WebUI's latest stable release, on the instances that use it. WebUI restarts
+with every gateway restart, which a new Hermes needs.
 With `auto_update = false` the nightly run leaves thinny as it is and only reports a new Hermes
 release. The result is
 in `/var/lib/thinny/update-status.json`, the log in `/var/log/thinny.log`. Nightly runs
 also deliver new built-ins unless `auto_update = false`. Every non-dry run that gets past the thinny update updates Claude Code.
 
 ```sh
-thinny update             # thinny and Hermes now, ignoring the minimum age and auto_update
+thinny update             # thinny, Hermes and WebUI now, ignoring the minimum age and auto_update
 thinny update --dry-run   # only report what it would do
 ```
 
@@ -343,7 +361,7 @@ thinny update --dry-run   # only report what it would do
 ## Status and checks
 
 ```sh
-thinny status   # release, last update, containers, gateways
+thinny status   # releases, last update, containers, gateways
 thinny doctor   # every isolation and health check, each with a fix
 ```
 
