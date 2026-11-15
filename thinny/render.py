@@ -49,12 +49,22 @@ def to_yaml(value, indent: int = 0) -> str:
     pad = "  " * indent
     lines = []
     for key, item in value.items():
+        key = json.dumps(key)   # a group's too: unquoted, `on` and `123` are no strings
         if isinstance(item, dict) and item:
             lines.append(f"{pad}{key}:")
             lines.append(to_yaml(item, indent + 1))
         else:
             lines.append(f"{pad}{key}: {json.dumps(item)}")
     return "\n".join(lines)
+
+
+def merged(base: dict, over: dict) -> dict:
+    """`base` with `over` on top, tables merged key by key."""
+    result = dict(base)
+    for key, value in over.items():
+        both = isinstance(value, dict) and isinstance(result.get(key), dict)
+        result[key] = merged(result[key], value) if both else value
+    return result
 
 
 def managed_config(s: Settings) -> str:
@@ -74,6 +84,7 @@ def managed_config(s: Settings) -> str:
         "security": {"redact_secrets": True},
         "approvals": {"mode": s.approvals},
     }
+    config = merged(s.hermes, config)   # the instance's group's settings, under thinny's own
     return f"# {HEADER}\n# Hermes managed scope: these values win over every instance's own config.\n{to_yaml(config)}\n"
 
 

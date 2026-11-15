@@ -16,6 +16,8 @@ Status: in development. Design notes: [`PLAN.md`](PLAN.md).
   lock** (`policy.model_lock`) also pins the provider, model, reasoning effort and plugins, and
   allows only `allowed_models`. Without it, users choose their own. One instance can have its own
   lock, or none, whatever the server's (`thinny instance lock` and `unlock`).
+- **Groups** of instances share Hermes settings their users cannot change, and take commands
+  together.
 - **Built into every instance:** [Claude Code](https://code.claude.com/) with the Claude
   subscription plugin, and the [hermes-3310](https://github.com/melounvitek/hermes-3310) phone
   plugin with Docker.
@@ -196,6 +198,7 @@ thinny instance disable alice           # stop it for good, keep its data
 thinny instance remove alice            # then delete its container and data; asks you to type its name
 thinny instance restart [alice ...]
 thinny instance move alice bob --to admin@new-server   # or --all; experimental
+thinny instance restart --group sales   # instead of names: limits, lock, unlock, login and move too (see Groups)
 ```
 
 - `add` prints the address, the username (Webapp only) and the password. **The password is shown
@@ -257,6 +260,41 @@ thinny instance move alice bob --to admin@new-server   # or --all; experimental
   with sudo without a password. It asks nothing, so connect once as root by hand to accept the
   host key (`sudo ssh admin@new-server true`). sudo hides your SSH agent: thinny uses root's key
   unless you run `sudo --preserve-env=SSH_AUTH_SOCK thinny instance move ...`.
+- A moved instance arrives in no [group](#groups).
+
+## Groups
+
+A group's instances get the same Hermes settings, and commands can take them together.
+
+```sh
+thinny config edit --group sales        # create or edit /etc/thinny/groups/sales.toml, check it, apply it
+thinny instance add alice --group sales
+thinny instance group set bob sales     # join or switch; none: leave
+thinny instance group list              # groups and their instances
+thinny instance list --group sales
+thinny instance restart --group sales   # also limits, lock, unlock, login and move
+```
+
+- A group's file holds Hermes settings, keys of Hermes's `config.yaml` in TOML (see
+  [`group.example.toml`](group.example.toml)):
+
+  ```toml
+  [display]
+  language = "cs"
+  ```
+
+- They join each member's policy, so its users cannot change them. thinny's own policy (the
+  sandbox, approvals, the model lock) wins over them, and `webapp` is thinny's. A list, such as
+  `plugins.enabled`, replaces the instance's own.
+- Joining a group removes the instance's own values of those settings, and leaving it does not
+  bring them back: Hermes's defaults apply.
+- Every account in a member's container can read the group's settings, MCP servers' tokens
+  included.
+- `--group` takes the group's active instances one after another and stops at the first failure.
+  With `lock`, every name is a model: `thinny instance lock --group sales gpt-5.5`. `login` waits
+  for each instance's users in turn.
+- To remove a group, move its instances to another group or none, then delete its file. While an
+  instance is in a group without a file, `config apply` changes nothing and says so.
 
 ## Access
 

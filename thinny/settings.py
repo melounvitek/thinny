@@ -6,7 +6,7 @@ import ipaddress
 import json
 import re
 import tomllib
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
 CONFIG_TOML = Path("/etc/thinny/config.toml")
@@ -47,6 +47,8 @@ class Settings:
     network_interface: str = "eth0"
     blocked_networks: tuple[str, ...] = ()
     telegram_manager_token: str = ""
+    groups: dict[str, dict] = field(default_factory=dict)   # name -> the Hermes settings its members' policies pin
+    hermes: dict = field(default_factory=dict)   # those of one instance's group (instances.settings_for)
 
 
 # (section, key) in config.toml -> Settings field
@@ -86,7 +88,29 @@ def load(path: Path = CONFIG_TOML) -> Settings:
         text = path.read_text(encoding="utf-8")
     except OSError as e:
         raise SettingsError(f"cannot read {path}: {e.strerror}") from e
-    return parse(text, source=str(path))
+    groups = {group.stem: parse_group(group.read_text(encoding="utf-8"), str(group))
+              for group in sorted((path.parent / "groups").glob("*.toml"))}
+    return replace(parse(text, source=str(path)), groups=groups)
+
+
+def group_file(name: str) -> Path:
+    return CONFIG_TOML.parent / "groups" / f"{name}.toml"
+
+
+def parse_group(text: str, source: str) -> dict:
+    """A group's Hermes settings: keys of Hermes's config.yaml, in TOML."""
+    try:
+        config = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as e:
+        raise SettingsError(f"{source}: {e}") from e
+    try:
+        json.dumps(config, allow_nan=False)   # as the policy writes them
+    except (TypeError, ValueError):
+        raise SettingsError(f"{source}: Hermes's settings take strings, numbers, booleans, lists and tables: "
+                            "no dates, nan or inf") from None
+    if "webapp" in config:
+        raise SettingsError(f"{source}: webapp is thinny's: it gives each instance its address and port")
+    return config
 
 
 def parse(text: str, source: str = "config.toml") -> Settings:

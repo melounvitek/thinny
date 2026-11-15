@@ -1,0 +1,14 @@
+# thinny group: /etc/thinny/groups/<group>.toml
+# Edit with: thinny config edit --group <group>
+#
+# Hermes settings for every instance in the group (thinny instance group set <name> <group>), as in
+# Hermes's config.yaml, written in TOML. Their policy pins them: users cannot change them, and an
+# instance that joins the group loses its own values for them. thinny's own policy wins over them,
+# and webapp is thinny's. Every account in the members' containers can read them.
+#
+# [display]
+# language = "cs"
+#
+# [mcp_servers.github]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-github"]

@@ -188,3 +188,13 @@ def test_an_instance_needs_the_sites_manager_bot(alice, bot_api):
 ])
 def test_the_link_suggests_a_username_after_the_manager_and_the_instance(manager, name, username):
     assert telegram.suggested_username(manager, name) == username
+
+
+def test_a_bot_connects_to_a_member_of_a_group_that_turns_telegram_on(alice, incus, bot_api, monkeypatch):
+    bot_api(created(7, "acme_hermes_alice_bot"))
+    answering(monkeypatch, "y")
+    alice.get("alice").group = "sales"
+    telegram.connect(dataclasses.replace(SITE, groups={"sales": {"platforms": {"telegram": {"enabled": True}}}}),
+                     "alice")
+    assert not incus.ran("hermes config set platforms.telegram.enabled")   # Hermes refuses what the policy pins
+    assert "TELEGRAM_BOT_TOKEN" in env(incus)

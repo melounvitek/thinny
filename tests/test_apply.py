@@ -166,6 +166,35 @@ def test_running_instances_get_their_trace(server, incus):
     assert incus.containers["bob"]["devices"] == {}
 
 
+def test_members_of_a_group_get_its_settings_after_losing_their_own(server, incus):
+    reg, restarted = server
+    reg.instances.update(alice=Instance("alice", 9120, "local", state="active", group="sales"),
+                         bob=Instance("bob", 9121, "local", state="active"))
+    for name in reg.instances:
+        incus.containers[name] = {"state": "RUNNING", "devices": {},
+                                  "hermes_config": {"display.language": "en", "display.skin": "mono"}}
+    sales = {"display": {"language": "cs"}, "mcp_servers": {"github": {"command": "npx"}}}
+    s = dataclasses.replace(S, groups={"sales": sales})
+    apply.apply(s)
+    assert host.policy_current(dataclasses.replace(s, hermes=sales), "alice") and host.policy_current(s, "bob")
+    # Hermes refuses to unset them once pinned, and drops them from a config it saves anyway.
+    assert incus.containers["alice"]["hermes_config"] == {"display.skin": "mono"}
+    assert incus.containers["bob"]["hermes_config"] == {"display.language": "en", "display.skin": "mono"}
+    assert incus.ran("hermes config unset mcp_servers.github.command")
+    assert restarted == ["alice", "bob"]
+
+
+def test_a_member_of_a_missing_group_stops_apply_before_any_change(server, incus, monkeypatch):
+    reg, restarted = server
+    reg.instances["alice"] = Instance("alice", 9120, "local", state="pending", group="sales")
+    reg.instances["bob"] = Instance("bob", 9121, "local", state="disabled", group="support")   # left alone
+    changed = []
+    monkeypatch.setattr(host, "firewall", lambda s: changed.append("firewall"))
+    with pytest.raises(CommandError, match="alice is in the group sales, but .*groups/sales.toml is missing"):
+        apply.apply(dataclasses.replace(S, groups={"support": {}}))
+    assert changed == [] and not host.POLICIES.exists()
+
+
 @pytest.mark.parametrize("tunnel_port, hint", [(0, False), (8080, True)])
 def test_setup_ends_with_where_the_tunnel_goes(monkeypatch, capsys, tunnel_port, hint):
     monkeypatch.setattr(host, "init_incus", lambda: None)

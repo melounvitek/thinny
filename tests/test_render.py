@@ -30,6 +30,22 @@ def test_without_the_model_lock_users_choose_their_model_effort_and_plugins():
                       "security": {"redact_secrets": True}, "approvals": {"mode": "smart"}}
 
 
+
+def test_a_groups_hermes_settings_join_the_policy_under_thinnys():
+    yaml = pytest.importorskip("yaml")
+    group = {"display": {"language": "cs"}, "terminal": {"timeout": 60, "backend": "docker"},
+             "mcp_servers": {"github: work": {"command": "npx", "args": ["-y", "server-github"], "env": {}},
+                             "on": {"command": "on-mcp"}, "123": {"url": "https://mcp.example.org/"}},
+             "approvals": {"mode": "off"}, "security": False, "model": {"default": "m9"}}
+    config = yaml.safe_load(render.managed_config(dataclasses.replace(LOCKED, hermes=group)))
+    assert config["display"] == {"language": "cs"}
+    assert config["mcp_servers"] == group["mcp_servers"]   # names YAML would read as no strings too
+    # thinny's own win, also over a whole section
+    assert config["terminal"] == {"timeout": 60, "backend": "local"}
+    assert config["approvals"] == {"mode": "smart"} and config["security"] == {"redact_secrets": True}
+    assert config["model"] == {"default": "m1", "provider": "openai-codex"}
+    assert group["terminal"]["backend"] == "docker"   # the group's own settings stay as they are
+
 def test_managed_env_keeps_the_agent_in_the_container():
     env = render.managed_env()
     assert "TERMINAL_ENV=local\n" in env

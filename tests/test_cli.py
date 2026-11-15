@@ -172,8 +172,8 @@ def test_a_failed_thinny_update_stops_the_update(server, monkeypatch, capsys):
 
 def test_instance_add_takes_the_limits_of_the_new_instance(server, monkeypatch):
     added = []
-    monkeypatch.setattr(instances, "add",
-                        lambda s, reg, name, access, url, phone, frontend, **limits: added.append((name, limits)))
+    monkeypatch.setattr(instances, "add", lambda s, reg, name, access, url, phone, frontend, group, **limits:
+                        added.append((name, limits)))
     assert cli.main(["instance", "add", "alice", "--access", "local", "--cpu", "4", "--memory-mb", "8192",
                      "--disk-gb", "50"]) == 0
     assert cli.main(["instance", "add", "bob", "--access", "local"]) == 0
@@ -468,3 +468,109 @@ def test_config_edit_without_an_editor_says_what_to_do(server, monkeypatch, caps
     assert cli.main(["config", "edit"]) == 1
     assert f"edit {site}, then run: thinny config apply" in capsys.readouterr().err
     assert calls == []
+
+
+def test_config_edit_starts_a_new_group_from_the_example_and_applies_it(server, monkeypatch, tmp_path):
+    _, calls = server
+    example = (host.LIB / "group.example.toml").read_text()
+    started = editor(monkeypatch, example + 'display.language = "cs"\n')
+    assert cli.main(["config", "edit", "--group", "sales"]) == 0
+    group = tmp_path / "groups/sales.toml"
+    assert group.read_text().endswith('\ndisplay.language = "cs"\n')
+    assert group.stat().st_mode & 0o777 == 0o600   # its MCP servers may hold tokens
+    assert settings.load(tmp_path / "config.toml").groups == {"sales": {"display": {"language": "cs"}}}
+    assert calls == [("apply", "m1")]
+
+    editor(monkeypatch, example)   # a new group left as the example
+    assert cli.main(["config", "edit", "--group", "support"]) == 0
+    assert not (tmp_path / "groups/support.toml").exists() and len(calls) == 1
+
+
+def test_config_edit_refuses_an_invalid_group(server, monkeypatch, capsys, tmp_path):
+    _, calls = server
+    editor(monkeypatch, "[webapp]\nhost = \"0.0.0.0\"\n")
+    monkeypatch.setattr("builtins.input", lambda prompt: "d")
+    assert cli.main(["config", "edit", "--group", "sales"]) == 0
+    assert "webapp is thinny's" in capsys.readouterr().out
+    assert cli.main(["config", "edit", "--group", "../sales"]) == 1
+    assert "invalid name '../sales'" in capsys.readouterr().err
+    assert not (tmp_path / "groups").exists() and calls == []
+
+
+def test_instances_join_and_leave_groups_that_exist(server, monkeypatch, tmp_path, capsys):
+    (tmp_path / "groups").mkdir()
+    (tmp_path / "groups/sales.toml").write_text('display.language = "cs"\n')
+    calls = []
+    monkeypatch.setattr(instances, "add", lambda s, reg, name, access, url, group, **kw: calls.append(("add", group)))
+    monkeypatch.setattr(instances, "set_group", lambda s, reg, name, group: calls.append(("set", name, group)))
+    monkeypatch.setattr(instances, "list_groups", lambda s, reg: calls.append(("groups", list(s.groups))))
+    monkeypatch.setattr(instances, "list_instances", lambda reg, group: calls.append(("list", group)))
+    assert cli.main(["instance", "add", "alice", "--access", "local", "--group", "sales"]) == 0
+    assert cli.main(["instance", "add", "bob", "--access", "local"]) == 0
+    assert cli.main(["instance", "group", "set", "alice", "sales"]) == 0
+    assert cli.main(["instance", "group", "set", "alice", "none"]) == 0
+    assert cli.main(["instance", "group", "list"]) == 0
+    assert cli.main(["instance", "list", "--group", "sales"]) == 0
+    assert cli.main(["instance", "list"]) == 0
+    assert calls == [("add", "sales"), ("add", None), ("set", "alice", "sales"), ("set", "alice", ""),
+                     ("groups", ["sales"]), ("list", "sales"), ("list", None)]
+    for args in (["instance", "add", "carol", "--access", "local", "--group", "support"],
+                 ["instance", "group", "set", "alice", "support"]):
+        assert cli.main(args) == 1
+        assert "no group support: create it with thinny config edit --group support" in capsys.readouterr().err
+    assert cli.main(["config", "edit", "--group", "none"]) == 1
+    assert "'none' means no group" in capsys.readouterr().err
+    assert len(calls) == 7
+
+
+@pytest.fixture
+def sales(server, monkeypatch):
+    """Instances in the group sales, in port order: alice and dave active, bob disabled, carol in no group."""
+    reg = Registry({"dave": Instance("dave", 9123, "local", state="active", group="sales"),
+                    "alice": Instance("alice", 9120, "local", state="active", group="sales"),
+                    "bob": Instance("bob", 9121, "local", state="disabled", group="sales"),
+                    "carol": Instance("carol", 9122, "local", state="active")})
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
+    done = []
+    monkeypatch.setattr(instances, "restart_all",
+                        lambda s, insts, reg: done.append(("restart", [inst.name for inst in insts])))
+    monkeypatch.setattr(instances, "lock", lambda s, reg, name, models: done.append(("lock", name, models)))
+    monkeypatch.setattr(instances, "unlock", lambda s, reg, name: done.append(("unlock", name)))
+    monkeypatch.setattr(instances, "limits", lambda reg, name, *limits: done.append(("limits", name, *limits)))
+    monkeypatch.setattr(instances, "login", lambda reg, name, provider: done.append(("login", name, provider)))
+    monkeypatch.setattr(move, "move", lambda s, reg, names, to: done.append(("move", names, to)))
+    return done
+
+
+def test_commands_take_the_active_instances_of_a_group(sales):
+    for args in (["restart"], ["lock", "m2", "m3"], ["lock"], ["unlock"], ["limits", "--cpu", "4"],
+                 ["login", "--provider", "openai"], ["move", "--to", "new"]):
+        assert cli.main(["instance", *args, "--group", "sales"]) == 0
+    assert sales == [("restart", ["alice", "dave"]),
+                     ("lock", "alice", ["m2", "m3"]), ("lock", "dave", ["m2", "m3"]),   # models, not names
+                     ("lock", "alice", []), ("lock", "dave", []),
+                     ("unlock", "alice"), ("unlock", "dave"),
+                     ("limits", "alice", 4, None, None), ("limits", "dave", 4, None, None),
+                     ("login", "alice", "openai-codex"), ("login", "dave", "openai-codex"),
+                     ("move", ["alice", "dave"], "new")]
+
+
+@pytest.mark.parametrize("args, message", [
+    (["restart", "carol", "--group", "sales"], "name the instances, or give --group"),   # not both
+    (["restart", "--group", ""], "name the instances, or give --group"),   # not every instance
+    (["unlock"], "name the instances, or give --group"),
+    (["limits", "--cpu", "4"], "name the instances, or give --group"),
+    (["move", "carol", "--group", "sales", "--to", "new"], "name the instances to move, or give --all or --group"),
+    (["move", "--all", "--group", "sales", "--to", "new"], "name the instances to move, or give --all or --group"),
+])
+def test_a_group_and_names_do_not_mix(sales, capsys, args, message):
+    assert cli.main(["instance", *args]) == 1
+    assert message in capsys.readouterr().err
+    assert sales == []
+
+
+def test_a_group_without_active_instances_selects_nothing(sales, capsys):
+    for args in (["restart"], ["move", "--to", "new"]):   # not every instance
+        assert cli.main(["instance", *args, "--group", "support"]) == 1
+        assert "no active instance is in the group support" in capsys.readouterr().err
+    assert sales == []

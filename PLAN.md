@@ -510,11 +510,12 @@ extras/, tests/     netcup snapshot and nightly watch (run off the server); pyte
 
 ```
 /etc/thinny/config.toml           admin-edited settings
+/etc/thinny/groups/<group>.toml   a group's Hermes settings, pinned in its members' policies
 /var/lib/thinny/instances.json  registry: name, port, container address, access, URL, state,
                                 the built-ins (render.BUILT_INS) its container last got,
                                 whether it moved here from another server, its own model lock
                                 (models and provider; [] unlocked; null: the site's), the URL of
-                                its users' Google Sheet for the access trace
+                                its users' Google Sheet for the access trace, its group
 /var/lib/thinny/release         "<tag> <commit>": the Hermes release all instances run
 /var/lib/thinny/policies/<name>/        its Hermes managed scope, rendered from config.toml; a
                                         folder per instance (before, all shared /etc/hermes/)
@@ -588,8 +589,9 @@ status | doctor                   quick look (release, last update, containers, 
                                   every check (section 7)
 update [--dry-run] [--scheduled]  update now (6.8); the timer runs --scheduled, which waits
                                   for the minimum age and respects auto_update
-config edit | apply               visudo-like edit of config.toml, then apply; re-render and
-                                  restart where needed
+config edit [--group] | apply     visudo-like edit of config.toml or a group's file (a new one
+                                  from group.example.toml), then apply; re-render and restart
+                                  where needed. A member of a missing group stops apply first
 instance add <name> [--access ...] [--frontend webapp|webui]
                                   port, address, container, packages, account (uid 1000, sudo,
                                   linger, docker), Hermes at the recorded release, Webapp build,
@@ -623,6 +625,11 @@ instance remove <name>            a disabled or pending instance, once the admin
                                   trace stay
 instance list | restart           instances with their CPU, RAM and disk use; one-by-one gateway
                                   restarts
+instance group set <name> <group|none> | group list
+                                  its group: the group's keys are unset in its own config, then
+                                  pinned in its policy under thinny's own; groups and members
+--group <group>                   instead of names on list, limits, login, lock, unlock, restart
+                                  and move: the group's active instances, one after another
 instance move <name>... | --all --to [user@]host
                                   experimental: whole containers to another thinny server, one
                                   at a time. That server checks them all first (same Hermes

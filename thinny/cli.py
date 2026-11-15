@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 
 from . import apply, checks, host, instances, move, settings, system, telegram, trace, uninstall, update
-from .registry import Registry, RegistryError
+from .registry import Registry, RegistryError, validate_name
 from .settings import SettingsError, load
 from .system import CommandError, lock, write_file
 
@@ -50,19 +50,28 @@ def main(argv: list[str] | None = None) -> int:
                      help="as the nightly timer: respect auto_update, wait for min_release_age_hours")
     cfg = sub.add_parser("config", help="the server settings, /etc/thinny/config.toml")
     cfg = cfg.add_subparsers(dest="action", required=True, metavar="action")
-    cfg.add_parser("edit", help="edit config.toml in $VISUAL or $EDITOR, check it, then apply it")
+    cfg.add_parser("edit", help="edit config.toml (or a group's file) in $VISUAL or $EDITOR, check it, then apply it") \
+        .add_argument("--group", help="the group's Hermes settings instead, /etc/thinny/groups/<group>.toml")
     cfg.add_parser("apply", help="bring the server in line with config.toml after editing it")
     inst = sub.add_parser("instance", help="instances, one container each")
     inst = inst.add_subparsers(dest="action", required=True, metavar="action")
-    inst.add_parser("list", help="instances, ports, URLs, gateway state, CPU, RAM and disk use")
+    inst.add_parser("list", help="instances, ports, URLs, gateway state, CPU, RAM and disk use") \
+        .add_argument("--group", help="its instances only")
     add = inst.add_parser("add", help="add an instance (or finish an interrupted add)",
                           description="Limits not given follow [container] in config.toml.")
     add.add_argument("name")
     add.add_argument("--access", help="lan | tailscale | url=<URL> | local (default: asked)")
     add.add_argument("--frontend", choices=settings.FRONTENDS, help="(default: asked)")
+    add.add_argument("--group", help="whose Hermes settings it gets (default: none)")
+    grp = inst.add_parser("group", help="groups: instances with the Hermes settings of a group's file")
+    grp = grp.add_subparsers(dest="group_action", required=True, metavar="action")
+    grp.add_parser("list", help="groups and their instances")
+    gset = grp.add_parser("set", help="put an instance in a group, or in none (it loses the group's settings)")
+    gset.add_argument("name")
+    gset.add_argument("group", metavar="GROUP|none")
     lim = inst.add_parser("limits", help="change an instance's CPU, memory or disk limits",
                           description="Limits not given stay as they are.")
-    lim.add_argument("name")
+    lim.add_argument("name", nargs="?")
     for parser in (add, lim):
         parser.add_argument("--cpu", type=at_least_1, help="CPUs")
         parser.add_argument("--memory-mb", type=at_least_1, help="memory in MiB")
@@ -74,13 +83,13 @@ def main(argv: list[str] | None = None) -> int:
     frn.add_argument("name")
     frn.add_argument("frontend", choices=settings.FRONTENDS)
     lgn = inst.add_parser("login", help="sign an instance in to a model provider (device code)")
-    lgn.add_argument("name")
+    lgn.add_argument("name", nargs="?")
     lgn.add_argument("--provider", choices=PROVIDERS, help="(default: asked)")
     lck = inst.add_parser("lock", help="lock an instance to models of the provider it uses, whatever the server's lock")
-    lck.add_argument("name")
+    lck.add_argument("name", nargs="?", help="(none with --group)")
     lck.add_argument("models", nargs="*", help="model ids it allows, the first by default (default: the one it uses)")
-    inst.add_parser("unlock", help="let an instance's users choose their models, whatever the server's lock") \
-        .add_argument("name")
+    unl = inst.add_parser("unlock", help="let an instance's users choose their models, whatever the server's lock")
+    unl.add_argument("name", nargs="?")
     inst.add_parser("telegram", help="give an instance a Telegram bot its user creates with a link (see README)") \
         .add_argument("name")
     trc = inst.add_parser("trace-sheet", help="send an instance's access trace to its users' Google Sheet too")
@@ -95,6 +104,8 @@ def main(argv: list[str] | None = None) -> int:
     mov = inst.add_parser("move", help="move instances to another thinny server over SSH (experimental)")
     mov.add_argument("names", nargs="*")
     mov.add_argument("--all", action="store_true", help="every active instance")
+    for parser in (lim, lgn, lck, unl, rst, mov):
+        parser.add_argument("--group", help="its active instances instead of named ones")
     mov.add_argument("--to", required=True, metavar="[USER@]HOST")
     rcv = inst.add_parser("receive")  # without help, so not listed: `move` runs it on the other server
     rcv.add_argument("name")
@@ -123,8 +134,12 @@ def main(argv: list[str] | None = None) -> int:
                 uninstall.run()
             return 0
         if command == "config edit":
+            if a.group:
+                validate_name(a.group)
+                if a.group == "none":
+                    raise CommandError("'none' means no group; choose another name")
             with lock():  # before editing: a running update says so now, not after the edit
-                if edit_config():
+                if edit_config(a.group):
                     apply.apply(load())
             return 0
         s = load()
@@ -133,7 +148,10 @@ def main(argv: list[str] | None = None) -> int:
         if command == "status":
             return checks.status(s, Registry.load())
         if command == "instance list":
-            instances.list_instances(Registry.load())
+            instances.list_instances(Registry.load(), a.group)
+            return 0
+        if command == "instance group" and a.group_action == "list":
+            instances.list_groups(s, Registry.load())
             return 0
         if command == "instance telegram":   # takes thinny's lock only once its user created the bot
             telegram.connect(s, a.name)
@@ -151,6 +169,8 @@ def main(argv: list[str] | None = None) -> int:
             elif command == "update":
                 return update.run(s, reg, dry_run=a.dry_run, now=not a.scheduled)
             elif command == "instance add":
+                if a.group:
+                    check_group(s, a.group)
                 access, url = parse_access(a.access) if a.access else (
                     ask_access(f"How will users open {a.name}'s Webapp?", s.lan_address, s.access_default), "")
                 if access == "url" and not url:
@@ -164,26 +184,36 @@ def main(argv: list[str] | None = None) -> int:
                     provider, model = ask_model(f"Which model provider will {a.name} use?", s.model_provider, s.model)
                     s = dataclasses.replace(s, model_provider=provider, model=model)
                 phone = ask_phone(a.name) if asking else None
-                instances.add(s, reg, a.name, access, url, frontend=frontend, phone=phone, cpu=a.cpu,
+                instances.add(s, reg, a.name, access, url, frontend=frontend, phone=phone, group=a.group, cpu=a.cpu,
                               memory_mb=a.memory_mb, disk_gb=a.disk_gb)
+            elif command == "instance group":   # set
+                if a.group != "none":
+                    check_group(s, a.group)
+                instances.set_group(s, reg, a.name, "" if a.group == "none" else a.group)
             elif command == "instance limits":
-                instances.limits(reg, a.name, a.cpu, a.memory_mb, a.disk_gb)
+                for name in chosen(reg, [a.name] if a.name else [], a.group):
+                    instances.limits(reg, name, a.cpu, a.memory_mb, a.disk_gb)
             elif command == "instance access":
                 instances.change_access(s, reg, a.name, *parse_access(a.access))
             elif command == "instance frontend":
                 instances.change_frontend(s, reg, a.name, a.frontend)
             elif command == "instance login":
-                if a.provider:
-                    provider = PROVIDERS[a.provider][0]
-                else:
-                    provider, _ = instances.model_of(s, reg, a.name)
-                    if not instances.settings_for(s, reg.get(a.name)).model_lock:
-                        provider = ask_provider(f"Which provider should {a.name} sign in to?", provider)
-                instances.login(reg, a.name, provider)
+                for name in chosen(reg, [a.name] if a.name else [], a.group):   # one after another
+                    if a.provider:
+                        provider = PROVIDERS[a.provider][0]
+                    else:
+                        provider, _ = instances.model_of(s, reg, name)
+                        if not instances.settings_for(s, reg.get(name)).model_lock:
+                            provider = ask_provider(f"Which provider should {name} sign in to?", provider)
+                    instances.login(reg, name, provider)
             elif command == "instance lock":
-                instances.lock(s, reg, a.name, a.models)
+                if a.group and a.name:   # with --group, each is a model
+                    a.name, a.models = None, [a.name, *a.models]
+                for name in chosen(reg, [a.name] if a.name else [], a.group):
+                    instances.lock(s, reg, name, a.models)
             elif command == "instance unlock":
-                instances.unlock(s, reg, a.name)
+                for name in chosen(reg, [a.name] if a.name else [], a.group):
+                    instances.unlock(s, reg, name)
             elif command == "instance trace-sheet":
                 trace.connect_sheet(reg, a.name, a.url)
             elif command == "instance reset-password":
@@ -193,12 +223,13 @@ def main(argv: list[str] | None = None) -> int:
             elif command == "instance remove":
                 instances.remove(s, reg, a.name)
             elif command == "instance restart":
-                targets = [reg.get(n) for n in a.names] if a.names else reg.current()
+                targets = [reg.get(n) for n in chosen(reg, a.names, a.group)] if a.names or a.group is not None \
+                    else reg.current()
                 instances.restart_all(s, [t for t in targets if t.state == "active"], reg)
             elif command == "instance move":
-                if bool(a.names) == a.all:
-                    raise CommandError("name the instances to move, or give --all")
-                move.move(s, reg, a.names, a.to)
+                if sum((bool(a.names), a.all, bool(a.group))) != 1:
+                    raise CommandError("name the instances to move, or give --all or --group")
+                move.move(s, reg, [] if a.all else chosen(reg, a.names, a.group), a.to)
             elif command == "instance receive":
                 move.receive(s, reg, a.name, a.access, a.url, tuple(a.release), a.built_ins,
                              None if a.check else sys.stdin.buffer, frontend=a.frontend)
@@ -208,14 +239,32 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
-def edit_config() -> bool:
-    """Edit a copy of config.toml, like visudo: only a valid change replaces it. True when it did."""
-    path = settings.CONFIG_TOML
+def chosen(reg: Registry, names: list[str], group: str | None) -> list[str]:
+    """The named instances, or the active instances in the group: one or the other."""
+    if bool(names) == bool(group):
+        raise CommandError("name the instances, or give --group")
+    if names:
+        return names
+    members = [inst.name for inst in reg.current() if inst.group == group and inst.state == "active"]
+    if not members:
+        raise CommandError(f"no active instance is in the group {group}")
+    return members
+
+
+def check_group(s: settings.Settings, group: str) -> None:
+    if group not in s.groups:
+        raise CommandError(f"no group {group}: create it with thinny config edit --group {group}")
+
+
+def edit_config(group: str | None = None) -> bool:
+    """Edit a copy of config.toml, or of a group's file (a new one starts as the example), like visudo: only a
+    valid change replaces it. True when it did."""
+    path = settings.group_file(group) if group else settings.CONFIG_TOML
     # sudo drops the admin's $EDITOR; `editor` is Debian's and Ubuntu's default (nano).
     editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or shutil.which("editor")
     if not editor:
         raise CommandError(f"no editor found (set EDITOR), or edit {path}, then run: thinny config apply")
-    original = path.read_text(encoding="utf-8")
+    original = (path if path.exists() or not group else host.LIB / "group.example.toml").read_text(encoding="utf-8")
     fd, name = tempfile.mkstemp(prefix="config-", suffix=".toml")
     copy = Path(name)
     try:
@@ -227,13 +276,13 @@ def edit_config() -> bool:
             except OSError as e:
                 raise CommandError(f"cannot start {editor}: {e.strerror}") from e
             if code != 0:
-                raise CommandError(f"{editor} exited with {code}; config.toml is unchanged")
+                raise CommandError(f"{editor} exited with {code}; {path.name} is unchanged")
             text = copy.read_text(encoding="utf-8")
             if text == original:
-                print("config.toml is unchanged.")
+                print(f"{path.name} is unchanged.")
                 return False
             try:
-                settings.parse(text, source=str(path))
+                settings.parse_group(text, str(path)) if group else settings.parse(text, source=str(path))
             except SettingsError as e:
                 print(e)
                 try:
@@ -241,10 +290,10 @@ def edit_config() -> bool:
                 except EOFError:  # nobody to answer
                     answer = "d"
                 if answer.strip().lower().startswith("d"):
-                    print("Discarded; config.toml is unchanged.")
+                    print(f"Discarded; {path.name} is unchanged.")
                     return False
                 continue
-            write_file(path, text, 0o600)   # it may hold the Telegram manager bot's token
+            write_file(path, text, 0o600)   # it may hold tokens: the Telegram manager bot's, MCP servers'
             return True
     finally:
         copy.unlink(missing_ok=True)
