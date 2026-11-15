@@ -80,6 +80,7 @@ def test_model_lock_is_off_by_default_and_then_needs_no_allowed_models():
     ({"container__cpu": 0}, "container.cpu must be at least 1"),
     ({"container__disk_gb": 1.5}, "container_disk_gb must be int"),
     ({"network__interface": "eth0; drop"}, "network.interface must be an interface name"),
+    ({"telegram__manager_token": "@acme_hermes_bot"}, "telegram.manager_token must be"),
 ])
 def test_invalid_settings_are_refused(changes, message):
     with pytest.raises(SettingsError, match=message):
@@ -94,6 +95,12 @@ def test_container_limits_and_webapp_look():
 
 def test_lan_address_is_optional_without_lan_default():
     assert parse(site(access__lan_address=None, access__default="tailscale")).lan_address == ""
+
+
+def test_telegram_is_off_without_a_manager_bot():
+    assert parse(site()).telegram_manager_token == ""
+    token = "8721778198:AAH" + "x" * 32
+    assert parse(site(telegram__manager_token=token)).telegram_manager_token == token
 
 
 def test_the_tunnel_port_is_off_by_default():

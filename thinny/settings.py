@@ -44,6 +44,7 @@ class Settings:
     tunnel_port: int = 0
     network_interface: str = "eth0"
     blocked_networks: tuple[str, ...] = ()
+    telegram_manager_token: str = ""
 
 
 # (section, key) in site.toml -> Settings field
@@ -73,6 +74,7 @@ KEYS = {
     ("access", "tunnel_port"): "tunnel_port",
     ("network", "interface"): "network_interface",
     ("network", "blocked_networks"): "blocked_networks",
+    ("telegram", "manager_token"): "telegram_manager_token",
 }
 
 
@@ -181,3 +183,5 @@ def _validate(s: Settings, source: str) -> None:
             ipaddress.ip_network(network)
         except ValueError:
             fail(f"network.blocked_networks: {network!r} is not a network")
+    if s.telegram_manager_token and not re.fullmatch(r"\d+:[\w-]+", s.telegram_manager_token):
+        fail("telegram.manager_token must be the manager bot's token from @BotFather, like 123456:ABC-xyz")

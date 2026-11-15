@@ -48,11 +48,13 @@ if [ ! -f "$SITE" ]; then
 		/usr/local/sbin/thinny init </dev/tty || { echo "To try again: ${SUDO_USER:+sudo }sh $SRC/install.sh" >&2; exit 1; }
 		echo
 	else
-		install -m 644 "$SRC/site.example.toml" "$SITE"
+		install -m 600 "$SRC/site.example.toml" "$SITE"
 		echo "Edit $SITE (model, LAN address, ...), then run: ${SUDO_USER:+sudo }sh $SRC/install.sh"
 		exit 0
 	fi
 fi
+# Only root reads it: it may hold the Telegram manager bot's token.
+chmod 600 "$SITE"
 
 /usr/local/sbin/thinny setup
 # The commit set up: thinny update installs only a newer one.

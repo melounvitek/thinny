@@ -10,7 +10,7 @@ import socket
 import sys
 from pathlib import Path
 
-from . import host, instances, render, settings, system, update
+from . import host, instances, render, settings, system, telegram, update
 from .registry import Registry
 from .system import CommandError, log
 
@@ -96,6 +96,7 @@ def run() -> None:
         shutil.rmtree(LIB)
     update.SELF_UPDATE_LOCK.unlink(missing_ok=True)
     system.LOCK_FILE.unlink(missing_ok=True)
+    telegram.LOCK.unlink(missing_ok=True)
 
     print("thinny is removed.\n"
           "  The packages stay (Incus, Caddy, btrfs-progs, nftables, curl, Git, Python 3);\n"

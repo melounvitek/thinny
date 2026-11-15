@@ -14,7 +14,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import apply, checks, host, instances, move, settings, system, trace, uninstall, update
+from . import apply, checks, host, instances, move, settings, system, telegram, trace, uninstall, update
 from .registry import Registry, RegistryError
 from .settings import SettingsError, load
 from .system import CommandError, lock, write_file
@@ -77,6 +77,8 @@ def main(argv: list[str] | None = None) -> int:
     lck.add_argument("models", nargs="*", help="model ids it allows, the first by default (default: the one it uses)")
     inst.add_parser("unlock", help="let an instance's users choose their models, whatever the site's lock") \
         .add_argument("name")
+    inst.add_parser("telegram", help="give an instance a Telegram bot its user creates with a link (see README)") \
+        .add_argument("name")
     trc = inst.add_parser("trace-sheet", help="send an instance's access trace to its users' Google Sheet too")
     trc.add_argument("name")
     trc.add_argument("url", metavar="URL|off", help="the URL of the sheet's script (see README, Access trace)")
@@ -127,6 +129,9 @@ def main(argv: list[str] | None = None) -> int:
             return checks.status(s, Registry.load())
         if command == "instance list":
             instances.list_instances(Registry.load())
+            return 0
+        if command == "instance telegram":   # takes thinny's lock only once its user created the bot
+            telegram.connect(s, a.name)
             return 0
         # Before the lock: the install.sh of a new thinny runs `thinny setup`.
         if command == "update" and not a.dry_run and (s.auto_update or not a.scheduled) and update.update_thinny():
@@ -229,7 +234,7 @@ def edit_config() -> bool:
                     print("Discarded; site.toml is unchanged.")
                     return False
                 continue
-            write_file(path, text)
+            write_file(path, text, 0o600)   # it may hold the Telegram manager bot's token
             return True
     finally:
         copy.unlink(missing_ok=True)
@@ -276,7 +281,7 @@ def init_config() -> None:
     except (EOFError, KeyboardInterrupt):
         print()
         raise CommandError("nothing written") from None
-    write_file(path, text)
+    write_file(path, text, 0o600)
     print(f"Wrote {path}.")
 
 
