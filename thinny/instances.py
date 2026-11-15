@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 
 from . import host, render, trace
 from .registry import Instance, Registry, RegistryError
-from .settings import ACCESS_METHODS, Settings
+from .settings import ACCESS_METHODS, Settings, group_file
 from .system import (INSTANCE_UID, STATE_DIR, CommandError, as_user, as_user_interactive, gateway_active, http_status,
                      in_container, log, read_user_file, run, step, tailscale_name, uid_of, write_file,
                      write_user_file)
@@ -97,7 +97,11 @@ def devices(name: str) -> dict[str, dict[str, str]]:
 
 
 def settings_for(s: Settings, inst: Instance) -> Settings:
-    """The settings with the instance's own model lock, when it has one."""
+    """The settings with the Hermes settings of the instance's group and its own model lock, when it has them."""
+    if inst.group:
+        if inst.group not in s.groups:
+            raise CommandError(f"{inst.name} is in the group {inst.group}, but {group_file(inst.group)} is missing")
+        s = dataclasses.replace(s, hermes=s.groups[inst.group])
     if inst.lock is None:
         return s
     if not inst.lock:
@@ -113,13 +117,27 @@ def update_policy(s: Settings, inst: Instance) -> None:
         if inst.state == "active":
             log(f"{inst.name}: its policy changes: its gateway restarts")
             mark_restart([inst.name])  # before the change, so a failure keeps the intent
-        if s.model_lock:
-            # Before the lock pins them: Hermes drops pinned keys from an instance's config whenever it
-            # saves it, and writes a `model:` section left empty as invalid YAML (v0.23.1). Pending
-            # instances too: a resumed add would start its gateway under the lock.
-            for key in starting_model(s):
-                hermes(inst.name, ["config", "unset", key], check=False)  # 1 when not set
+        # Before the policy pins them: Hermes drops pinned keys from an instance's config whenever it saves it,
+        # writes a `model:` section left empty as invalid YAML (v0.23.1), and refuses to unset them once pinned.
+        # Pending instances too: a resumed add would start its gateway under the policy.
+        for key in pinned_keys(s):
+            hermes(inst.name, ["config", "unset", key], check=False)  # 1 when not set
     ensure_policy(s, inst)
+
+
+def pinned_keys(s: Settings) -> list[str]:
+    """The keys of the instance's own config its policy pins: the model lock's, and its group's (each a
+    dotted key, as Hermes counts them)."""
+    keys = list(starting_model(s)) if s.model_lock else []
+
+    def walk(config: dict, prefix: str) -> None:
+        for key, value in config.items():
+            if isinstance(value, dict) and value:
+                walk(value, f"{prefix}{key}.")
+            else:
+                keys.append(prefix + key)
+    walk(s.hermes, "")
+    return keys
 
 
 def ensure_policy(s: Settings, inst: Instance) -> None:

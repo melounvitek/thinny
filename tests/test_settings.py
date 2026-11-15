@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from thinny.settings import Settings, SettingsError, fill, parse
+from thinny.settings import Settings, SettingsError, fill, load, parse, parse_group
 
 EXAMPLE = Path(__file__).parent.parent / "config.example.toml"
 
@@ -112,3 +112,21 @@ def test_telegram_is_off_without_a_manager_bot():
 def test_the_tunnel_port_is_off_by_default():
     assert parse(site()).tunnel_port == 0
     assert parse(site(access__tunnel_port=8080)).tunnel_port == 8080
+
+
+def test_groups_are_the_toml_files_next_to_config_toml(tmp_path):
+    (tmp_path / "config.toml").write_text(site())
+    (tmp_path / "groups").mkdir()
+    (tmp_path / "groups/sales.toml").write_text('display.language = "cs"\n\n[mcp_servers.github]\ncommand = "npx"\n')
+    assert load(tmp_path / "config.toml").groups == \
+        {"sales": {"display": {"language": "cs"}, "mcp_servers": {"github": {"command": "npx"}}}}
+
+
+@pytest.mark.parametrize("text, message", [
+    ("[webapp]\nhost = \"0.0.0.0\"\n", "webapp is thinny's"),   # each instance's address and port
+    ("cron.start = 2026-11-15\n", "no dates"),
+    ("display = \n", "sales.toml"),
+])
+def test_a_group_refuses_what_its_policy_cannot_hold(text, message):
+    with pytest.raises(SettingsError, match=message):
+        parse_group(text, "/etc/thinny/groups/sales.toml")

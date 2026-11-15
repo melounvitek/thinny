@@ -468,3 +468,30 @@ def test_config_edit_without_an_editor_says_what_to_do(server, monkeypatch, caps
     assert cli.main(["config", "edit"]) == 1
     assert f"edit {site}, then run: thinny config apply" in capsys.readouterr().err
     assert calls == []
+
+
+def test_config_edit_starts_a_new_group_from_the_example_and_applies_it(server, monkeypatch, tmp_path):
+    _, calls = server
+    example = (host.LIB / "group.example.toml").read_text()
+    started = editor(monkeypatch, example + 'display.language = "cs"\n')
+    assert cli.main(["config", "edit", "--group", "sales"]) == 0
+    group = tmp_path / "groups/sales.toml"
+    assert group.read_text().endswith('\ndisplay.language = "cs"\n')
+    assert group.stat().st_mode & 0o777 == 0o600   # its MCP servers may hold tokens
+    assert settings.load(tmp_path / "config.toml").groups == {"sales": {"display": {"language": "cs"}}}
+    assert calls == [("apply", "m1")]
+
+    editor(monkeypatch, example)   # a new group left as the example
+    assert cli.main(["config", "edit", "--group", "support"]) == 0
+    assert not (tmp_path / "groups/support.toml").exists() and len(calls) == 1
+
+
+def test_config_edit_refuses_an_invalid_group(server, monkeypatch, capsys, tmp_path):
+    _, calls = server
+    editor(monkeypatch, "[webapp]\nhost = \"0.0.0.0\"\n")
+    monkeypatch.setattr("builtins.input", lambda prompt: "d")
+    assert cli.main(["config", "edit", "--group", "sales"]) == 0
+    assert "webapp is thinny's" in capsys.readouterr().out
+    assert cli.main(["config", "edit", "--group", "../sales"]) == 1
+    assert "invalid name '../sales'" in capsys.readouterr().err
+    assert not (tmp_path / "groups").exists() and calls == []

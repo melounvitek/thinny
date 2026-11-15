@@ -29,7 +29,7 @@ DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y -q \
 echo "Installing thinny into $LIB"
 mkdir -p "$LIB"
 rm -rf "$LIB/thinny"
-cp -r "$SRC/thinny" "$SRC/bin" "$SRC/config.example.toml" "$LIB/"
+cp -r "$SRC/thinny" "$SRC/bin" "$SRC/config.example.toml" "$SRC/group.example.toml" "$LIB/"
 # In place: every instance's container mounts files/model-guard, and a replaced directory would
 # leave them an empty one. Gateways load a changed model guard at their next restart.
 mkdir -p "$LIB/files"

@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 
 from . import apply, checks, host, instances, move, settings, system, telegram, trace, uninstall, update
-from .registry import Registry, RegistryError
+from .registry import Registry, RegistryError, validate_name
 from .settings import SettingsError, load
 from .system import CommandError, lock, write_file
 
@@ -50,7 +50,8 @@ def main(argv: list[str] | None = None) -> int:
                      help="as the nightly timer: respect auto_update, wait for min_release_age_hours")
     cfg = sub.add_parser("config", help="the server settings, /etc/thinny/config.toml")
     cfg = cfg.add_subparsers(dest="action", required=True, metavar="action")
-    cfg.add_parser("edit", help="edit config.toml in $VISUAL or $EDITOR, check it, then apply it")
+    cfg.add_parser("edit", help="edit config.toml (or a group's file) in $VISUAL or $EDITOR, check it, then apply it") \
+        .add_argument("--group", help="the group's Hermes settings instead, /etc/thinny/groups/<group>.toml")
     cfg.add_parser("apply", help="bring the server in line with config.toml after editing it")
     inst = sub.add_parser("instance", help="instances, one container each")
     inst = inst.add_subparsers(dest="action", required=True, metavar="action")
@@ -123,8 +124,10 @@ def main(argv: list[str] | None = None) -> int:
                 uninstall.run()
             return 0
         if command == "config edit":
+            if a.group:
+                validate_name(a.group)
             with lock():  # before editing: a running update says so now, not after the edit
-                if edit_config():
+                if edit_config(a.group):
                     apply.apply(load())
             return 0
         s = load()
@@ -208,14 +211,15 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
-def edit_config() -> bool:
-    """Edit a copy of config.toml, like visudo: only a valid change replaces it. True when it did."""
-    path = settings.CONFIG_TOML
+def edit_config(group: str | None = None) -> bool:
+    """Edit a copy of config.toml, or of a group's file (a new one starts as the example), like visudo: only a
+    valid change replaces it. True when it did."""
+    path = settings.group_file(group) if group else settings.CONFIG_TOML
     # sudo drops the admin's $EDITOR; `editor` is Debian's and Ubuntu's default (nano).
     editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or shutil.which("editor")
     if not editor:
         raise CommandError(f"no editor found (set EDITOR), or edit {path}, then run: thinny config apply")
-    original = path.read_text(encoding="utf-8")
+    original = (path if path.exists() or not group else host.LIB / "group.example.toml").read_text(encoding="utf-8")
     fd, name = tempfile.mkstemp(prefix="config-", suffix=".toml")
     copy = Path(name)
     try:
@@ -227,13 +231,13 @@ def edit_config() -> bool:
             except OSError as e:
                 raise CommandError(f"cannot start {editor}: {e.strerror}") from e
             if code != 0:
-                raise CommandError(f"{editor} exited with {code}; config.toml is unchanged")
+                raise CommandError(f"{editor} exited with {code}; {path.name} is unchanged")
             text = copy.read_text(encoding="utf-8")
             if text == original:
-                print("config.toml is unchanged.")
+                print(f"{path.name} is unchanged.")
                 return False
             try:
-                settings.parse(text, source=str(path))
+                settings.parse_group(text, str(path)) if group else settings.parse(text, source=str(path))
             except SettingsError as e:
                 print(e)
                 try:
@@ -241,10 +245,10 @@ def edit_config() -> bool:
                 except EOFError:  # nobody to answer
                     answer = "d"
                 if answer.strip().lower().startswith("d"):
-                    print("Discarded; config.toml is unchanged.")
+                    print(f"Discarded; {path.name} is unchanged.")
                     return False
                 continue
-            write_file(path, text, 0o600)   # it may hold the Telegram manager bot's token
+            write_file(path, text, 0o600)   # it may hold tokens: the Telegram manager bot's, MCP servers'
             return True
     finally:
         copy.unlink(missing_ok=True)

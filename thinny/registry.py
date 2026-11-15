@@ -37,6 +37,7 @@ class Instance:
     lock_provider: str = ""         # the provider of its own lock
     trace_sheet: str = ""           # the Apps Script URL of the Google Sheet that gets its access trace too
     frontend: str = "webapp"        # what its users open: Hermes's Webapp, or webui (hermes-webui)
+    group: str = ""                 # the group whose Hermes settings its policy pins
 
 
 def validate_name(name: str) -> None:

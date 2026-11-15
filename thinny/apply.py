@@ -20,6 +20,8 @@ def setup(s: Settings) -> None:
 def apply(s: Settings) -> None:
     reg = Registry.load()
     active = [inst for inst in reg.current() if inst.state == "active"]
+    for inst in reg.current():
+        instances.settings_for(s, inst)   # refuses a member of a missing group before anything changes
     host.firewall(s)  # before anything could start a container
     host.install_units(s)
     host.ensure_profile(s)
