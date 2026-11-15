@@ -521,3 +521,55 @@ def test_instances_join_and_leave_groups_that_exist(server, monkeypatch, tmp_pat
     assert cli.main(["config", "edit", "--group", "none"]) == 1
     assert "'none' means no group" in capsys.readouterr().err
     assert len(calls) == 7
+
+
+@pytest.fixture
+def sales(server, monkeypatch):
+    """Instances in the group sales, in port order: alice and dave active, bob disabled, carol in no group."""
+    reg = Registry({"dave": Instance("dave", 9123, "local", state="active", group="sales"),
+                    "alice": Instance("alice", 9120, "local", state="active", group="sales"),
+                    "bob": Instance("bob", 9121, "local", state="disabled", group="sales"),
+                    "carol": Instance("carol", 9122, "local", state="active")})
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
+    done = []
+    monkeypatch.setattr(instances, "restart_all",
+                        lambda s, insts, reg: done.append(("restart", [inst.name for inst in insts])))
+    monkeypatch.setattr(instances, "lock", lambda s, reg, name, models: done.append(("lock", name, models)))
+    monkeypatch.setattr(instances, "unlock", lambda s, reg, name: done.append(("unlock", name)))
+    monkeypatch.setattr(instances, "limits", lambda reg, name, *limits: done.append(("limits", name, *limits)))
+    monkeypatch.setattr(instances, "login", lambda reg, name, provider: done.append(("login", name, provider)))
+    monkeypatch.setattr(move, "move", lambda s, reg, names, to: done.append(("move", names, to)))
+    return done
+
+
+def test_commands_take_the_active_instances_of_a_group(sales):
+    for args in (["restart"], ["lock", "m2", "m3"], ["lock"], ["unlock"], ["limits", "--cpu", "4"],
+                 ["login", "--provider", "openai"], ["move", "--to", "new"]):
+        assert cli.main(["instance", *args, "--group", "sales"]) == 0
+    assert sales == [("restart", ["alice", "dave"]),
+                     ("lock", "alice", ["m2", "m3"]), ("lock", "dave", ["m2", "m3"]),   # models, not names
+                     ("lock", "alice", []), ("lock", "dave", []),
+                     ("unlock", "alice"), ("unlock", "dave"),
+                     ("limits", "alice", 4, None, None), ("limits", "dave", 4, None, None),
+                     ("login", "alice", "openai-codex"), ("login", "dave", "openai-codex"),
+                     ("move", ["alice", "dave"], "new")]
+
+
+@pytest.mark.parametrize("args, message", [
+    (["restart", "carol", "--group", "sales"], "name the instances, or give --group"),   # not both
+    (["unlock"], "name the instances, or give --group"),
+    (["limits", "--cpu", "4"], "name the instances, or give --group"),
+    (["move", "carol", "--group", "sales", "--to", "new"], "name the instances to move, or give --all or --group"),
+    (["move", "--all", "--group", "sales", "--to", "new"], "name the instances to move, or give --all or --group"),
+])
+def test_a_group_and_names_do_not_mix(sales, capsys, args, message):
+    assert cli.main(["instance", *args]) == 1
+    assert message in capsys.readouterr().err
+    assert sales == []
+
+
+def test_a_group_without_active_instances_selects_nothing(sales, capsys):
+    for args in (["restart"], ["move", "--to", "new"]):   # not every instance
+        assert cli.main(["instance", *args, "--group", "support"]) == 1
+        assert "no active instance is in the group support" in capsys.readouterr().err
+    assert sales == []

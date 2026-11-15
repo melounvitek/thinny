@@ -71,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     gset.add_argument("group", metavar="GROUP|none")
     lim = inst.add_parser("limits", help="change an instance's CPU, memory or disk limits",
                           description="Limits not given stay as they are.")
-    lim.add_argument("name")
+    lim.add_argument("name", nargs="?")
     for parser in (add, lim):
         parser.add_argument("--cpu", type=at_least_1, help="CPUs")
         parser.add_argument("--memory-mb", type=at_least_1, help="memory in MiB")
@@ -83,13 +83,13 @@ def main(argv: list[str] | None = None) -> int:
     frn.add_argument("name")
     frn.add_argument("frontend", choices=settings.FRONTENDS)
     lgn = inst.add_parser("login", help="sign an instance in to a model provider (device code)")
-    lgn.add_argument("name")
+    lgn.add_argument("name", nargs="?")
     lgn.add_argument("--provider", choices=PROVIDERS, help="(default: asked)")
     lck = inst.add_parser("lock", help="lock an instance to models of the provider it uses, whatever the server's lock")
-    lck.add_argument("name")
+    lck.add_argument("name", nargs="?", help="(none with --group)")
     lck.add_argument("models", nargs="*", help="model ids it allows, the first by default (default: the one it uses)")
-    inst.add_parser("unlock", help="let an instance's users choose their models, whatever the server's lock") \
-        .add_argument("name")
+    unl = inst.add_parser("unlock", help="let an instance's users choose their models, whatever the server's lock")
+    unl.add_argument("name", nargs="?")
     inst.add_parser("telegram", help="give an instance a Telegram bot its user creates with a link (see README)") \
         .add_argument("name")
     trc = inst.add_parser("trace-sheet", help="send an instance's access trace to its users' Google Sheet too")
@@ -104,6 +104,8 @@ def main(argv: list[str] | None = None) -> int:
     mov = inst.add_parser("move", help="move instances to another thinny server over SSH (experimental)")
     mov.add_argument("names", nargs="*")
     mov.add_argument("--all", action="store_true", help="every active instance")
+    for parser in (lim, lgn, lck, unl, rst, mov):
+        parser.add_argument("--group", help="its active instances instead of named ones")
     mov.add_argument("--to", required=True, metavar="[USER@]HOST")
     rcv = inst.add_parser("receive")  # without help, so not listed: `move` runs it on the other server
     rcv.add_argument("name")
@@ -189,23 +191,29 @@ def main(argv: list[str] | None = None) -> int:
                     check_group(s, a.group)
                 instances.set_group(s, reg, a.name, "" if a.group == "none" else a.group)
             elif command == "instance limits":
-                instances.limits(reg, a.name, a.cpu, a.memory_mb, a.disk_gb)
+                for name in chosen(reg, [a.name] if a.name else [], a.group):
+                    instances.limits(reg, name, a.cpu, a.memory_mb, a.disk_gb)
             elif command == "instance access":
                 instances.change_access(s, reg, a.name, *parse_access(a.access))
             elif command == "instance frontend":
                 instances.change_frontend(s, reg, a.name, a.frontend)
             elif command == "instance login":
-                if a.provider:
-                    provider = PROVIDERS[a.provider][0]
-                else:
-                    provider, _ = instances.model_of(s, reg, a.name)
-                    if not instances.settings_for(s, reg.get(a.name)).model_lock:
-                        provider = ask_provider(f"Which provider should {a.name} sign in to?", provider)
-                instances.login(reg, a.name, provider)
+                for name in chosen(reg, [a.name] if a.name else [], a.group):   # one after another
+                    if a.provider:
+                        provider = PROVIDERS[a.provider][0]
+                    else:
+                        provider, _ = instances.model_of(s, reg, name)
+                        if not instances.settings_for(s, reg.get(name)).model_lock:
+                            provider = ask_provider(f"Which provider should {name} sign in to?", provider)
+                    instances.login(reg, name, provider)
             elif command == "instance lock":
-                instances.lock(s, reg, a.name, a.models)
+                if a.group and a.name:   # with --group, each is a model
+                    a.name, a.models = None, [a.name, *a.models]
+                for name in chosen(reg, [a.name] if a.name else [], a.group):
+                    instances.lock(s, reg, name, a.models)
             elif command == "instance unlock":
-                instances.unlock(s, reg, a.name)
+                for name in chosen(reg, [a.name] if a.name else [], a.group):
+                    instances.unlock(s, reg, name)
             elif command == "instance trace-sheet":
                 trace.connect_sheet(reg, a.name, a.url)
             elif command == "instance reset-password":
@@ -215,12 +223,12 @@ def main(argv: list[str] | None = None) -> int:
             elif command == "instance remove":
                 instances.remove(s, reg, a.name)
             elif command == "instance restart":
-                targets = [reg.get(n) for n in a.names] if a.names else reg.current()
+                targets = [reg.get(n) for n in chosen(reg, a.names, a.group)] if a.names or a.group else reg.current()
                 instances.restart_all(s, [t for t in targets if t.state == "active"], reg)
             elif command == "instance move":
-                if bool(a.names) == a.all:
-                    raise CommandError("name the instances to move, or give --all")
-                move.move(s, reg, a.names, a.to)
+                if sum((bool(a.names), a.all, bool(a.group))) != 1:
+                    raise CommandError("name the instances to move, or give --all or --group")
+                move.move(s, reg, [] if a.all else chosen(reg, a.names, a.group), a.to)
             elif command == "instance receive":
                 move.receive(s, reg, a.name, a.access, a.url, tuple(a.release), a.built_ins,
                              None if a.check else sys.stdin.buffer, frontend=a.frontend)
@@ -228,6 +236,18 @@ def main(argv: list[str] | None = None) -> int:
     except (SettingsError, RegistryError, CommandError) as e:
         print(f"thinny: {e}", file=sys.stderr)
         return 1
+
+
+def chosen(reg: Registry, names: list[str], group: str | None) -> list[str]:
+    """The named instances, or the active instances in the group: one or the other."""
+    if bool(names) == bool(group):
+        raise CommandError("name the instances, or give --group")
+    if names:
+        return names
+    members = [inst.name for inst in reg.current() if inst.group == group and inst.state == "active"]
+    if not members:
+        raise CommandError(f"no active instance is in the group {group}")
+    return members
 
 
 def check_group(s: settings.Settings, group: str) -> None:
