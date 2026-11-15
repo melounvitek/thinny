@@ -200,7 +200,8 @@ thinny instance move alice bob --to admin@new-server   # or --all; experimental
   only once.** If `add` fails, fix the cause and run it again: it continues where it stopped.
 - **WebUI** ([hermes-webui](https://github.com/nesquena/hermes-webui), `--frontend webui`) runs on
   the instance's port in place of the Webapp; the gateway keeps running for scheduled jobs and the
-  phone. It starts in `policy.language` and `webapp.theme`, then keeps its users' settings.
+  phone. It starts in `policy.language` and `webapp.theme`, with Graphite colours, large text, only
+  Chat and Todos in the sidebar and a plain message box; then it keeps its users' settings.
   `frontend` switches an instance either way; one added before thinny had WebUI gets a new
   password when it first switches (the Webapp keeps only a hash of it).
 - WebUI takes the password in plain text, in `~/.config/hermes-webui.env` in the container. The

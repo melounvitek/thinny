@@ -161,6 +161,8 @@ class Incus:
             return "", 0 if c["account"] else 1
         if cmd[0] == "cat":
             return c.get("files", {}).get(cmd[1], ""), 0
+        if cmd[:2] == ["sh", "-c"] and "git fetch" in cmd[2] and c.get("github_down"):
+            return "", 128
         if cmd[:2] == ["sh", "-c"] and 'cat > "$1.tmp"' in cmd[2]:   # write_user_file
             c.setdefault("files", {})[cmd[4]] = input
         if cmd[0].endswith("/plugins/hermes-3310/install-asterisk.sh"):   # the .env it reads
@@ -518,9 +520,13 @@ def test_a_new_instance_can_open_webui_instead_of_the_webapp(incus, capsys):
     assert alice["hermes_config"]["webapp.enabled"] == "false"
     assert alice["files"][WEBUI_UNIT] == render.webui_unit("alice", 9120, secure=False)   # http://alice.localhost
     assert incus.ran("systemctl --user enable hermes-webui")
-    # it starts in the site's language and look
-    assert json.loads(alice["files"]["/home/alice/.hermes/webui/settings.json"]) == \
-        {"language": "cs", "theme": "light", "check_for_updates": False}
+    # it starts in the site's language and theme, and a simpler look
+    settings = json.loads(alice["files"]["/home/alice/.hermes/webui/settings.json"])
+    assert (settings["language"], settings["theme"], settings["skin"], settings["font_size"]) == \
+        ("cs", "light", "graphite", "large")
+    assert settings["hidden_tabs"] == ["kanban", "tasks", "skills", "memory", "workspaces", "profiles", "insights", "logs"]
+    assert settings["hide_composer_context"] and settings["hide_composer_profile"] and settings["hide_composer_workspace"]
+    assert settings["check_for_updates"] is False
     # the gateway first (scheduled jobs, the phone), then WebUI on the port the gateway leaves it
     assert incus.where("hermes gateway install") < incus.where("systemctl --user restart hermes-webui")
     out = capsys.readouterr().out
@@ -545,6 +551,15 @@ def test_an_instance_switches_to_webui_and_back_on_its_port(incus):
     assert incus.where("systemctl --user disable --now hermes-webui") < incus.where("hermes gateway restart --yes")
     assert WEBUI_UNIT not in alice["files"]
     assert not incus.ran("restart hermes-webui")
+
+
+def test_a_switch_to_webui_that_cannot_fetch_it_leaves_the_webapp_on(incus):
+    reg = Registry({"alice": Instance("alice", 9120, "local", url="http://alice.localhost:9120/", state="active")})
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {}, "unit": True, "github_down": True}
+    with pytest.raises(CommandError, match="git fetch .* -> exit 128"):
+        instances.change_frontend(S, reg, "alice", "webui")
+    assert reg.get("alice").frontend == "webapp"   # so config apply keeps the Webapp too
+    assert not incus.ran("webapp.enabled") and not incus.ran("hermes-webui.env")
 
 
 @pytest.mark.parametrize("frontend", ["webapp", "webui"])

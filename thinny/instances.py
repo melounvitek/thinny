@@ -619,16 +619,15 @@ def change_access(s: Settings, reg: Registry, name: str, access: str, url: str =
 
 def change_frontend(s: Settings, reg: Registry, name: str, frontend: str) -> None:
     inst = _active(reg, name)
-    inst.frontend = frontend
-    reg.save()   # first: config apply and a repeat finish the switch
-    if frontend == "webui":
+    if frontend == "webui":   # first: until the switch is saved, config apply keeps the Webapp
         install_webui(name)
-    password = ensure_sign_in(inst)
+    inst.frontend = frontend
+    if password := ensure_sign_in(inst):
+        print(f"{name}: new password: {password}   (for both frontends; shown once)")
+    reg.save()   # then config apply and a repeat finish the switch
     configure_webapp(s, inst)
     start_or_restart_gateway(s, inst)
     print(f"{name}: {FRONTEND_NAMES[frontend]} at {inst.url}")
-    if password:
-        print(f"  Password: {password}   (new, for both frontends; shown once)")
 
 
 def limits(reg: Registry, name: str, cpu: int | None, memory_mb: int | None, disk_gb: int | None) -> None:

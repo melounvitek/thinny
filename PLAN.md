@@ -259,7 +259,10 @@ accounts on a separate v0.23.0 install, updated it to v0.23.1 and rebooted the s
   the managed model lock does not narrow it, model-guard still refuses the turn, but not WebUI's
   chat titles **[src]**.
 - Theme and language: the server's `settings.json` wins in a browser without its own choice
-  **[src, tested]**.
+  **[src, tested]**. Its server refuses the GitHub and Codex skins its picker offers: they stay in
+  the browser, the server keeps `default` (v0.52.678, also its master) **[src, tested]**. thinny
+  starts it with Graphite, large text, only Chat and Todos in the sidebar and a plain message box
+  (the look the admin chose on the test server).
 - Not addressed: 5 failed sign-ins a minute per client, and behind the proxy device every client
   is 127.0.0.1; a built-in terminal that cannot be turned off; public share links **[src]**.
 

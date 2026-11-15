@@ -143,9 +143,15 @@ WantedBy=default.target
 
 
 def webui_settings(s: Settings) -> dict:
-    """WebUI's settings for an instance that starts using it (keys of its settings.json); then its users'."""
-    # Its own update check offers updates of WebUI and Hermes beyond the releases thinny installs.
-    return {"language": s.language, "theme": s.theme, "check_for_updates": False}
+    """WebUI's settings for an instance that starts using it (keys of its settings.json); then its users'.
+    A simpler look than its own: large text, Chat and Todos only in the sidebar, a plain message box."""
+    return {"language": s.language, "theme": s.theme,
+            "skin": "graphite",   # its server refuses the GitHub and Codex skins its picker offers (v0.52.678)
+            "font_size": "large",
+            "hidden_tabs": ["kanban", "tasks", "skills", "memory", "workspaces", "profiles", "insights", "logs"],
+            "hide_composer_context": True, "hide_composer_profile": True, "hide_composer_workspace": True,
+            # its own update check offers WebUI and Hermes beyond the releases thinny installs
+            "check_for_updates": False}
 
 
 def host_for_url(address: str) -> str:

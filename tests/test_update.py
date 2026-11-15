@@ -146,6 +146,23 @@ def test_an_interrupted_webui_update_goes_on_the_next_night(server):
     assert server.webui_release == ("w2", "d2")
 
 
+def test_a_webui_restart_that_failed_is_done_before_its_release_is_recorded(server, monkeypatch):
+    server.release, server.commits = ("v2", "c2"), {"alice": "c2", "bob": "c2"}
+    reg = registry()
+    reg.get("bob").frontend = "webui"
+
+    def broken(s, inst):
+        raise CommandError(f"{inst.name}: gateway not active")
+    monkeypatch.setattr(instances, "_gateway_up", broken)
+    assert update.run(S, reg) == 1
+    assert server.webui_commits["bob"] == "d2" and server.webui_release == ("w1", "d1")
+
+    monkeypatch.setattr(instances, "_gateway_up", server.restart)
+    server.calls.clear()
+    assert update.run(S, reg) == 0
+    assert server.calls == ["restart bob"] and server.webui_release == ("w2", "d2")
+
+
 def test_instances_with_webui_restart_it_after_a_hermes_update(server):
     reg = registry()
     reg.get("bob").frontend = "webui"

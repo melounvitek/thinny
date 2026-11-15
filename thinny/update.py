@@ -161,6 +161,7 @@ def update_webui(s: Settings, reg: Registry, *, dry_run: bool, now: bool) -> tup
             instances.mark_restart([inst.name])
             instances.install_webui(inst.name, commit)
             instances.restart_all(s, [inst], reg)
+    instances.restart_all(s, [], reg)   # one a failed run left at the commit
     host.write_release(tag, commit, host.WEBUI_RELEASE_FILE)
     return "ok", f"updated to {tag}"
 
