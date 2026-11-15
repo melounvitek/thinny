@@ -155,13 +155,13 @@ def update_webui(s: Settings, reg: Registry, *, dry_run: bool, now: bool) -> tup
     if result != "due":
         return result, detail
     commit = host.commit_of(tag, host.WEBUI_REPO)
+    instances.restart_all(s, [], reg)   # first the one a failed run left at the commit
     for inst in users:
         if instances.installed_commit(inst.name, webui=True) != commit:
             log(f"{inst.name}: WebUI {tag}")
             instances.mark_restart([inst.name])
             instances.install_webui(inst.name, commit)
             instances.restart_all(s, [inst], reg)
-    instances.restart_all(s, [], reg)   # one a failed run left at the commit
     host.write_release(tag, commit, host.WEBUI_RELEASE_FILE)
     return "ok", f"updated to {tag}"
 

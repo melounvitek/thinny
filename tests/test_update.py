@@ -142,25 +142,32 @@ def test_an_interrupted_webui_update_goes_on_the_next_night(server):
     server.broken.clear()
     server.calls.clear()
     assert update.run(S, reg) == 0
-    assert server.calls == ["webui bob d2", "restart bob"]   # alice is done
+    # alice is done; bob first gets the restart the failed run owes him
+    assert server.calls == ["restart bob", "webui bob d2", "restart bob"]
     assert server.webui_release == ("w2", "d2")
 
 
-def test_a_webui_restart_that_failed_is_done_before_its_release_is_recorded(server, monkeypatch):
+def test_a_webui_restart_that_failed_comes_before_any_other_instance(server, monkeypatch):
     server.release, server.commits = ("v2", "c2"), {"alice": "c2", "bob": "c2"}
+    server.webui_commits["alice"] = "d1"
     reg = registry()
-    reg.get("bob").frontend = "webui"
+    for name in ("alice", "bob"):
+        reg.get(name).frontend = "webui"
 
     def broken(s, inst):
-        raise CommandError(f"{inst.name}: gateway not active")
+        if inst.name == "alice":
+            raise CommandError("alice: gateway not active")
+        server.restart(s, inst)
     monkeypatch.setattr(instances, "_gateway_up", broken)
     assert update.run(S, reg) == 1
-    assert server.webui_commits["bob"] == "d2" and server.webui_release == ("w1", "d1")
+    assert update.run(S, reg) == 1   # alice's checkout is at d2, her restart still fails
+    assert server.calls == ["webui alice d2"] and server.webui_release == ("w1", "d1")   # bob untouched
 
     monkeypatch.setattr(instances, "_gateway_up", server.restart)
     server.calls.clear()
     assert update.run(S, reg) == 0
-    assert server.calls == ["restart bob"] and server.webui_release == ("w2", "d2")
+    assert server.calls == ["restart alice", "webui bob d2", "restart bob"]
+    assert server.webui_release == ("w2", "d2")
 
 
 def test_instances_with_webui_restart_it_after_a_hermes_update(server):
