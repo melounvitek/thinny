@@ -398,6 +398,13 @@ Debian 13, Incus 6.0.4, from Incus's stable-6.0 source and **[tested]** on the t
   line): `instance-exec` with only the argv as context, `instance-console`. `incus shell` is
   `incus exec -- su -l`. Over the unix socket the requestor is always root, so only the command
   tells thinny's own apart. `incus file` goes through SFTP and sends no event.
+- (2026-11-15) Only incusd's log of API requests shows `incus file` (pull, push, edit, mount):
+  `Handling API request` with `GET /1.0/instances/<name>/sftp` **[tested]**, not which files.
+  `incus monitor --type logging --format json` gets every level, debug too; `--loglevel` works
+  only with the pretty format. Snapshots (`instance-snapshot-created`) and exports
+  (`instance-backup-created`) name the instance only in their source, `/1.0/instances/<name>/...`;
+  the file API's `instance-file-retrieved`, `-pushed` and `-deleted` (other clients than `incus`)
+  give the path. Neither `incus copy` nor `incus publish` names the instance it reads **[src]**.
 - `systemctl restart incus` ends the monitor (websocket close 1006). Restarted 2 s later, it
   missed the execs of the first ~1.5 s after the restart.
 - A disk with `required=false` whose source is missing: the container still starts, and
@@ -538,9 +545,13 @@ Incus                                   pool `default` (btrfs, sparse file, comp
   required) as read-only disks without shift (section 4), and a proxy device from host
   `127.0.0.1:<port>` to the same port inside.
 - Access trace: the hidden `thinny trace` (thinny-trace.service, restarted at once and with
-  every apply) follows Incus's lifecycle events and notes each `instance-exec` and
-  `instance-console` that is not thinny's own: every command thinny runs in a container starts
-  with `env THINNY=1`. Transparency, not a guard: the admin is root. An instance with a Google
+  every apply) follows Incus's lifecycle events and its log of API requests, and notes each
+  `instance-exec`, the console and its log, snapshots, exports, the file API and the SFTP of
+  `incus file`. Every command thinny runs in a container starts with `env THINNY=<its process>`:
+  while that process is Python running `/usr/local/sbin/thinny` (its `/proc/<pid>/exe` and
+  `cmdline`), the trace notes `thinny <arguments> ran its commands in <name>` once per run and
+  instance, and the command in full otherwise. Only the mark of a running thinny hides a command.
+  Transparency, not a guard: the admin is root. An instance with a Google
   Sheet gets each entry as a row too, posted to the sheet's Apps Script web app (only
   `https://script.google.com/macros/s/<id>/exec`, so the server can add rows and nothing else).
   The trace writes each instance entry as a numbered file there (the clock may step back), and a
@@ -852,6 +863,13 @@ before switched to WebUI in 33 s with a new password; a real chat; `reset-passwo
 open session out, the old password refused; back to the Webapp, which took the same password.
 WebUI's release recorded as the one before, `thinny update` moved the instance to the latest and
 restarted it. After `incus restart`, WebUI answered in 9 s.
+
+Wider access trace (2026-11-15): 1 `incus file`, snapshots, exports and the console log; 2 thinny's
+own commands once per run and instance, its mark honoured only while its process runs thinny.
+Server test **[tested]**: the new `entry()` on the real monitor (nothing written) noted `incus file
+pull`, `console --show-log`, `snapshot create`, a stand-in `thinny` once for its two commands, and
+in full both `env THINNY=1 true` and a plain exec. Not run: an export (`instance-backup-created`,
+from the source only) and the installed service.
 
 ## 9. Open questions
 

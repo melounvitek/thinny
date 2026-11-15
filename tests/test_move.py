@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from test_instances import LOCKED, S, incus  # noqa: F401 - incus: the fake Incus fixture
+from test_instances import LOCKED, MARK, S, incus  # noqa: F401 - incus: the fake Incus fixture
 
 from thinny import host, instances, move, render, update
 from thinny.registry import Instance, Registry, RegistryError
@@ -94,7 +94,7 @@ def test_on_a_server_with_the_model_lock_the_model_it_had_goes_at_once(target, i
     # starts with the container, so before waiting for the boot to finish.
     def unsets():
         return [i for i, c in enumerate(incus.calls) if 'HERMES_MANAGED_DIR="$d" hermes config unset' in c]
-    wait = "incus exec alice -- env THINNY=1 systemctl is-system-running --wait"
+    wait = f"incus exec alice -- {MARK} systemctl is-system-running --wait"
     monkeypatch.setattr(instances.time, "sleep", lambda s: None)
     with pytest.raises(CommandError, match="cannot reach the internet"):
         move.receive(LOCKED, target, "alice", "local", "", RELEASE, render.BUILT_INS, archive(internet=False))
