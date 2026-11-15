@@ -1,6 +1,6 @@
 """Instance registry (/var/lib/thinny/instances.json), the source of truth for which instances exist.
 
-Instances are never deleted: a disabled instance stays, so its container, its
+Instances are never deleted: a disabled or removed instance stays, so its name, its
 address and its Webapp port are never handed to another instance.
 """
 
@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 REGISTRY = Path("/var/lib/thinny/instances.json")
-STATES = ("pending", "active", "disabled")
+STATES = ("pending", "active", "disabled", "removed")
 SUBNET = ipaddress.ip_network("10.78.0.0/24")   # container addresses
 NAME_RE = re.compile(r"[a-z][a-z0-9-]{0,30}[a-z0-9]")
 
@@ -99,5 +99,6 @@ class Registry:
         raise RegistryError(f"no free container address left in {SUBNET}")
 
     def current(self) -> list[Instance]:
-        """Instances that are not disabled, in port order."""
-        return sorted((inst for inst in self.instances.values() if inst.state != "disabled"), key=lambda inst: inst.port)
+        """Instances that are neither disabled nor removed, in port order."""
+        return sorted((inst for inst in self.instances.values() if inst.state not in ("disabled", "removed")),
+                      key=lambda inst: inst.port)

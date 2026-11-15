@@ -81,7 +81,8 @@ def main(argv: list[str] | None = None) -> int:
     trc.add_argument("name")
     trc.add_argument("url", metavar="URL|off", help="the URL of the sheet's script (see README, Access trace)")
     for name, text in (("reset-password", "give an instance a new Webapp password"),
-                       ("disable", "stop an instance's container for good, keep its data")):
+                       ("disable", "stop an instance's container for good, keep its data"),
+                       ("remove", "delete a disabled instance's container and data for good")):
         inst.add_parser(name, help=text).add_argument("name")
     rst = inst.add_parser("restart", help="restart gateways one by one (all, or the named instances)")
     rst.add_argument("names", nargs="*")
@@ -174,6 +175,8 @@ def main(argv: list[str] | None = None) -> int:
                 instances.password(s, reg, a.name)
             elif command == "instance disable":
                 instances.disable(s, reg, a.name)
+            elif command == "instance remove":
+                instances.remove(s, reg, a.name)
             elif command == "instance restart":
                 targets = [reg.get(n) for n in a.names] if a.names else reg.current()
                 instances.restart_all(s, [t for t in targets if t.state == "active"], reg)

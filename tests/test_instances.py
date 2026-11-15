@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from thinny import host, instances, render, system, trace
-from thinny.registry import Instance, Registry
+from thinny.registry import Instance, Registry, RegistryError
 from thinny.settings import Settings
 from thinny.system import CommandError
 
@@ -128,6 +128,8 @@ class Incus:
                 return "Error: not a backup", 1
         elif cmd[:2] == ["incus", "start"]:
             self.containers[cmd[2]]["state"] = "RUNNING"
+        elif cmd[:2] == ["incus", "delete"]:
+            del self.containers[cmd[-1]]
         elif cmd[:2] == ["incus", "stop"]:
             if self.graceful_stop_fails and "--force" not in cmd:
                 return "", 1
@@ -482,3 +484,60 @@ def test_disabling_turns_off_autostart_before_stopping_and_forces_a_stuck_contai
     assert incus.index("incus config set alice boot.autostart=false") < incus.index("incus stop alice --timeout 60") \
         < incus.index("incus stop alice --force")
     assert reg.get("alice").state == "disabled" and incus.containers["alice"]["state"] == "STOPPED"
+
+
+@pytest.fixture
+def typed(monkeypatch):
+    """The admin's answer on a terminal; None: no terminal."""
+    def answer(text):
+        monkeypatch.setattr(sys, "stdin", type("Stdin", (), {"isatty": lambda self: text is not None})())
+        monkeypatch.setattr("builtins.input", lambda prompt="": text)
+    return answer
+
+
+def test_removing_a_disabled_instance_deletes_its_container_but_keeps_its_name_and_trace(incus, typed, capsys):
+    reg = Registry({"alice": Instance("alice", 9120, "local", address="10.78.0.1", state="disabled")})
+    incus.containers["alice"] = {"state": "STOPPED"}
+    host.write_policy(S, "alice")
+    (trace.DIR / "alice").mkdir(parents=True)
+    (trace.DIR / "alice/admin-access.log").write_text("2026-11-15T10:00:00+01:00 incus exec alice -- bash\n")
+    typed("alice")
+    instances.remove(S, reg, "alice")
+    assert incus.ran("incus delete --force alice") and "alice" not in incus.containers
+    assert not (host.POLICIES / "alice").exists()
+    assert (trace.DIR / "alice/admin-access.log").exists()
+    assert str(trace.DIR / "alice") in capsys.readouterr().out
+    assert reg.get("alice").state == "removed"
+    with pytest.raises(CommandError, match="alice was removed; names are not reused"):
+        instances.add(S, reg, "alice", "local")
+    with pytest.raises(RegistryError, match="alice is removed"):
+        instances.disable(S, reg, "alice")
+
+
+def test_removing_a_pending_instance_withdraws_its_access(incus, typed, monkeypatch):
+    reg = Registry({"alice": Instance("alice", 9120, "lan", address="10.78.0.1", state="pending")})
+    incus.containers["alice"] = {"state": "RUNNING"}   # its add stopped after the container started
+    published = []
+    monkeypatch.setattr(host, "reconcile_access", lambda s, reg: published.append([i.name for i in reg.current()]))
+    typed("alice")
+    instances.remove(S, reg, "alice")
+    assert "alice" not in incus.containers and published == [[]]
+
+
+def test_an_active_instance_must_be_disabled_before_it_is_removed(incus, typed):
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
+    incus.containers["alice"] = {"state": "RUNNING"}
+    typed("alice")
+    with pytest.raises(CommandError, match="alice is active; disable it first: thinny instance disable alice"):
+        instances.remove(S, reg, "alice")
+    assert "alice" in incus.containers and reg.get("alice").state == "active"
+
+
+@pytest.mark.parametrize("answer", ["bob", "", None])
+def test_nothing_is_removed_unless_the_admin_types_its_name(incus, typed, answer):
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="disabled")})
+    incus.containers["alice"] = {"state": "STOPPED"}
+    typed(answer)
+    with pytest.raises(CommandError, match="nothing removed"):
+        instances.remove(S, reg, "alice")
+    assert "alice" in incus.containers and reg.get("alice").state == "disabled"

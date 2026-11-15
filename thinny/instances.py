@@ -10,6 +10,8 @@ import json
 import math
 import re
 import secrets
+import shutil
+import sys
 import time
 from pathlib import PurePosixPath
 from urllib.parse import urlsplit
@@ -409,8 +411,8 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
         inst = reg.get(name)
         if inst.state == "active":
             raise CommandError(f"{name} already exists (use: thinny instance access {name} ...)")
-        if inst.state == "disabled":
-            raise CommandError(f"{name} was disabled; names are not reused")
+        if inst.state in ("disabled", "removed"):
+            raise CommandError(f"{name} was {inst.state}; names are not reused")
         log(f"resuming the unfinished setup of {name}")
     else:
         check_free_name(name)
@@ -626,12 +628,44 @@ def disable(s: Settings, reg: Registry, name: str) -> None:
     if inst.state == "disabled":
         print(f"{name} is already disabled")
         return
+    if inst.state == "removed":
+        raise RegistryError(f"{name} is removed")
     if container_state(name) is not None:
         stop(name)
     inst.state = "disabled"
     reg.save()
     host.reconcile_access(s, reg)
     print(f"{name} disabled: container stopped, Webapp and agent with it. Its data stays in the container {name}.")
+
+
+def remove(s: Settings, reg: Registry, name: str) -> None:
+    """Once the admin types its name, delete a disabled or pending instance's container, with all its data. Its
+    registry entry stays, so its name, port and address are never reused, and so does its access trace."""
+    inst = reg.get(name)
+    if inst.state == "active":
+        raise CommandError(f"{name} is active; disable it first: thinny instance disable {name}")
+    if inst.state == "removed":
+        print(f"{name} is already removed")
+        return
+    if not sys.stdin.isatty():
+        raise CommandError("no terminal to confirm on; nothing removed")
+    print(f"This deletes {name}'s container, with all its data.")
+    try:
+        answer = input(f"Type its name ({name}) to remove it: ")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        answer = ""
+    if answer.strip() != name:
+        raise CommandError("nothing removed")
+
+    if container_state(name) is not None:
+        run(["incus", "delete", "--force", name])
+    if (host.POLICIES / name).exists():
+        shutil.rmtree(host.POLICIES / name)
+    inst.state = "removed"
+    reg.save()
+    host.reconcile_access(s, reg)   # a pending instance's Webapp may be published
+    print(f"{name} removed. Its access trace stays in {trace.DIR / name}.")
 
 
 def stop(name: str) -> None:
