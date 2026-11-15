@@ -464,7 +464,7 @@ Incus                                   pool `default` (btrfs, sparse file), pro
 ```
 
 - Names, ports and container addresses (`10.78.0.0/24`) are never reused; states `pending`,
-  `active`, `disabled`.
+  `active`, `disabled`, `removed`.
 - Profile `thinny-instance`: root disk with the `disk_gb` quota, `/dev/net/tun`,
   `security.idmap.isolated`, `security.nesting`, `limits.cpu`, `limits.memory`,
   `limits.processes=2000`, `boot.autostart`. Per container: a routed NIC `thinny-<port>`, its
@@ -544,6 +544,9 @@ instance trace-sheet <name> <URL|off>
                                   a test row; the sheet it had gets a last row
 instance disable <name>           autostart off, container stopped (forced after 60 s), access
                                   removed; container and data stay
+instance remove <name>            a disabled or pending instance, once the admin types its name:
+                                  container and policy folder deleted; registry entry and access
+                                  trace stay
 instance list | restart           instances; one-by-one gateway restarts
 instance move <name>... | --all --to [user@]host
                                   experimental: whole containers to another thinny server, one
