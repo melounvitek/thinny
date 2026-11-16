@@ -3,8 +3,9 @@ import os
 import subprocess
 
 import pytest
+from test_dashboard import dashboard_files
 
-from thinny import cli, host, instances, render, settings, system, telegram, uninstall, update
+from thinny import cli, dashboard, host, instances, render, settings, system, telegram, uninstall, update
 from thinny.registry import Instance, Registry
 from thinny.system import CommandError
 
@@ -97,7 +98,7 @@ def server(tmp_path, monkeypatch):
     """thinny installed by bin/install on the server office-server, on a terminal, with an instance in each
     state: carol's add stopped after creating her container, dave's before."""
     srv = Server()
-    for module in (system, instances, host):
+    for module in (system, instances, host, dashboard):
         monkeypatch.setattr(module, "run", srv.run)
     monkeypatch.setattr(host, "tailscale_status", lambda: srv.tailscale)
     monkeypatch.setattr(settings, "CONFIG_TOML", write(tmp_path / "etc/thinny/config.toml"))
@@ -112,6 +113,8 @@ def server(tmp_path, monkeypatch):
     monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: load(system.STATE_DIR / "instances.json")))
     monkeypatch.setattr(system, "LOG_FILE", write(tmp_path / "var/log/thinny.log"))
     monkeypatch.setattr(host, "SYSCTL_FILE", write(tmp_path / "etc/sysctl.d/90-thinny.conf"))
+    monkeypatch.setattr(host, "DASHBOARD_STATE", system.STATE_DIR / "dashboard")
+    dashboard_files(tmp_path, monkeypatch)
     monkeypatch.setattr(host, "SYSTEMD", tmp_path / "etc/systemd/system")
     for unit in UNITS:
         write(host.SYSTEMD / unit)
@@ -160,6 +163,23 @@ def test_uninstall_deletes_every_instance_and_everything_thinny_set_up(server, c
     assert all(uninstall.LIB in files and uninstall.COMMAND in files for files in srv.files)  # a rerun can continue
     assert (host.LIB / "thinny/cli.py").exists()
     assert "apt purge" in out and "until the next reboot" in out
+
+
+def test_uninstall_takes_the_dashboard_back_and_leaves_its_packages(server, monkeypatch, capsys):
+    srv = server
+    monkeypatch.setattr(dashboard.shutil, "which", lambda name: f"/usr/bin/{name}")
+    write(host.DASHBOARD_STATE, "9200 tailscale\n")
+    for path in (dashboard.GRAFANA_SOURCE, dashboard.DISK_METRICS, host.SYSTEMD / "grafana-server.service.d/thinny.conf"):
+        write(path)
+    srv.served.add(9200)
+    assert cli.main(["uninstall"]) == 0
+    assert 9200 not in srv.served
+    assert "systemctl mask --now prometheus.service prometheus-node-exporter.service grafana-server.service" \
+        in srv.calls
+    assert not any(path.exists() for path in (dashboard.GRAFANA_SOURCE, dashboard.DISK_METRICS,
+                                                host.SYSTEMD / "grafana-server.service.d"))
+    assert "Prometheus and Grafana stay installed, masked" in capsys.readouterr().out
+    assert thinny_files() == []
 
 
 def test_tailscale_stops_serving_only_the_instances_ports(server):

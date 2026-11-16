@@ -203,3 +203,45 @@ def test_webui_runs_on_the_instances_port_with_cookies_of_its_own(secure):
     assert ("HERMES_WEBUI_SECURE=1" in unit) == secure
     # its password: without the file, it does not start at all (an optional one would start it open)
     assert "\nEnvironmentFile=%h/.config/hermes-webui.env\n" in unit
+
+
+def test_the_dashboards_services_listen_on_127_0_0_1_only():
+    s = dataclasses.replace(S, dashboard_enabled=True, dashboard_access="lan", dashboard_port=9300,
+                            dashboard_retention_days=14)
+    prometheus = render.prometheus_dropin(s, "/etc/thinny/prometheus.yml")
+    assert "ExecStart=\nExecStart=/usr/bin/prometheus --config.file=/etc/thinny/prometheus.yml " \
+           "--web.listen-address=127.0.0.1:9090" in prometheus
+    assert "--storage.tsdb.retention.time=14d" in prometheus
+    assert "--web.listen-address=127.0.0.1:9100" in render.NODE_EXPORTER_DROPIN
+    grafana = render.grafana_dropin(s, "/etc/thinny/dashboard.env")
+    assert "Environment=GF_SERVER_HTTP_ADDR=127.0.0.1\nEnvironment=GF_SERVER_HTTP_PORT=9300\n" in grafana
+    assert "EnvironmentFile=/etc/thinny/dashboard.env\n" in grafana
+    # no phone home, whatever Grafana's settings
+    assert "IPAddressDeny=any\nIPAddressAllow=localhost\n" in grafana
+    assert "Environment=GF_ANALYTICS_REPORTING_ENABLED=false\n" in grafana
+    assert "Environment=GF_PLUGINS_PREINSTALL_DISABLED=true\n" in grafana
+
+
+@pytest.mark.parametrize("access, secure", [("lan", "true"), ("tailscale", "true"), ("local", "false")])
+def test_grafanas_cookies_are_secure_except_through_the_ssh_tunnel(access, secure):
+    grafana = render.grafana_dropin(dataclasses.replace(S, dashboard_access=access), "/etc/thinny/dashboard.env")
+    assert f"Environment=GF_SECURITY_COOKIE_SECURE={secure}\n" in grafana
+
+
+def test_prometheus_reads_incus_with_the_metrics_certificate():
+    yaml = pytest.importorskip("yaml")
+    config = yaml.safe_load(render.prometheus_config("/etc/thinny/metrics.crt", "/etc/thinny/metrics.key"))
+    incus, node = config["scrape_configs"]
+    assert (incus["scheme"], incus["metrics_path"], incus["static_configs"]) == \
+        ("https", "/1.0/metrics", [{"targets": ["127.0.0.1:8444"]}])
+    assert incus["tls_config"] == {"ca_file": "/var/lib/incus/server.crt", "cert_file": "/etc/thinny/metrics.crt",
+                                   "key_file": "/etc/thinny/metrics.key"}
+    assert node["static_configs"] == [{"targets": ["127.0.0.1:9100"]}]
+
+
+def test_disk_metrics_for_the_node_exporter():
+    text = render.disk_metrics([("alice", 2_000, 30 * 2**30), ("bob", 5, 10)])
+    assert 'thinny_instance_disk_used_bytes{name="alice"} 2000\n' in text
+    assert f'thinny_instance_disk_quota_bytes{{name="alice"}} {30 * 2**30}\n' in text
+    assert 'thinny_instance_disk_quota_bytes{name="bob"} 10\n' in text
+    assert "# TYPE thinny_instance_disk_used_bytes gauge\n" in text and text.endswith("10\n")

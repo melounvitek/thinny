@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import os
 
-from . import host, instances
+from . import dashboard, host, instances
 from .registry import Registry
 from .settings import Settings
 from .system import log
@@ -20,7 +20,8 @@ def setup(s: Settings) -> None:
     if host.ufw_lacks_forward():
         print("ufw blocks the containers' traffic, so instances cannot reach the internet (see README, "
               f"Prerequisites). Run: {sudo}{host.UFW_FORWARD}")
-    lan = s.access_default == "lan" or any(inst.access == "lan" for inst in Registry.load().current())
+    lan = s.access_default == "lan" or any(inst.access == "lan" for inst in Registry.load().current()) or \
+        (host.dashboard_access() or (0, ""))[1] == "lan"
     if lan and (missing := host.ufw_lacks(host.ufw_lan_rules(s))):
         print("ufw blocks office PCs, so they cannot open the Webapps or get the root certificate (see README, "
               "Prerequisites). Run:" + "".join(f"\n  {sudo}{rule}" for rule in missing))
@@ -35,6 +36,7 @@ def apply(s: Settings) -> None:
     host.firewall(s)  # before anything could start a container
     host.install_units(s)
     host.ensure_profile(s)
+    dashboard.apply(s, reg)   # before the instances: a question, if any, comes early
     for inst in reg.current():
         # Without a container, its add stopped early and writes its policy. Also moves containers off the
         # policy all instances once shared.

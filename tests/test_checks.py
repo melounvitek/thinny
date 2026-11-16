@@ -1,11 +1,13 @@
+import base64
 import dataclasses
 import datetime as dt
 import json
+import os
 import subprocess
 
 import pytest
 
-from thinny import checks, host, instances, render, system, trace
+from thinny import checks, dashboard, host, instances, render, system, trace
 from thinny.registry import Instance, Registry
 from thinny.settings import Settings
 
@@ -302,3 +304,93 @@ def test_doctor_points_office_pcs_at_the_copy_of_caddys_root_certificate(tmp_pat
         result = list(checks.caddy(S, reg))[-1]
         assert result[0] == level and str(copy) in result[1]
         assert result[2] == ("" if level == "OK" else "thinny config apply")
+
+
+LISTENING = """\
+LISTEN 0 4096 127.0.0.1:9090 0.0.0.0:* users:(("prometheus",pid=11,fd=7))
+LISTEN 0 4096 127.0.0.1:9100 0.0.0.0:* users:(("prometheus-node",pid=12,fd=3))
+LISTEN 0 4096 127.0.0.1:8444 0.0.0.0:* users:(("incusd",pid=13,fd=21))
+LISTEN 0 4096 127.0.0.1:9200 0.0.0.0:* users:(("grafana",pid=14,fd=9))
+LISTEN 0 4096 192.168.1.10:9200 0.0.0.0:* users:(("caddy",pid=15,fd=8))
+LISTEN 0 4096 100.100.86.53%tailscale0:9200 0.0.0.0:* users:(("tailscaled",pid=16,fd=30))
+LISTEN 0 4096 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=17,fd=3))
+"""
+
+
+@pytest.fixture
+def monitoring(tmp_path, monkeypatch):
+    """The dashboard on at 9200 on the LAN, all well: the test changes the commands' `answers`."""
+    host.DASHBOARD_STATE.write_text("9200 lan\n")
+    monkeypatch.setattr(dashboard, "CERT", tmp_path / "metrics.crt")
+    dashboard.CERT.write_text(f"-----BEGIN CERTIFICATE-----\n{base64.b64encode(b'cert').decode()}\n"
+                              "-----END CERTIFICATE-----\n")
+    monkeypatch.setattr(dashboard, "DISK_METRICS", tmp_path / "thinny.prom")
+    dashboard.DISK_METRICS.write_text(render.disk_metrics([("alice", 1, 2)]))
+    targets = [{"labels": {"job": job}, "health": "up", "lastError": ""} for job in ("incus", "node")]
+    answers = {"systemctl is-active": "active\n" * 4, "ss -Hltnp": LISTENING,
+               "incus config get core.metrics_address": "127.0.0.1:8444\n",
+               "incus config trust list": json.dumps([{"fingerprint": dashboard.fingerprint(), "type": "metrics"}]),
+               "curl -s -m 5 http://127.0.0.1:9090/api/v1/targets": json.dumps({"data": {"activeTargets": targets}})}
+
+    def run(cmd, **kw):
+        line = " ".join(cmd)
+        return subprocess.CompletedProcess(cmd, 0, next((out for start, out in answers.items()
+                                                         if line.startswith(start)), ""), "")
+    for module in (system, dashboard):
+        monkeypatch.setattr(module, "run", run)
+    monkeypatch.setattr(system, "http_status", lambda url: "200" if url == "http://127.0.0.1:9200/api/health" else "000")
+    return answers
+
+
+ON = dataclasses.replace(S, dashboard_enabled=True, dashboard_access="lan")
+
+
+def test_doctor_checks_the_dashboard_only_while_it_is_on(monitoring):
+    assert list(checks.dashboard(S, Registry())) == []
+    assert [(level, message) for level, message, _ in checks.dashboard(ON, Registry())] == [
+        ("OK", "the dashboard's Prometheus, node exporter and Grafana active"),
+        ("OK", "the dashboard listens on 127.0.0.1 only, but where Caddy or Tailscale publish it"),
+        ("OK", "Incus serves its metrics at 127.0.0.1:8444 to Prometheus's certificate"),
+        ("OK", "Prometheus reads Incus's metrics"),
+        ("OK", "Prometheus reads the host's and thinny's"),
+        ("OK", "the instances' disk use is fresh"),
+        ("OK", "Grafana answers (HTTP 200)")]
+
+
+def test_doctor_says_how_to_install_a_dashboard_that_is_on_but_not_installed(monitoring):
+    host.DASHBOARD_STATE.unlink()
+    assert list(checks.dashboard(ON, Registry())) == [
+        ("WARN", "dashboard.enabled is true, but the dashboard is not installed",
+         "thinny config apply (on a terminal: it asks)")]
+
+
+def test_doctor_finds_what_of_the_dashboard_is_amiss(monitoring):
+    monitoring["systemctl is-active"] = "active\ninactive\nactive\nactive\n"
+    monitoring["ss -Hltnp"] = LISTENING.replace("127.0.0.1:9090", "0.0.0.0:9090").replace("127.0.0.1:9200", "*:9200")
+    monitoring["incus config trust list"] = "[]"
+    targets = [{"labels": {"job": "incus"}, "health": "up", "lastError": ""},
+               {"labels": {"job": "node"}, "health": "down", "lastError": "connection refused"}]
+    monitoring["curl -s -m 5 http://127.0.0.1:9090/api/v1/targets"] = json.dumps({"data": {"activeTargets": targets}})
+    old = dt.datetime.now().timestamp() - 20 * 60
+    os.utime(dashboard.DISK_METRICS, (old, old))
+    results = [(level, message) for level, message, _ in checks.dashboard(
+        dataclasses.replace(ON, dashboard_port=9300), Registry())]
+    assert results == [
+        ("WARN", "the dashboard is not as config.toml says"),
+        ("FAIL", "the dashboard's prometheus-node-exporter.service not active"),
+        ("FAIL", "the dashboard listens beyond 127.0.0.1: 0.0.0.0:9090, *:9200"),
+        ("FAIL", "Incus serves no metrics at 127.0.0.1:8444 to Prometheus's certificate"),
+        ("OK", "Prometheus reads Incus's metrics"),
+        ("FAIL", "Prometheus does not read the host's and thinny's: connection refused"),
+        ("WARN", "the instances' disk use is missing or older than 15 minutes"),
+        ("OK", "Grafana answers (HTTP 200)")]
+
+
+def test_doctor_waits_for_prometheus_s_first_reading_after_a_restart(monitoring):
+    targets = [{"labels": {"job": job}, "health": "unknown", "lastError": ""} for job in ("incus", "node")]
+    monitoring["curl -s -m 5 http://127.0.0.1:9090/api/v1/targets"] = json.dumps({"data": {"activeTargets": targets}})
+    results = [(level, message) for level, message, _ in checks.dashboard(ON, Registry())]
+    assert ("WARN", "Prometheus has not read Incus's metrics yet") in results
+    monitoring["curl -s -m 5 http://127.0.0.1:9090/api/v1/targets"] = ""   # it does not answer
+    results = [(level, message) for level, message, _ in checks.dashboard(ON, Registry())]
+    assert ("FAIL", "Prometheus does not read Incus's metrics: Prometheus does not answer") in results

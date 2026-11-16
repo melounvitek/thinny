@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from thinny import apply, cli, host, instances, move, render, settings, system, telegram, trace, update
+from thinny import apply, cli, dashboard, host, instances, move, render, settings, system, telegram, trace, update
 from thinny.registry import Instance, Registry
 
 VALID = '[policy]\nmodel = "m1"\nallowed_models = ["m1"]\n\n[access]\nlan_address = "192.168.1.10"\n'
@@ -27,6 +27,7 @@ def server(tmp_path, monkeypatch):
     monkeypatch.setattr(apply, "apply", lambda s: calls.append(("apply", s.model)))
     monkeypatch.setattr(update, "run", lambda s, reg, **kw: calls.append(("update", kw)) or 0)
     monkeypatch.setattr(update, "update_thinny", lambda: calls.append("thinny") or False)
+    monkeypatch.setattr(dashboard, "renew_key", lambda: calls.append("Grafana's key"))
     return site, calls
 
 
@@ -145,6 +146,7 @@ def test_init_leaves_an_existing_site_toml_alone(server, capsys):
     assert "thinny config edit" in capsys.readouterr().err
 
 
+# Grafana's key first, whatever auto_update says: install.sh's apt-get update would fail on an expired one.
 @pytest.mark.parametrize("args, auto_update, kw, thinny", [
     ([], "false", {"dry_run": False, "now": True}, True),
     (["--dry-run"], "true", {"dry_run": True, "now": True}, False),
@@ -155,7 +157,7 @@ def test_a_manual_update_runs_now_and_only_the_timer_waits(server, args, auto_up
     site, calls = server
     site.write_text(VALID + f"\n[hermes]\nauto_update = {auto_update}\n")
     assert cli.main(["update", *args]) == 0
-    assert calls == ["thinny"] * thinny + [("update", kw)]
+    assert calls == ["Grafana's key"] * (not kw["dry_run"]) + ["thinny"] * thinny + [("update", kw)]
     assert "thinny update --scheduled\n" in render.UPDATE_SERVICE
 
 
@@ -170,7 +172,7 @@ def test_after_installing_a_new_thinny_the_update_goes_on_with_it(server, monkey
     monkeypatch.setattr(cli.os, "execv", execv)
     with pytest.raises(SystemExit):
         cli.main(["update", *args])
-    assert calls == [("exec", "/usr/local/sbin/thinny", ["/usr/local/sbin/thinny", "update", *args])]
+    assert calls == ["Grafana's key", ("exec", "/usr/local/sbin/thinny", ["/usr/local/sbin/thinny", "update", *args])]
 
 
 def test_a_failed_thinny_update_stops_the_update(server, monkeypatch, capsys):
@@ -180,7 +182,7 @@ def test_a_failed_thinny_update_stops_the_update(server, monkeypatch, capsys):
         raise system.CommandError("git pull -> exit 1")
     monkeypatch.setattr(update, "update_thinny", broken)
     assert cli.main(["update"]) == 1
-    assert calls == []
+    assert calls == ["Grafana's key"]
     assert "git pull -> exit 1" in capsys.readouterr().err
 
 

@@ -10,11 +10,13 @@ import datetime as dt
 import json
 import re
 import shutil
+import time
 from pathlib import Path
 
+from . import dashboard as dash
 from . import host, instances, render, system, trace
 from .registry import Instance, Registry
-from .settings import Settings
+from .settings import MONITORING_PORTS, Settings
 
 UPDATE_STATUS = system.STATE_DIR / "update-status.json"
 INCUS_DROPIN = host.SYSTEMD / "incus.service.d/thinny.conf"
@@ -174,8 +176,8 @@ def table_parts(text: str) -> tuple[dict[str, list[str]], dict[str, str]]:
 
 
 def caddy(s: Settings, reg: Registry):
-    """Caddy serves LAN instances and, with a tunnel port, url instances."""
-    lan = any(inst.access == "lan" for inst in active(reg))
+    """Caddy serves LAN instances, the dashboard on the LAN and, with a tunnel port, url instances."""
+    lan = any(inst.access == "lan" for inst in active(reg)) or (host.dashboard_access() or (0, ""))[1] == "lan"
     tunnel = s.tunnel_port and any(inst.access == "url" for inst in active(reg))
     if not (lan or tunnel):
         return
@@ -191,6 +193,58 @@ def caddy(s: Settings, reg: Registry):
         yield (ok(f"Caddy root certificate for office PCs: {host.OFFICE_CA}")
                if ca.exists() and host.OFFICE_CA.exists() and host.OFFICE_CA.read_text() == ca.read_text()
                else warn(f"{host.OFFICE_CA} is missing or not Caddy's root certificate", "thinny config apply"))
+
+
+def dashboard(s: Settings, reg: Registry):
+    """With the dashboard on: its services, nothing of it beyond 127.0.0.1 but Caddy's and Tailscale's sites,
+    Incus's metrics for Prometheus's certificate, Prometheus reading them and the instances' disk use."""
+    if not s.dashboard_enabled:
+        return
+    fix = "thinny config apply"
+    published = host.dashboard_access()
+    if published is None:
+        yield warn("dashboard.enabled is true, but the dashboard is not installed", f"{fix} (on a terminal: it asks)")
+        return
+    if published != (s.dashboard_port, s.dashboard_access):
+        yield warn("the dashboard is not as config.toml says", fix)
+    units = [*dash.SERVICES, "thinny-metrics.timer"]
+    states = system.run(["systemctl", "is-active", *units], check=False).stdout.split()
+    down = [unit for unit, state in zip(units, states) if state != "active"]
+    yield (fail(f"the dashboard's {', '.join(down)} not active", fix) if down
+           else ok("the dashboard's Prometheus, node exporter and Grafana active"))
+    ports = {published[0], *MONITORING_PORTS}
+    exposed = []
+    for line in system.run(["ss", "-Hltnp"], check=False).stdout.splitlines():
+        local = line.split()[3]
+        address, _, port = local.rpartition(":")
+        if int(port) in ports and address not in ("127.0.0.1", "[::1]") and \
+                not re.search(r'users:\(\("(caddy|tailscaled)"', line):
+            exposed.append(local)
+    yield (fail(f"the dashboard listens beyond 127.0.0.1: {', '.join(exposed)}", fix) if exposed
+           else ok("the dashboard listens on 127.0.0.1 only, but where Caddy or Tailscale publish it"))
+    address = system.run(["incus", "config", "get", "core.metrics_address"], check=False).stdout.strip()
+    yield (ok(f"Incus serves its metrics at {address} to Prometheus's certificate")
+           if address == dash.METRICS_ADDRESS and dash.CERT.exists() and dash.fingerprint() in dash.trusted()
+           else fail(f"Incus serves no metrics at {dash.METRICS_ADDRESS} to Prometheus's certificate", fix))
+    out = system.run(["curl", "-s", "-m", "5", "http://127.0.0.1:9090/api/v1/targets"], check=False, timeout=15).stdout
+    try:
+        targets = {target["labels"]["job"]: target for target in json.loads(out)["data"]["activeTargets"]}
+    except (ValueError, KeyError, TypeError):
+        targets = {}
+    for job, what in (("incus", "Incus's metrics"), ("node", "the host's and thinny's")):
+        target = targets.get(job) or {"health": "down", "lastError": "Prometheus does not answer"}
+        if target["health"] == "up":
+            yield ok(f"Prometheus reads {what}")
+        elif target["health"] == "unknown":   # it reads every 30 s, the first time after it started
+            yield warn(f"Prometheus has not read {what} yet", "wait half a minute")
+        else:
+            yield fail(f"Prometheus does not read {what}: {target['lastError']}", "journalctl -u prometheus")
+    fresh = dash.DISK_METRICS.exists() and time.time() - dash.DISK_METRICS.stat().st_mtime < 15 * 60
+    yield (ok("the instances' disk use is fresh") if fresh
+           else warn("the instances' disk use is missing or older than 15 minutes", "journalctl -u thinny-metrics"))
+    code = system.http_status(f"http://127.0.0.1:{published[0]}/api/health")
+    yield (ok(f"Grafana answers (HTTP {code})") if code == "200"
+           else fail(f"Grafana does not answer at 127.0.0.1:{published[0]} (HTTP {code})", "journalctl -u grafana-server"))
 
 
 # ---------- per-instance checks ----------
@@ -320,7 +374,7 @@ def running(s: Settings, inst: Instance):
 
 # ---------- runner ----------
 
-CHECKS = [install, access_trace, prerequisites, firewall, caddy]
+CHECKS = [install, access_trace, prerequisites, firewall, caddy, dashboard]
 INSTANCE_CHECKS = [container, webapp, version, built_ins, bypass]
 
 

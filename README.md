@@ -31,6 +31,8 @@ Status: in development. Design notes: [`PLAN.md`](PLAN.md).
   SSH tunnel.
 - **`thinny status`** for a quick look, **`thinny doctor`** for every isolation and health
   check, each with a fix.
+- **An optional dashboard** with the history of the server's and each instance's CPU, memory,
+  disk and network (see [Dashboard](#dashboard)).
 
 ## Security
 
@@ -52,7 +54,7 @@ private networks or the tailnet, and cannot change the shared policy.
 - Internet access for GitHub, the Hermes and Claude Code installers, `images.linuxcontainers.org`,
   Debian mirrors and the model provider.
 - About 0.4 GB RAM and 3 GB disk per idle instance, plus what its agent, Docker and Claude Code
-  use. WebUI takes about 0.3 GB RAM more.
+  use. WebUI takes about 0.3 GB RAM more, the optional dashboard about 0.3 GB RAM and 2.5 GB disk.
 
 With a sudo account, thinny runs itself with sudo, which asks for your password. On Debian, whose
 `PATH` has `/usr/local/sbin` only for root, type `sudo thinny`. Prefix other commands with `sudo`
@@ -73,7 +75,7 @@ KbdInteractiveAuthentication no
 **A firewall** whose input chain drops by default, and whose forward chain lets the containers
 through (thinny filters them in its own table, but a drop in any chain is final). With LAN
 access, open the Webapp ports (`webapp.port_range`, 9120-9199) and port 80 (the root certificate)
-to office PCs. Example
+to office PCs, and the [dashboard](#dashboard)'s port when it is on the LAN. Example
 `/etc/nftables.conf`, loaded with `nft -f /etc/nftables.conf`:
 
 ```
@@ -91,6 +93,7 @@ table inet filter {
 		ip saddr 192.168.1.0/24 tcp dport 22 accept         # SSH from the office network
 		ip saddr 192.168.1.0/24 tcp dport 9120-9199 accept  # office PCs to the Webapps
 		ip saddr 192.168.1.0/24 tcp dport 80 accept         # and to the root certificate
+		ip saddr 192.168.1.0/24 tcp dport 9200 accept       # and to the dashboard (dashboard.access = "lan")
 	}
 	chain forward {
 		type filter hook forward priority filter; policy drop;
@@ -460,6 +463,54 @@ so allow exactly these two without a password, with `sudo visudo -f /etc/sudoers
 <you> ALL=(root) NOPASSWD: /usr/local/sbin/thinny status, /usr/local/sbin/thinny doctor
 ```
 
+## Dashboard
+
+An optional history, kept for `retention_days`, of each instance's CPU (as a share of its limit), memory
+without file cache, disk use against its quota, disk reads and writes, network, processes and
+out-of-memory kills, and of the server's CPU, memory, disk and storage pool. It sends no alerts.
+
+```toml
+[dashboard]
+enabled = true
+access = "local"        # local | lan | tailscale
+port = 9200             # outside webapp.port_range
+retention_days = 30
+```
+
+Then run `thinny config apply` on a terminal (`thinny config edit` does it too). The first time, it
+lists what it installs and asks: Prometheus and its node exporter from the distribution, Grafana from
+Grafana's apt repository, about 450 MB to download, 2.2 GB of disk plus the history (about 10 MB a
+day), and 0.3 GB of RAM. Without a terminal (`install.sh`, the nightly update) it installs nothing
+and says so.
+
+| `access`    | Address users open                           | Your part |
+| ----------- | -------------------------------------------- | --------- |
+| `local`     | `http://localhost:9200/`                     | `ssh -L 9200:127.0.0.1:9200 <you>@<server>` |
+| `lan`       | `https://<lan_address>:9200/`                | office PCs trust Caddy's certificate (see [Access](#access)), and port 9200 is open to them |
+| `tailscale` | `https://<machine>.<tailnet>.ts.net:9200/`   | as for instances |
+
+Sign in as `admin` with the first password, in `/etc/thinny/dashboard.env` (`sudo cat` it; only root
+reads it). A password changed in Grafana stays in Grafana only.
+
+- **With `lan` or `tailscale`, open it in a browser profile of its own.** Browsers send a site's
+  cookies to every port of its address, so a Webapp opened in the same profile gets the dashboard's
+  sign-in, and its users are root in their container. Through the SSH tunnel, `localhost` shares
+  no cookies with the instances' `<name>.localhost`.
+- Everything is read on the server: Incus's metrics, with a certificate that can read nothing
+  else, the server's own, and each instance's disk use, which thinny writes every 5 minutes.
+  Nothing changes in the containers or their firewall, and they cannot reach the dashboard.
+  Prometheus, its node exporter, Incus's metrics and Grafana listen on 127.0.0.1 only (9090, 9100,
+  8444 and `port`); Caddy or Tailscale publish Grafana.
+- Grafana reaches nothing but the server: no usage reports, update checks or plugin downloads.
+  Plugins cannot be installed from it, and it has no snapshots or public dashboards.
+- Unattended upgrades update Grafana from its repository, new major versions included. Prometheus
+  and its node exporter get the distribution's updates (on Ubuntu they are in universe, whose
+  security fixes come with Ubuntu Pro). The nightly update renews Grafana's signing key.
+- `enabled = false` stops it and takes back its address, Incus's metrics and Grafana's repository.
+  The packages (their services masked), the password and the history stay, and turning it on again
+  asks nothing.
+- `doctor` checks that its services run on 127.0.0.1 only and Prometheus gets every number.
+
 ## Access trace
 
 When someone reaches into an instance's container through Incus, with `incus exec`, `incus shell`,
@@ -529,14 +580,14 @@ thinny uninstall
 It lists the instances and asks you to type the server's hostname. Then it deletes every
 instance's container with all its data, and everything thinny set up: the update timer, the
 access trace, `tailscale serve` of the instances' ports, thinny's Caddyfile (Caddy is disabled),
-the Incus profile and storage pool, the firewall table, `/etc/thinny`, `/etc/hermes`,
-`/var/lib/thinny`, the log, `/etc/sudoers.d/thinny-checks`, the clone in `/usr/local/src/thinny`
-and thinny itself. **There is no undo.** If a step fails, fix the cause and run it again: it
-continues.
+the dashboard's settings, the Incus profile and storage pool, the firewall table, `/etc/thinny`,
+`/etc/hermes`, `/var/lib/thinny`, the log, `/etc/sudoers.d/thinny-checks`, the clone in
+`/usr/local/src/thinny` and thinny itself. **There is no undo.** If a step fails, fix the cause and
+run it again: it continues.
 
-A storage pool that something else uses stays; the output says so. The packages stay installed:
-`apt purge` removes those nothing else uses. IP forwarding and user namespaces stay on until the
-next reboot.
+A storage pool that something else uses stays; the output says so. The packages stay installed (the
+dashboard's with their services masked, and their history): `apt purge` removes those nothing else
+uses. IP forwarding and user namespaces stay on until the next reboot.
 
 ## Extras
 

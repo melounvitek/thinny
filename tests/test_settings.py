@@ -36,6 +36,7 @@ def test_example_parses_once_filled_in():
     s = parse(text)
     assert s.model_lock is False
     assert s.port_range == (9120, 9199)
+    assert (s.dashboard_enabled, s.dashboard_access, s.dashboard_port) == (False, "local", 9200)
 
 
 def test_filling_the_example_keeps_its_comments():
@@ -84,6 +85,16 @@ def test_model_lock_is_off_by_default_and_then_needs_no_model():
     ({"container__disk_gb": 1.5}, "container_disk_gb must be int"),
     ({"network__interface": "eth0; drop"}, "network.interface must be an interface name"),
     ({"telegram__manager_token": "@acme_hermes_bot"}, "telegram.manager_token must be"),
+    ({"dashboard__access": "url"}, "dashboard.access must be one of lan, tailscale, local"),
+    ({"dashboard__enabled": True, "dashboard__access": "lan", "access__default": "local", "access__lan_address": None},
+     "lan_address is required when dashboard.access is lan"),
+    ({"dashboard__enabled": True, "dashboard__port": 9150}, "dashboard.port"),   # a Webapp port
+    ({"dashboard__enabled": True, "dashboard__port": 80}, "dashboard.port"),
+    ({"dashboard__enabled": True, "dashboard__port": 9090}, "dashboard.port"),   # Prometheus's
+    ({"dashboard__enabled": True, "dashboard__port": 8080, "access__tunnel_port": 8080}, "dashboard.port"),
+    ({"dashboard__enabled": True, "webapp__port_range": [9000, 9199]}, "must leave out 8444, 9090, 9100"),
+    ({"dashboard__enabled": True, "access__tunnel_port": 8444}, "must leave out 8444, 9090, 9100"),
+    ({"dashboard__retention_days": 0}, "dashboard.retention_days must be at least 1"),
 ])
 def test_invalid_settings_are_refused(changes, message):
     with pytest.raises(SettingsError, match=message):
@@ -109,6 +120,17 @@ def test_telegram_is_off_without_a_manager_bot():
     assert parse(site()).telegram_manager_token == ""
     token = "8721778198:AAH" + "x" * 32
     assert parse(site(telegram__manager_token=token)).telegram_manager_token == token
+
+
+def test_the_dashboard_is_off_by_default_and_then_only_through_an_ssh_tunnel():
+    s = parse(site())
+    assert (s.dashboard_enabled, s.dashboard_access, s.dashboard_port, s.dashboard_retention_days) == \
+        (False, "local", 9200, 30)
+    s = parse(site(dashboard__enabled=True, dashboard__access="lan", dashboard__port=9300))
+    assert (s.dashboard_enabled, s.dashboard_access, s.dashboard_port) == (True, "lan", 9300)
+    # without it, its defaults take nothing from other settings
+    assert parse(site(webapp__port_range=[9000, 9299])).port_range == (9000, 9299)
+    assert parse(site(access__tunnel_port=9200, access__lan_address=None, access__default="local")).tunnel_port == 9200
 
 
 def test_the_tunnel_port_is_off_by_default():

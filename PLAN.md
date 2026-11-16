@@ -468,6 +468,39 @@ Hermes v0.23.1 **[src]**; managed bots tried with a real manager bot and phone *
 - `getMe` kept answering `can_manage_bots: false` with the mode on, also after the bot was
   created, so thinny does not check it **[tested]**.
 
+### Dashboard (2026-11-16)
+Incus 6.0.0, 6.0.4 and 6.0.5, Prometheus 2.45 and 2.53, node exporter 1.7 to 1.10, Grafana 13.3.1
+**[src]**; on this repository's workstation (Ubuntu 26.04, Incus 6.0.5) as an unprivileged account
+**[tested]**.
+
+- Incus's `/1.0/metrics`, on `core.metrics_address` (8444 by default), takes a certificate added
+  with `--type=metrics`, which reads nothing else (6.0.0 and later). Its `server.crt` names
+  127.0.0.1 and is readable by any account. Answers are cached 8 s; only running instances, all
+  projects, labels `project`, `name` and `type`. Per container: `incus_cpu_seconds_total` (user
+  and system) and `incus_cpu_effective_total` (its `limits.cpu`); memory without file cache is
+  `MemTotal - MemFree - Active_file - Inactive_file`, as `instance list` counts it;
+  `incus_memory_OOM_kills_total`; `incus_procs_total` counts threads too (its `pids.current`, which
+  `limits.processes` limits); network per device inside the container; disk I/O per device, the same
+  bytes on each device under the pool, so the largest; on btrfs no disk use (6.0.2 and later skip
+  it, 6.0.0 reports the whole pool). About 70 series per instance and 26 for the host **[tested]**.
+- Debian's and Ubuntu's `prometheus` and `prometheus-node-exporter` (main on Debian, universe on
+  Ubuntu; Go packages get limited security support) start at install on every address
+  (0.0.0.0:9090, :9100); masked first, they do not. Their `/etc/default` files and
+  `prometheus.yml` are conffiles: edited, upgrades would ask, so drop-ins replace `ExecStart`.
+  A bad config stops Prometheus for good (`Restart=on-abnormal`): `promtool check config` first.
+  The node exporter reads `*.prom` in `/var/lib/prometheus/node-exporter` (a Debian default) and
+  sees the pool's loop mount; with only its cpu, meminfo, filesystem and textfile collectors it
+  has about 420 series. Its recommended collectors package adds five root timers.
+- Grafana's apt repository (`stable` also brings new major versions; its key expires 2027-08-22)
+  is not in unattended upgrades' default origins; `site=apt.grafana.com` allows it. 13.3 downloads
+  381 MiB and takes about 1.9 GiB with the copy of its plugins in `/var/lib/grafana`. It starts no
+  service at install; an upgrade restarts it. Every start downloads plugins from grafana.com unless
+  `preinstall_disabled`; analytics, update checks, the news feed, gravatar, public key retrieval
+  and external snapshots reach out too. Its 14 built-in backend data sources run as processes:
+  825 MiB RSS, 405 MiB with the 13 besides Prometheus disabled **[tested]**. `admin_password` counts
+  only when it creates its database. CSRF and its live websocket compare `Origin` with `Host`, which
+  Caddy, `tailscale serve` and an SSH tunnel keep. Its sign-in cookie is the host's, for every port.
+
 ## 5. Rejected options (and why)
 
 - Docker: docker group = root.
@@ -531,6 +564,14 @@ extras/, tests/     netcup snapshot and nightly watch (run off the server); pyte
 /var/lib/thinny/trace/<name>/admin-access.log  the instance's access trace, written by
                                 thinny-trace.service (also to the journal)
 /var/lib/thinny/trace-unsent/<name>/  each row for its Google Sheet as a file, until sent
+/var/lib/thinny/dashboard       "<port> <access>" while thinny runs the dashboard (and publishes it)
+/var/lib/thinny/dashboard-unfinished  while apply writes the dashboard's settings, until the services run on them
+/etc/thinny/prometheus.yml, metrics.crt, metrics.key (Prometheus's), dashboard.env (Grafana's first
+                                admin password, root only); /etc/systemd/system/{prometheus,
+                                prometheus-node-exporter,grafana-server}.service.d/thinny.conf,
+                                thinny-metrics.{service,timer}; /etc/grafana/provisioning/
+                                {datasources,dashboards}/thinny.yaml; Grafana's apt source, key and
+                                unattended-upgrades origin; /var/lib/prometheus/node-exporter/thinny.prom
 Incus                                   pool `default` (btrfs, sparse file, compressed),
                                         profile `thinny-instance`, one container per
                                         instance, named after it
@@ -567,6 +608,14 @@ Incus                                   pool `default` (btrfs, sparse file, comp
   (`runuser`, clean environment), and files in its home are read and written as that account.
   Output is bounded in size and time: users control every program in their container.
 - `thinny` and the nightly update share one lock.
+- Dashboard (optional, `[dashboard]`): Incus's metrics on 127.0.0.1:8444 for Prometheus's metrics
+  certificate; Prometheus (127.0.0.1:9090, 30 s, `retention_days`), its node exporter (127.0.0.1:9100:
+  CPU, memory, filesystems, thinny's file of each instance's disk use from the hidden `thinny metrics`
+  every 5 minutes) and Grafana (127.0.0.1:`port`, published like a Webapp, only to this host by
+  `IPAddressDeny`, provisioned with the data source and `files/grafana/thinny.json`). `config apply`
+  installs the packages only once the admin agrees on a terminal; masked meanwhile, they start nothing
+  on other addresses. Off, the services are masked and Incus's metrics, the sites and Grafana's
+  repository go; the packages, password and history stay.
 
 ### 6.3 Prerequisites (the admin's)
 
@@ -689,7 +738,8 @@ address is a host of its own, without a path (section 5).
 `[webapp]` port range, `frontend` and the look for new instances (`text_scale` 110), `[access]` `default`,
 `lan_address`, `tunnel_port`, `[network]` `interface` (`eth0`) and `blocked_networks` (public networks;
 private ones and the tailnet are always blocked), `[telegram]` `manager_token` (only root reads
-`config.toml`). `config.example.toml` lists every key.
+`config.toml`), `[dashboard]` `enabled`, `access` (`local`, `lan`, `tailscale`), `port`, `retention_days`.
+`config.example.toml` lists every key.
 
 ### 6.8 Nightly update
 
@@ -749,6 +799,11 @@ private ones and the tailnet are always blocked), `[telegram]` `manager_token` (
   `HERMES_ENABLE_PROJECT_PLUGINS` in `.env`, the gateway unit or WebUI's unit and password file, their own `model-guard` in
   `~/.hermes/plugins` (with the model lock), a gateway unit that does not start their own
   `hermes`.
+- Dashboard, while on: its services and timer active (FAIL), nothing of it listening beyond
+  127.0.0.1 but Caddy's and Tailscale's sites (FAIL), Incus's metrics at 127.0.0.1:8444 for
+  Prometheus's certificate (FAIL), Prometheus reading Incus and the node exporter (FAIL; WARN until
+  its first reading after a start), the instances' disk use under 15 minutes old (WARN), Grafana
+  answering (FAIL); on but not installed, or not as `config.toml` says (WARN).
 - A check that crashes is reported as FAIL; the others still run.
 
 ## 8. Rounds
@@ -872,6 +927,22 @@ pull`, `console --show-log`, `snapshot create`, a stand-in `thinny` once for its
 in full both `env THINNY=1 true` and a plain exec. Not run: an export (`instance-backup-created`,
 from the source only) and the installed service.
 
+Dashboard (2026-11-16): 1 the settings and the files; 2 on and off with `config apply`, the packages
+only once the admin agrees on a terminal; 3 each instance's disk use every 5 minutes, Grafana's key
+renewed nightly; 4 Caddy and Tailscale, `doctor`, `uninstall`; 5 the dashboard, README and this file.
+Sandbox test **[tested]**: the rendered node exporter and Prometheus flags and config (`promtool`),
+Grafana 13.3.1 with the drop-in's settings and the provisioning: no outbound connection, the home page
+at the dashboard, every panel with data from this workstation's Incus metrics. Server test on the same
+workstation (Ubuntu 26.04, Incus 6.0.5) **[tested]**: without a terminal nothing installed; the
+question, then the install in 52 s; Incus's metrics over HTTPS with the metrics certificate; everything
+on 127.0.0.1 but Caddy's site on the LAN address, no connection beyond the host; the dashboard in a
+browser; Tailscale's site added, and removed for local access; off: masked, Incus's metrics address and
+certificate and Grafana's repository gone, `doctor` clean; on again without a question, its history
+kept. Memory with one instance: Grafana 233 MiB, Prometheus 28 MiB, the node exporter 6 MiB. Grafana
+answers about 10 s after it starts (database migrations, provisioning): restarting all three at every
+apply left `doctor` failing and the printed address unanswered, so apply restarts only what changed
+(everything after a run that stopped halfway) and waits until Prometheus and Grafana answer.
+
 ## 9. Open questions
 
 - WebUI after a real Hermes update (its restart with the gateway is tested with fakes only), and
@@ -893,5 +964,6 @@ from the source only) and the installed service.
   anti-spoofing rules come back without restarting the containers?).
 - The storage pool is sized once at install; growing it is manual.
 - Alerting from the server itself (no mail sender today; the watchdog runs off-server).
+- The dashboard on Debian 13 and Ubuntu 24.04, and a Grafana upgrade by unattended upgrades.
 - Per-instance ChatGPT seats versus one API account per organisation (a local proxy such as
   CLIProxyAPI is parked).

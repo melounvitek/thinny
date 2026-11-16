@@ -1,10 +1,11 @@
 import dataclasses
+import io
 import subprocess
 
 import pytest
 from test_instances import LOCKED, incus  # noqa: F401 - incus: the fake Incus fixture
 
-from thinny import apply, host, instances, render, system, trace
+from thinny import apply, dashboard, host, instances, render, system, trace
 from thinny.registry import Instance, Registry
 from thinny.settings import Settings
 from thinny.system import CommandError
@@ -247,6 +248,18 @@ def test_a_member_of_a_missing_group_stops_apply_before_any_change(server, incus
     assert changed == [] and not host.POLICIES.exists()
 
 
+def test_without_a_terminal_apply_does_all_but_install_the_dashboard(server, incus, monkeypatch, capsys):
+    reg, restarted = server
+    reg.instances["alice"] = Instance("alice", 9120, "local", state="active")
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {}}
+    monkeypatch.setattr(dashboard, "run", incus.run)   # Incus's metrics are off, no package installed
+    monkeypatch.setattr(dashboard.sys, "stdin", io.StringIO())   # e.g. the nightly update's install.sh
+    apply.apply(dataclasses.replace(S, dashboard_enabled=True))
+    assert "Run on a terminal: thinny config apply" in capsys.readouterr().err
+    assert not incus.ran("apt-get") and not incus.ran("incus config set")
+    assert host.policy_current(S, "alice") and restarted == ["alice"]
+
+
 @pytest.fixture
 def bare_setup(monkeypatch):
     """setup without Incus, apply, instances or ufw."""
@@ -367,6 +380,14 @@ def test_the_office_hint_has_the_configured_ports_and_sudo(ufw, capsys, monkeypa
         "  sudo ufw allow from 192.168.1.0/24 to any port 9200:9249 proto tcp\n"
         "  sudo ufw allow from 192.168.1.0/24 to any port 80 proto tcp\n"
         "Ready. Add instances with: thinny instance add <name>\n")
+
+
+def test_the_office_hint_opens_the_dashboard_on_the_lan_too(ufw, capsys):
+    host.UFW_CONF.write_text("ENABLED=yes\n")
+    ufw.append(host.UFW_FORWARD)
+    host.DASHBOARD_STATE.write_text("9200 lan\n")
+    apply.setup(dataclasses.replace(LAN, access_default="tailscale"))   # no instance on the LAN
+    assert "\n  ufw allow from 192.168.1.0/24 to any port 9200 proto tcp\n" in capsys.readouterr().out
 
 
 # On no interface (Caddy cannot bind it either), or on one with no network around it

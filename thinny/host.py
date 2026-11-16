@@ -33,6 +33,7 @@ INSTALLER_URL = "https://hermes-agent.nousresearch.com/install.sh"
 CATALOG_URL = "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/plugin-catalog/{}.yaml"
 RELEASE_FILE = STATE_DIR / "release"   # "<tag> <commit>": the Hermes release all instances run
 WEBUI_RELEASE_FILE = STATE_DIR / "webui-release"   # the same for WebUI, of the instances that use it
+DASHBOARD_STATE = STATE_DIR / "dashboard"   # "<port> <access>" while thinny runs the dashboard (dashboard.py)
 
 
 def _github(repo: str, path: str) -> dict:
@@ -159,7 +160,8 @@ def ufw_lacks_forward() -> bool:
 
 
 def ufw_lan_rules(s: Settings) -> list[str]:
-    """The ufw rules that let office PCs, in lan_address's network, open the Webapps and the root certificate."""
+    """The ufw rules that let office PCs, in lan_address's network, open the Webapps, the dashboard and the root
+    certificate."""
     # "2: eth0    inet 192.168.1.191/24 brd ...", nothing when no interface has lan_address
     words = run(["ip", "-o", "addr", "show", "to", s.lan_address], check=False, timeout=10).stdout.split()
     if len(words) < 4:
@@ -168,14 +170,20 @@ def ufw_lan_rules(s: Settings) -> list[str]:
     if office.num_addresses == 1:   # a /32 or /128, or a peer address: no office network around it
         return []
     low, high = s.port_range
+    dashboard_port, dashboard = dashboard_access() or (0, "")
     return [f"ufw allow from {office} to any port {low}:{high} proto tcp",
+            *([f"ufw allow from {office} to any port {dashboard_port} proto tcp"] if dashboard == "lan" else []),
             f"ufw allow from {office} to any port 80 proto tcp"]
 
 
 def reconcile_access(s: Settings, reg: Registry) -> None:
     """Caddy sites for LAN instances and, with a tunnel port, url instances; `tailscale serve` for
-    Tailscale instances; nothing else published in the Webapp port range."""
+    Tailscale instances; nothing else published in the Webapp port range. The dashboard's port too, like an
+    instance's (dashboard.py stops serving an old one over Tailscale)."""
+    dashboard_port, dashboard = dashboard_access() or (0, "")
     lan = [inst.port for inst in reg.current() if inst.access == "lan"]
+    if dashboard == "lan":
+        lan.append(dashboard_port)
     tunnel = [(inst.url, inst.port) for inst in reg.current() if inst.access == "url"] if s.tunnel_port else []
     if lan or tunnel or CADDYFILE.exists() and "thinny" in CADDYFILE.read_text():
         if (lan or tunnel) and not shutil.which("caddy"):
@@ -194,7 +202,9 @@ def reconcile_access(s: Settings, reg: Registry) -> None:
     if status is None:
         return
     wanted = {inst.port for inst in reg.current() if inst.access == "tailscale"}
-    served = _tailscale_served_ports()
+    if dashboard == "tailscale":
+        wanted.add(dashboard_port)
+    served = tailscale_served_ports()
     low, high = s.port_range
     for port in sorted(wanted - served):
         run(["tailscale", "serve", "--bg", f"--https={port}", f"http://127.0.0.1:{port}"])
@@ -203,13 +213,21 @@ def reconcile_access(s: Settings, reg: Registry) -> None:
             run(["tailscale", "serve", f"--https={port}", "off"])
 
 
-def _tailscale_served_ports() -> set[int]:
-    res = run(["tailscale", "serve", "status", "--json"], check=False)
+def tailscale_served_ports() -> set[int]:
+    """The ports `tailscale serve` publishes; an error rather than a guess."""
+    out = run(["tailscale", "serve", "status", "--json"]).stdout
     try:
-        tcp = json.loads(res.stdout or "{}").get("TCP") or {}
-    except json.JSONDecodeError:
-        return set()
-    return {int(port) for port in tcp}
+        return {int(port) for port in json.loads(out or "{}").get("TCP") or {}}
+    except ValueError as e:
+        raise CommandError(f"tailscale serve status --json: {e}") from None
+
+
+def dashboard_access() -> tuple[int, str] | None:
+    """Grafana's port and how users open the dashboard while thinny runs it; None while it is off."""
+    if not DASHBOARD_STATE.exists():
+        return None
+    port, access = DASHBOARD_STATE.read_text().split()
+    return int(port), access
 
 
 def caddy_root_ca() -> Path:
