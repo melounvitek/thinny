@@ -152,6 +152,57 @@ def test_apply_keeps_the_locks_instances_have_on_their_own(server, incus):
     assert host.policy_current(S, "bob") and host.policy_current(LOCKED, "carol")
 
 
+LOCKS_MODEL = {"model.provider": "openai-codex", "agent.reasoning_effort": "high", "model.default": "m1"}
+
+
+def test_turning_the_model_lock_off_leaves_instances_on_the_locks_model(server, incus):
+    reg, restarted = server
+    reg.instances.update(alice=Instance("alice", 9120, "local", state="active"),
+                         bob=Instance("bob", 9121, "local", state="active", lock=["m2"], lock_provider="nous"),
+                         carol=Instance("carol", 9122, "local", state="active", lock=[]),
+                         dave=Instance("dave", 9123, "local", state="active"))
+    for name in reg.instances:
+        incus.containers[name] = {"state": "RUNNING", "devices": {}}
+    apply.apply(LOCKED)
+    incus.containers["carol"]["hermes_config"] = {"model.provider": "nous", "model.default": "hermes-4"}
+    incus.containers["dave"]["hermes_config"] = {"model.default": "gpt-5.5"}   # a model of its own all along
+    restarted.clear()
+
+    # The lock's model comes from its policy: config.toml may have another, or none, without the lock.
+    unlocked = dataclasses.replace(S, model="", reasoning_effort="low")
+    apply.apply(unlocked)
+    assert incus.containers["alice"]["hermes_config"] == LOCKS_MODEL
+    assert "hermes_config" not in incus.containers["bob"]   # still on its own lock
+    assert incus.containers["carol"]["hermes_config"] == {"model.provider": "nous", "model.default": "hermes-4"}
+    assert incus.containers["dave"]["hermes_config"] == {"model.default": "gpt-5.5"}
+    assert restarted == ["alice", "bob", "dave"]   # bob: the server's effort changed
+
+    incus.containers["alice"]["hermes_config"]["model.default"] = "gpt-5.5"   # its users chose another
+    apply.apply(unlocked)
+    assert incus.containers["alice"]["hermes_config"]["model.default"] == "gpt-5.5"
+    assert restarted == ["alice", "bob", "dave"]
+
+
+def test_an_apply_that_failed_after_unlocking_an_instance_still_gives_it_the_locks_model(server, incus, monkeypatch):
+    reg, restarted = server
+    reg.instances["alice"] = Instance("alice", 9120, "local", state="active")
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {}}
+    apply.apply(LOCKED)
+    set_config = instances.set_config
+
+    def failing(s, name, values):
+        raise CommandError("hermes config set -> exit 1")
+    monkeypatch.setattr(instances, "set_config", failing)
+    with pytest.raises(CommandError):
+        apply.apply(S)
+    assert host.policy_current(S, "alice") and not incus.containers["alice"].get("hermes_config")
+
+    monkeypatch.setattr(instances, "set_config", set_config)
+    apply.apply(S)
+    assert incus.containers["alice"]["hermes_config"] == LOCKS_MODEL
+    assert restarted == ["alice", "alice"]
+
+
 def test_running_instances_get_their_trace(server, incus):
     reg, _ = server
     reg.instances.update(alice=Instance("alice", 9120, "local", state="active"),

@@ -189,7 +189,7 @@ class Incus:
         elif cmd[:3] == ["hermes", "config", "unset"]:
             c.get("hermes_config", {}).pop(cmd[3], None)
         elif cmd[:3] == ["hermes", "config", "get"]:   # a key, or a section's keys as YAML
-            config = c.get("hermes_config", {})
+            config = c.get("hermes_config", {}) | c.get("pinned", {})   # with what its policy pins
             return config.get(cmd[3]) or "".join(f"{k.removeprefix(cmd[3] + '.')}: {v}\n" for k, v in config.items()
                                                  if k.startswith(cmd[3] + ".")), 0
         elif cmd[:2] == ["rm", "-f"]:
@@ -664,14 +664,29 @@ def test_an_instance_locked_on_its_own_allows_only_its_models(incus, gateways, m
     assert restarted == ["alice", "alice"] and not (host.POLICIES / "bob").exists()
 
 
-def test_an_instance_unlocked_on_its_own_starts_with_the_model_it_was_locked_to(incus, gateways):
+@pytest.mark.parametrize("lock, provider, model", [(None, "openai-codex", "m1"), (["m2", "m3"], "nous", "m2")])
+def test_an_instance_unlocked_on_its_own_starts_with_the_model_it_was_locked_to(incus, gateways, lock, provider,
+                                                                                 model):
     restarted, _ = gateways
-    reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
+    alice = Instance("alice", 9120, "local", state="active", lock=lock, lock_provider="nous" if lock else "")
+    reg = Registry({"alice": alice})
     incus.containers["alice"] = {"state": "RUNNING", "devices": {}}
+    instances.update_policy(LOCKED, alice)   # the server's lock, or its own
     instances.unlock(LOCKED, reg, "alice")
-    assert reg.get("alice").lock == [] and host.policy_current(S, "alice") and restarted == ["alice"]
+    assert alice.lock == [] and host.policy_current(S, "alice") and restarted == ["alice"]
     assert incus.containers["alice"]["hermes_config"] == \
-        {"model.provider": "openai-codex", "model.default": "m1", "agent.reasoning_effort": "high"}
+        {"model.provider": provider, "model.default": model, "agent.reasoning_effort": "high"}
+
+
+def test_an_instance_unlocked_in_a_group_that_sets_the_model_gets_the_locks_provider_and_effort(incus, gateways):
+    s = dataclasses.replace(LOCKED, groups={"sales": {"model": {"default": "m9"}}})
+    alice = Instance("alice", 9120, "local", state="active", group="sales")
+    reg = Registry({"alice": alice})
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {}, "pinned": {"model.default": "m9"}}
+    instances.update_policy(s, alice)
+    instances.unlock(s, reg, "alice")
+    assert incus.containers["alice"]["hermes_config"] == \
+        {"model.provider": "openai-codex", "agent.reasoning_effort": "high"}   # Hermes refuses the pinned model
 
 
 CODEX = ["gpt-6-sol", "gpt-6-sol-900k", "gpt-6-luna", "gpt-6-luna-900k", "gpt-5.6-sol", "gpt-5.6-sol-900k",
@@ -845,6 +860,19 @@ def test_an_instance_joins_switches_and_leaves_a_group(incus, gateways, capsys):
     assert restarted == ["alice"] * 3
     assert capsys.readouterr().out.splitlines() == ["alice is in the group sales", "alice is in the group support",
                                                     "alice is in no group"]
+
+
+def test_leaving_a_group_that_sets_the_model_does_not_keep_it(incus, gateways):
+    # Only a lock's model stays: Hermes's defaults apply again, as with the group's other settings.
+    sales = {"model": {"default": "m9"}, "mcp_servers": {"github: work": {"command": "npx"}}}
+    s = dataclasses.replace(S, groups={"sales": sales})
+    alice = Instance("alice", 9120, "local", state="active", group="sales")
+    reg = Registry({"alice": alice})
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {}, "hermes_config": {"model.provider": "nous"}}
+    instances.update_policy(s, alice)
+    instances.set_group(s, reg, "alice", "")
+    assert host.policy_current(s, "alice")
+    assert incus.containers["alice"]["hermes_config"] == {"model.provider": "nous"}
 
 
 def test_groups_are_listed_with_their_members(capsys):
