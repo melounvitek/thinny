@@ -393,16 +393,6 @@ def overview(s: Settings, reg: Registry):
     yield update_status(UPDATE_STATUS, dt.datetime.now(dt.UTC))
 
 
-def running(s: Settings, inst: Instance):
-    state = instances.container_state(inst.name)
-    if state != "RUNNING":
-        yield fail(f"{inst.name}: container is {state or 'missing'}", f"incus start {inst.name}")
-    elif system.gateway_active(inst.name):
-        yield ok(f"{inst.name}: running, gateway active")
-    else:
-        yield fail(f"{inst.name}: gateway not active", f"thinny instance restart {inst.name}")
-
-
 # ---------- runner ----------
 
 CHECKS = [install, tokens, access_trace, mailboxes, prerequisites, firewall, caddy, dashboard]
@@ -418,6 +408,24 @@ def run(s: Settings, reg: Registry) -> int:
 
 def status(s: Settings, reg: Registry) -> int:
     """The quick look: no internet, Webapp or policy probes; 1 when anything failed."""
+    states, error = {}, ""
+    try:
+        if active(reg):
+            states = instances.container_states()   # every container's in one incus list
+    except Exception as e:   # each instance's check fails with it
+        error = f"{type(e).__name__}: {e}"
+
+    def running(s: Settings, inst: Instance):
+        state = states.get(inst.name)
+        if error:
+            yield fail(f"{inst.name}: container state unknown: {error}")
+        elif state != "RUNNING":
+            yield fail(f"{inst.name}: container is {state or 'missing'}", f"incus start {inst.name}")
+        elif system.gateway_active(inst.name):
+            yield ok(f"{inst.name}: running, gateway active")
+        else:
+            yield fail(f"{inst.name}: gateway not active", f"thinny instance restart {inst.name}")
+
     return run_checks(s, reg, [overview], [running])
 
 

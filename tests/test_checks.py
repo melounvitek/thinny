@@ -355,15 +355,33 @@ def test_status_is_the_quick_look(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(host, "RELEASE_FILE", tmp_path / "release")
     monkeypatch.setattr(host, "WEBUI_RELEASE_FILE", tmp_path / "webui-release")
     monkeypatch.setattr(checks, "UPDATE_STATUS", tmp_path / "update-status.json")
-    monkeypatch.setattr(instances, "container_state", lambda name: {"alice": "RUNNING", "bob": "STOPPED"}[name])
-    monkeypatch.setattr(system, "gateway_active", lambda name: True)
+    listed, ran = "alice,RUNNING\nbob,STOPPED\ncarol,STOPPED\nvm,RUNNING\n", []
+
+    def run(cmd, **kw):
+        ran.append(cmd)
+        if cmd[:2] == ["incus", "list"]:   # every container at once
+            if not listed:
+                raise system.CommandError("incus list -> exit 1\nError: connection refused")
+            return subprocess.CompletedProcess(cmd, 0, listed, "")
+        return subprocess.CompletedProcess(cmd, 0, "active\n", "")   # alice's gateway
+    monkeypatch.setattr(system, "run", run)
+    monkeypatch.setattr(instances, "run", run)
+    overview = ("OK   Hermes release of all instances: v0.23.1\n"
+                "OK   WebUI release of the instances that use it: v0.52.678\n"
+                "WARN no nightly update status yet (the update timer has not run)\n")
     assert checks.status(S, reg) == 1
-    assert capsys.readouterr().out == ("OK   Hermes release of all instances: v0.23.1\n"
-                                       "OK   WebUI release of the instances that use it: v0.52.678\n"
-                                       "WARN no nightly update status yet (the update timer has not run)\n"
-                                       "OK   alice: running, gateway active\n"
-                                       "FAIL bob: container is STOPPED\n"
-                                       "     fix: incus start bob\n")
+    assert capsys.readouterr().out == overview + ("OK   alice: running, gateway active\n"
+                                                  "FAIL bob: container is STOPPED\n"
+                                                  "     fix: incus start bob\n")
+    assert [cmd[:2] for cmd in ran].count(["incus", "list"]) == 1
+
+    listed = ""   # Incus does not answer
+    assert checks.status(S, reg) == 1
+    assert capsys.readouterr().out == overview + (
+        "FAIL alice: container state unknown: CommandError: incus list -> exit 1\n"
+        "     Error: connection refused\n"
+        "FAIL bob: container state unknown: CommandError: incus list -> exit 1\n"
+        "     Error: connection refused\n")
 
 
 def test_doctor_points_office_pcs_at_the_copy_of_caddys_root_certificate(tmp_path, monkeypatch):

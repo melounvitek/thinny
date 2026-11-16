@@ -99,6 +99,12 @@ def container_state(name: str) -> str | None:
     return out or None
 
 
+def container_states() -> dict[str, str]:
+    """Every container's state (RUNNING, STOPPED, ...) by its name, in one incus list."""
+    out = run(["incus", "list", "--format", "csv", "--columns", "ns"]).stdout
+    return dict(line.split(",", 1) for line in out.splitlines() if line)
+
+
 def devices(name: str) -> dict[str, dict[str, str]]:
     """The container's own devices (not its profile's): name -> properties."""
     return json.loads(run(["incus", "query", f"/1.0/instances/{name}"]).stdout)["devices"]
