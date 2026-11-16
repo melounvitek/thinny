@@ -37,6 +37,23 @@ def at_least_1(value: str) -> int:
     return int(value)
 
 
+class Parser(argparse.ArgumentParser):
+    """Shows a (sub)command's whole help with a usage error, not only its usage line. add_subparsers makes
+    the subcommands' parsers of the same class."""
+
+    def parse_known_args(self, args=None, namespace=None):
+        # A subcommand's parser rejects unknown arguments itself rather than leave them to thinny's, which
+        # would show its own help.
+        namespace, unknown = super().parse_known_args(args, namespace)
+        if unknown:
+            self.error(f"unrecognized arguments: {' '.join(unknown)}")
+        return namespace, unknown
+
+    def error(self, message):
+        self.print_help(sys.stderr)
+        self.exit(2, f"{self.prog}: error: {message}\n")
+
+
 def complete(parser: argparse.ArgumentParser, words: list[str]) -> list[str]:
     """What fits the last of `words`, the one being typed after `thinny`. Instance names only for root:
     only root reads the registry."""
@@ -76,7 +93,7 @@ def complete(parser: argparse.ArgumentParser, words: list[str]) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="thinny", description="Shared Hermes Agent server, one isolated container per instance.")
+    ap = Parser(prog="thinny", description="Shared Hermes Agent server, one isolated container per instance.")
     sub = ap.add_subparsers(dest="command", required=True, metavar="command")
     sub.add_parser("init", help="ask for the main settings and write config.toml (on a new server)")
     sub.add_parser("setup", help="set up the server, then apply config.toml")

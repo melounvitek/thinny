@@ -620,6 +620,25 @@ def test_a_group_without_active_instances_selects_nothing(sales, capsys):
     assert sales == []
 
 
+@pytest.mark.parametrize("command, args, error", [
+    ([], [], "the following arguments are required: command"),
+    ([], ["bogus"], "argument command: invalid choice: 'bogus'"),
+    (["instance", "group"], [], "the following arguments are required: action"),
+    (["instance", "telegram"], [], "the following arguments are required: name"),
+    (["instance", "frontend"], ["alice", "x"], "argument frontend: invalid choice: 'x'"),
+    (["instance", "telegram"], ["alice", "--bogus"], "unrecognized arguments: --bogus"),
+    (["instance", "group", "list"], ["extra"], "unrecognized arguments: extra"),
+])
+def test_a_usage_error_shows_the_whole_help_of_its_command(capsys, command, args, error):
+    with pytest.raises(SystemExit):
+        cli.main([*command, "-h"])
+    help = capsys.readouterr().out
+    with pytest.raises(SystemExit) as exit:
+        cli.main([*command, *args])
+    assert exit.value.code == 2
+    assert capsys.readouterr().err.startswith(f"{help}{' '.join(['thinny', *command])}: error: {error}")
+
+
 def tab(capsys, *words):
     """What Tab offers after `thinny`, the last of `words` being the one typed."""
     assert cli.main(["complete", *words]) == 0
