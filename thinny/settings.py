@@ -12,6 +12,9 @@ from pathlib import Path
 CONFIG_TOML = Path("/etc/thinny/config.toml")
 ACCESS_METHODS = ("lan", "tailscale", "url", "local")
 FRONTENDS = ("webapp", "webui")   # Hermes's built-in Webapp, or hermes-webui
+DASHBOARD_ACCESS = ("lan", "tailscale", "local")
+# On 127.0.0.1 while the dashboard is on: Incus's metrics, Prometheus, its node exporter.
+MONITORING_PORTS = (8444, 9090, 9100)
 
 
 class SettingsError(Exception):
@@ -47,6 +50,10 @@ class Settings:
     network_interface: str = "eth0"
     blocked_networks: tuple[str, ...] = ()
     telegram_manager_token: str = ""
+    dashboard_enabled: bool = False
+    dashboard_access: str = "local"
+    dashboard_port: int = 9200
+    dashboard_retention_days: int = 30
     groups: dict[str, dict] = field(default_factory=dict)   # name -> the Hermes settings its members' policies pin
     hermes: dict = field(default_factory=dict)   # those of one instance's group (instances.settings_for)
 
@@ -80,6 +87,10 @@ KEYS = {
     ("network", "interface"): "network_interface",
     ("network", "blocked_networks"): "blocked_networks",
     ("telegram", "manager_token"): "telegram_manager_token",
+    ("dashboard", "enabled"): "dashboard_enabled",
+    ("dashboard", "access"): "dashboard_access",
+    ("dashboard", "port"): "dashboard_port",
+    ("dashboard", "retention_days"): "dashboard_retention_days",
 }
 
 
@@ -212,3 +223,19 @@ def _validate(s: Settings, source: str) -> None:
             fail(f"network.blocked_networks: {network!r} is not a network")
     if s.telegram_manager_token and not re.fullmatch(r"\d+:[\w-]+", s.telegram_manager_token):
         fail("telegram.manager_token must be the manager bot's token from @BotFather, like 123456:ABC-xyz")
+    if s.dashboard_access not in DASHBOARD_ACCESS:
+        fail(f"dashboard.access must be one of {', '.join(DASHBOARD_ACCESS)}")
+    if s.dashboard_retention_days < 1:
+        fail("dashboard.retention_days must be at least 1")
+    if not s.dashboard_enabled:   # its defaults take nothing from a server without it
+        return
+    if s.dashboard_access == "lan" and not s.lan_address:
+        fail("access.lan_address is required when dashboard.access is lan")
+    low, high = s.port_range
+    if not 1024 <= s.dashboard_port <= 65535 or low <= s.dashboard_port <= high or \
+            s.dashboard_port in (s.tunnel_port, *MONITORING_PORTS):
+        fail("dashboard.port must be a port between 1024 and 65535 outside webapp.port_range, other than "
+             f"access.tunnel_port and {', '.join(map(str, MONITORING_PORTS))}")
+    if any(low <= port <= high or port == s.tunnel_port for port in MONITORING_PORTS):
+        fail(f"with the dashboard, webapp.port_range and access.tunnel_port must leave out "
+             f"{', '.join(map(str, MONITORING_PORTS))}: it uses them on 127.0.0.1")

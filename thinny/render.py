@@ -337,3 +337,143 @@ Persistent=false
 [Install]
 WantedBy=timers.target
 """
+
+
+# The dashboard (dashboard.py). Each service gets a drop-in in place of the package's own settings: their files stay
+# as the packages ship them, so upgrades ask nothing.
+GRAFANA_DATASOURCE_UID = "thinny-prometheus"   # the dashboard's panels name it
+
+
+def prometheus_config(cert: str, key: str) -> str:
+    """Prometheus reads Incus's metrics with a metrics certificate, and the node exporter: the host's CPU, memory and
+    filesystems, and thinny's file of each instance's disk use."""
+    return f"""# {HEADER}
+global:
+  scrape_interval: 30s
+scrape_configs:
+  - job_name: incus
+    metrics_path: /1.0/metrics
+    scheme: https
+    static_configs:
+      - targets: ["127.0.0.1:8444"]
+    tls_config:
+      ca_file: /var/lib/incus/server.crt
+      cert_file: {cert}
+      key_file: {key}
+  - job_name: node
+    static_configs:
+      - targets: ["127.0.0.1:9100"]
+"""
+
+
+def prometheus_dropin(s: Settings, config: str) -> str:
+    return f"""# {HEADER}
+[Service]
+ExecStart=
+ExecStart=/usr/bin/prometheus --config.file={config} --web.listen-address=127.0.0.1:9090 \\
+  --storage.tsdb.path=/var/lib/prometheus/metrics2/ --storage.tsdb.retention.time={s.dashboard_retention_days}d
+"""
+
+
+NODE_EXPORTER_DROPIN = f"""# {HEADER}
+[Service]
+ExecStart=
+ExecStart=/usr/bin/prometheus-node-exporter --web.listen-address=127.0.0.1:9100 --collector.disable-defaults \\
+  --collector.cpu --collector.meminfo --collector.filesystem \\
+  --collector.textfile --collector.textfile.directory=/var/lib/prometheus/node-exporter
+"""
+
+# Grafana's settings (GF_<SECTION>_<KEY>) besides its address and cookies.
+GRAFANA_SETTINGS = {
+    # Nothing that reaches grafana.com or other sites
+    "ANALYTICS_REPORTING_ENABLED": "false", "ANALYTICS_CHECK_FOR_UPDATES": "false",
+    "ANALYTICS_CHECK_FOR_PLUGIN_UPDATES": "false", "ANALYTICS_FEEDBACK_LINKS_ENABLED": "false",
+    "NEWS_NEWS_FEED_ENABLED": "false", "SECURITY_DISABLE_GRAVATAR": "true", "PLUGINS_PREINSTALL_DISABLED": "true",
+    "PLUGINS_PUBLIC_KEY_RETRIEVAL_DISABLED": "true", "CLOUD_MIGRATION_ENABLED": "false",
+    # Little to do with a stolen sign-in: no plugin installs, snapshots or public dashboards; no /metrics for all
+    "PLUGINS_PLUGIN_ADMIN_ENABLED": "false", "SNAPSHOTS_ENABLED": "false", "PUBLIC_DASHBOARDS_ENABLED": "false",
+    "METRICS_ENABLED": "false",
+    "USERS_HOME_PAGE": "/d/thinny",
+}
+
+
+def grafana_dropin(s: Settings, password_file: str) -> str:
+    settings = {"SERVER_HTTP_ADDR": "127.0.0.1", "SERVER_HTTP_PORT": str(s.dashboard_port),
+                # over HTTPS, but local access is plain HTTP through the SSH tunnel
+                "SECURITY_COOKIE_SECURE": str(s.dashboard_access != "local").lower(), **GRAFANA_SETTINGS}
+    environment = "".join(f"Environment=GF_{key}={value}\n" for key, value in settings.items())
+    return f"""# {HEADER}
+[Service]
+# GF_SECURITY_ADMIN_PASSWORD, which Grafana takes when it creates its database; only root reads the file.
+EnvironmentFile={password_file}
+{environment}# It reaches nothing but this host, whatever its settings say.
+IPAddressDeny=any
+IPAddressAllow=localhost
+"""
+
+
+GRAFANA_DATASOURCE = f"""# {HEADER}
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: {GRAFANA_DATASOURCE_UID}
+    access: proxy
+    url: http://127.0.0.1:9090
+    isDefault: true
+    editable: false
+"""
+
+
+def grafana_dashboards(folder: str) -> str:
+    return f"""# {HEADER}
+apiVersion: 1
+providers:
+  - name: thinny
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: {folder}
+"""
+
+
+def grafana_source(keyring: str) -> str:
+    return f"# {HEADER}\ndeb [signed-by={keyring}] https://apt.grafana.com stable main\n"
+
+
+GRAFANA_UPGRADES = f"""// {HEADER}
+// Unattended upgrades update Grafana from its own repository too, new major versions included.
+Unattended-Upgrade::Origins-Pattern {{ "site=apt.grafana.com"; }};
+"""
+
+METRICS_SERVICE = f"""# {HEADER}
+[Unit]
+Description=thinny's file of each instance's disk use, for the dashboard
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/thinny metrics
+"""
+
+METRICS_TIMER = f"""# {HEADER}
+[Unit]
+Description=thinny's file of each instance's disk use, for the dashboard
+
+[Timer]
+OnCalendar=*:0/5
+
+[Install]
+WantedBy=timers.target
+"""
+
+
+def disk_metrics(rows: list[tuple[str, int, int]]) -> str:
+    """The node exporter's file of each instance's disk use: (name, bytes its quota counts, its quota in bytes)."""
+    lines = ["# HELP thinny_instance_disk_used_bytes Bytes the instance's disk quota counts.",
+             "# TYPE thinny_instance_disk_used_bytes gauge",
+             *(f'thinny_instance_disk_used_bytes{{name="{name}"}} {used}' for name, used, _ in rows),
+             "# HELP thinny_instance_disk_quota_bytes The instance's disk quota.",
+             "# TYPE thinny_instance_disk_quota_bytes gauge",
+             *(f'thinny_instance_disk_quota_bytes{{name="{name}"}} {quota}' for name, _, quota in rows)]
+    return "\n".join(lines) + "\n"
