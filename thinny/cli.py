@@ -366,6 +366,15 @@ def init_config() -> None:
     try:
         provider, model = ask_model("Model provider", "openai-codex", "gpt-5.5")
         language = ask("Webapp language (en, cs, de, ...)", "en").lower()  # Hermes's codes, e.g. pt-br
+        # A language Hermes lacks comes as a catalog plugin.
+        pack = f"hermes-lang-{language}"
+        found = system.http_status(host.CATALOG_URL.format(pack), timeout=20) if language != "en" else ""
+        if found in ("", "404"):
+            pack = ""
+        elif found != "200":
+            print(f"Could not check Hermes's plugin catalog for {pack} (HTTP status {found}).")
+            pack = ask(f"Language pack, if Hermes lacks {language} (-: none)", pack)
+            pack = "" if pack == "-" else pack
         interface = ask("Internet interface, containers go out through it", interface or "eth0")
         print()
         access = ask_access("How will users open the Webapps? (default for new instances)", address, "lan")
@@ -373,10 +382,6 @@ def init_config() -> None:
         port = ask("Port of one tunnel to every instance (0: none)", "8080") if access == "url" else "0"
         if not port.isdigit():
             raise CommandError(f"{port!r} is not a port; nothing written")
-        # A language Hermes lacks comes as a catalog plugin.
-        pack = f"hermes-lang-{language}"
-        found = system.http_status(host.CATALOG_URL.format(pack), timeout=20) if language != "en" else ""
-        pack = pack if found == "200" else ""
         text = settings.fill((host.LIB / "config.example.toml").read_text(encoding="utf-8"), {
             ("policy", "model_provider"): provider, ("policy", "model"): model, ("policy", "language"): language,
             ("policy", "language_pack"): pack, ("network", "interface"): interface, ("access", "default"): access,
@@ -385,8 +390,7 @@ def init_config() -> None:
         where = {"lan": f"office network, https://{lan_address}:<port>/", "tailscale": "Tailscale",
                  "url": "own addresses" + (f", one tunnel at http://127.0.0.1:{port}" if int(port) else ""),
                  "local": "local only, through an SSH tunnel"}[access]
-        pack_note = (f", with the language pack {pack}" if pack else "" if found in ("", "404") else
-                     " (could not check Hermes's plugin catalog for a language pack; set policy.language_pack if needed)")
+        pack_note = f", with the language pack {pack}" if pack else ""
         print(f"\n  model      {provider} / {model}\n  language   {language}{pack_note}\n"
               f"  interface  {interface}\n  access     {where}\n")
         if input(f"Write {path}? [Y/n] ").strip().lower().startswith("n"):
