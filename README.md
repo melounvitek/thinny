@@ -36,7 +36,7 @@ Status: in development. Design notes: [`PLAN.md`](PLAN.md).
 - **`thinny status`** for a quick look, **`thinny doctor`** for every isolation and health
   check, each with a fix.
 - **An optional dashboard** with the history of the server's and each instance's CPU, memory,
-  disk and network (see [Dashboard](#dashboard)).
+  disk and network, and if you choose, of its users' subscription usage (see [Dashboard](#dashboard)).
 
 ## Security
 
@@ -265,7 +265,7 @@ thinny instance restart --group sales   # instead of names: resize, login, model
   instance (or of `alice`) used: the share of the 5-hour and the weekly limit, and when each
   resets, in the server's time. Hermes asks the provider afresh (`hermes usage`; for Claude,
   Claude Code answers without using any of the limits), for every instance at once, up to about
-  20 s each. `?` means no answer.
+  20 s each. `?` means no answer. The [dashboard](#dashboard) can keep its history.
 - `add` can connect a phone line to the phone plugin. Answer `y` and it asks for the SIP account
   (Odorik's server by default), the PIN, the numbers that may call, the number Hermes calls back
   and an OpenAI API key for speech recognition, then starts Asterisk in the container. With
@@ -569,6 +569,7 @@ enabled = true
 access = "local"        # local | lan | tailscale
 port = 9200             # outside webapp.port_range
 retention_days = 30
+subscription_usage = false   # true: also each instance's subscription usage, hourly (see below)
 ```
 
 Then run `thinny config apply` on a terminal (`thinny config edit` does it too). The first time, it
@@ -591,8 +592,10 @@ reads it). A password changed in Grafana stays in Grafana only.
   sign-in, and its users are root in their container. Through the SSH tunnel, `localhost` shares
   no cookies with the instances' `<name>.localhost`.
 - Everything is read on the server: Incus's metrics, with a certificate that can read nothing
-  else, the server's own, and each instance's disk use, which thinny writes every 5 minutes.
-  Nothing changes in the containers or their firewall, and they cannot reach the dashboard.
+  else, the server's own, and each instance's disk use, which thinny writes every 5 minutes. Only
+  the subscription usage (below) runs a command in the containers, which may renew the provider's
+  sign-in there, as Hermes does. Nothing else changes in them or their firewall, and they cannot
+  reach the dashboard.
   Prometheus, its node exporter, Incus's metrics and Grafana listen on 127.0.0.1 only (9090, 9100,
   8444 and `port`); Caddy or Tailscale publish Grafana.
 - Grafana reaches nothing but the server: no usage reports, update checks or plugin downloads.
@@ -605,12 +608,33 @@ reads it). A password changed in Grafana stays in Grafana only.
   asks nothing.
 - `doctor` checks that its services run on 127.0.0.1 only and Prometheus gets every number.
 
+**Subscription usage** (`subscription_usage = true`, off by default): once an hour, thinny runs
+`hermes usage --json` in each running instance, as its account, as `thinny instance usage` does.
+The dashboard then shows how much of their ChatGPT or Claude subscription's 5-hour and weekly limits
+the users of the instance you choose used, and the weekly one of the 10 that used the most. Only
+these two shares: no plan, credits, reset times or accounts.
+
+- **Tell the instances' users before you turn it on.** Whoever can sign in to the dashboard sees
+  their use hour by hour, for `retention_days`. The limits are the whole subscription's: with their
+  own account, they include what they do outside Hermes too (ChatGPT, Claude.ai, Codex).
+- Every check shows in each instance's [access trace](#access-trace) as `thinny metrics ran its
+  commands in alice`: about 24 entries a day, also in its Google Sheet.
+- ChatGPT: normally one request for the limits, no model call. Claude: Claude Code starts and asks
+  Anthropic, without using any of the limits. Anthropic limits how often a sign-in can read them:
+  users report that frequent reads block the readout for hours, also in their own Claude Code. Once
+  an hour is far below what status-line tools ask. Each check runs within its instance's CPU and
+  memory limits, four instances at a time, up to 20 s each.
+- An instance that is stopped or not signed in, or whose check fails, shows a gap. While thinny's
+  file is over 2 hours old, the panels show nothing, and `doctor` warns.
+- Turned off, the checks stop within 5 minutes. The history stays until `retention_days` ends.
+
 ## Access trace
 
 When someone reaches into an instance's container through Incus, with `incus exec`, `incus shell`,
 `incus console` (or its log), `incus file`, a snapshot or an export, thinny notes the time and the
 command. thinny's own commands there are noted once per run of thinny, e.g. `thinny doctor ran its
-commands in alice` (`doctor` reads the instance's `.env`, among others).
+commands in alice` (`doctor` reads the instance's `.env`, among others). With the dashboard's
+[subscription usage](#dashboard), `thinny metrics` runs there once an hour.
 
 - **On the server:** `journalctl -t thinny-trace`, and per instance in
   `/var/lib/thinny/trace/<name>/admin-access.log`.

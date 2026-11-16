@@ -420,6 +420,7 @@ def monitoring(tmp_path, monkeypatch):
                               "-----END CERTIFICATE-----\n")
     monkeypatch.setattr(dashboard, "DISK_METRICS", tmp_path / "thinny.prom")
     dashboard.DISK_METRICS.write_text(render.disk_metrics([("alice", 1, 2)]))
+    monkeypatch.setattr(dashboard, "USAGE_METRICS", tmp_path / "thinny-usage.prom")
     targets = [{"labels": {"job": job}, "health": "up", "lastError": ""} for job in ("incus", "node")]
     answers = {"systemctl is-active": "active\n" * 4, "ss -Hltnp": LISTENING,
                "incus config get core.metrics_address": "127.0.0.1:8444\n",
@@ -449,6 +450,20 @@ def test_doctor_checks_the_dashboard_only_while_it_is_on(monitoring):
         ("OK", "Prometheus reads the host's and thinny's"),
         ("OK", "the instances' disk use is fresh"),
         ("OK", "Grafana answers (HTTP 200)")]
+
+
+def test_doctor_sees_the_subscription_usage_fresh_while_it_is_asked_for(monitoring):
+    usage = dataclasses.replace(ON, dashboard_subscription_usage=True)
+
+    def check(s):
+        return [(level, message) for level, message, _ in checks.dashboard(s, Registry()) if "subscription" in message]
+    assert check(usage) == [("WARN", "the instances' subscription usage is missing or older than 2 hours")]
+    dashboard.USAGE_METRICS.write_text(render.usage_metrics([]))   # nobody's answer: fresh all the same
+    assert check(usage) == [("OK", "the instances' subscription usage is fresh")]
+    old = dt.datetime.now().timestamp() - 2 * 3600 - 60
+    os.utime(dashboard.USAGE_METRICS, (old, old))
+    assert check(usage) == [("WARN", "the instances' subscription usage is missing or older than 2 hours")]
+    assert check(ON) == []
 
 
 def test_doctor_says_how_to_install_a_dashboard_that_is_on_but_not_installed(monitoring):

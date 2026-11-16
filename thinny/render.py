@@ -456,7 +456,7 @@ Unattended-Upgrade::Origins-Pattern {{ "site=apt.grafana.com"; }};
 
 METRICS_SERVICE = f"""# {HEADER}
 [Unit]
-Description=thinny's file of each instance's disk use, for the dashboard
+Description=thinny's files of each instance's disk use and subscription usage, for the dashboard
 
 [Service]
 Type=oneshot
@@ -465,7 +465,7 @@ ExecStart=/usr/local/sbin/thinny metrics
 
 METRICS_TIMER = f"""# {HEADER}
 [Unit]
-Description=thinny's file of each instance's disk use, for the dashboard
+Description=thinny's files of each instance's disk use and subscription usage, for the dashboard
 
 [Timer]
 OnCalendar=*:0/5
@@ -483,4 +483,15 @@ def disk_metrics(rows: list[tuple[str, int, int]]) -> str:
              "# HELP thinny_instance_disk_quota_bytes The instance's disk quota.",
              "# TYPE thinny_instance_disk_quota_bytes gauge",
              *(f'thinny_instance_disk_quota_bytes{{name="{name}"}} {quota}' for name, _, quota in rows)]
+    return "\n".join(lines) + "\n"
+
+
+def usage_metrics(rows: list[tuple[str, str, str, float]]) -> str:
+    """The node exporter's file of each instance's subscription usage: (name, provider, window, share of the
+    window's limit used, from 0 to 1)."""
+    metric = "thinny_instance_subscription_used_ratio"
+    lines = [f"# HELP {metric} Share of its subscription's limit the instance's users used.",
+             f"# TYPE {metric} gauge",
+             *(f'{metric}{{name="{name}",provider="{provider}",window="{window}"}} {used}'
+               for name, provider, window, used in rows)]
     return "\n".join(lines) + "\n"

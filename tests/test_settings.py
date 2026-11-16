@@ -37,7 +37,8 @@ def test_example_parses_once_filled_in():
     s = parse(text)
     assert s.model_lock is False
     assert s.port_range == (9120, 9199)
-    assert (s.dashboard_enabled, s.dashboard_access, s.dashboard_port) == (False, "local", 9200)
+    assert (s.dashboard_enabled, s.dashboard_access, s.dashboard_port, s.dashboard_subscription_usage) == \
+        (False, "local", 9200, False)
 
 
 def test_filling_the_example_keeps_its_comments():
@@ -99,6 +100,7 @@ def test_model_lock_is_off_by_default_and_then_needs_no_model():
     ({"dashboard__enabled": True, "webapp__port_range": [9000, 9199]}, "must leave out 8444, 9090, 9100"),
     ({"dashboard__enabled": True, "access__tunnel_port": 8444}, "must leave out 8444, 9090, 9100"),
     ({"dashboard__retention_days": 0}, "dashboard.retention_days must be at least 1"),
+    ({"dashboard__subscription_usage": "yes"}, "dashboard_subscription_usage must be bool"),
 ])
 def test_invalid_settings_are_refused(changes, message):
     with pytest.raises(SettingsError, match=message):
@@ -160,10 +162,12 @@ def test_a_token_from_the_environment_is_refused_like_one_from_secrets_env(monke
 
 def test_the_dashboard_is_off_by_default_and_then_only_through_an_ssh_tunnel():
     s = parse(site())
-    assert (s.dashboard_enabled, s.dashboard_access, s.dashboard_port, s.dashboard_retention_days) == \
-        (False, "local", 9200, 30)
-    s = parse(site(dashboard__enabled=True, dashboard__access="lan", dashboard__port=9300))
-    assert (s.dashboard_enabled, s.dashboard_access, s.dashboard_port) == (True, "lan", 9300)
+    assert (s.dashboard_enabled, s.dashboard_access, s.dashboard_port, s.dashboard_retention_days,
+            s.dashboard_subscription_usage) == (False, "local", 9200, 30, False)
+    s = parse(site(dashboard__enabled=True, dashboard__access="lan", dashboard__port=9300,
+                   dashboard__subscription_usage=True))
+    assert (s.dashboard_enabled, s.dashboard_access, s.dashboard_port, s.dashboard_subscription_usage) == \
+        (True, "lan", 9300, True)
     # without it, its defaults take nothing from other settings
     assert parse(site(webapp__port_range=[9000, 9299])).port_range == (9000, 9299)
     assert parse(site(access__tunnel_port=9200, access__lan_address=None, access__default="local")).tunnel_port == 9200

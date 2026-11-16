@@ -501,6 +501,15 @@ Incus 6.0.0, 6.0.4 and 6.0.5, Prometheus 2.45 and 2.53, node exporter 1.7 to 1.1
   825 MiB RSS, 405 MiB with the 13 besides Prometheus disabled **[tested]**. `admin_password` counts
   only when it creates its database. CSRF and its live websocket compare `Origin` with `Host`, which
   Caddy, `tailscale serve` and an SSH tunnel keep. Its sign-in cookie is the host's, for every port.
+- Subscription usage (Hermes v0.23.1 and its Claude plugin **[src]**): `hermes usage --json` without `--provider`
+  asks the configured provider, the managed scope's included (`load_config` merges it). For Codex it normally
+  makes one GET of `chatgpt.com/backend-api/wham/usage`, no model call; it refreshes the credential under
+  `auth.lock` in the Hermes home the gateway shares, and retries once after a 401. The Claude plugin starts
+  `claude -p` with `get_usage` (8 s; 10 s for the hook) and caches nothing. Codex fails with exit 1 and one line
+  for every cause; the plugin with exit 0 and `unavailable_reason`. Nothing keeps the shares on disk. Node
+  exporter 1.7 and 1.10 label `node_textfile_mtime_seconds` with the file's full path. From public reports,
+  not tried: Codex's own TUI reads its limits every minute; Anthropic's limits readout answers few requests per
+  sign-in, and a 429 can last hours, also for the user's own Claude Code.
 
 ### Email (2026-11-16)
 Hermes v0.23.1 **[src]**; Purelymail from its API spec (`news.purelymail.com/api/`), docs and public
@@ -611,7 +620,8 @@ extras/, tests/     netcup snapshot and nightly watch (run off the server); pyte
                                 prometheus-node-exporter,grafana-server}.service.d/thinny.conf,
                                 thinny-metrics.{service,timer}; /etc/grafana/provisioning/
                                 {datasources,dashboards}/thinny.yaml; Grafana's apt source, key and
-                                unattended-upgrades origin; /var/lib/prometheus/node-exporter/thinny.prom
+                                unattended-upgrades origin; /var/lib/prometheus/node-exporter/thinny.prom,
+                                and thinny-usage.prom while subscription_usage is on
 Incus                                   pool `default` (btrfs, sparse file, compressed),
                                         profile `thinny-instance`, one container per
                                         instance, named after it
@@ -651,7 +661,9 @@ Incus                                   pool `default` (btrfs, sparse file, comp
 - Dashboard (optional, `[dashboard]`): Incus's metrics on 127.0.0.1:8444 for Prometheus's metrics
   certificate; Prometheus (127.0.0.1:9090, 30 s, `retention_days`), its node exporter (127.0.0.1:9100:
   CPU, memory, filesystems, thinny's file of each instance's disk use from the hidden `thinny metrics`
-  every 5 minutes) and Grafana (127.0.0.1:`port`, published like a Webapp, only to this host by
+  every 5 minutes, and with `subscription_usage` its file of each running instance's share of its 5-hour and
+  weekly subscription limits, from `hermes usage --json` in it at the timer's first run in each clock hour, four
+  at a time, each run in the access trace) and Grafana (127.0.0.1:`port`, published like a Webapp, only to this host by
   `IPAddressDeny`, provisioned with the data source and `files/grafana/thinny.json`). `config apply`
   installs the packages only once the admin agrees on a terminal; masked meanwhile, they start nothing
   on other addresses. Off, the services are masked and Incus's metrics, the sites and Grafana's
@@ -786,7 +798,7 @@ address is a host of its own, without a path (section 5).
 `[webapp]` port range, `frontend` and the look for new instances (`text_scale` 110), `[access]` `default`,
 `lan_address`, `tunnel_port`, `[network]` `interface` (`eth0`) and `blocked_networks` (public networks;
 private ones and the tailnet are always blocked), `[email]` `domain`, `[dashboard]` `enabled`, `access`
-(`local`, `lan`, `tailscale`), `port`, `retention_days`.
+(`local`, `lan`, `tailscale`), `port`, `retention_days`, `subscription_usage` (off).
 `config.example.toml` lists every key. Tokens are in `secrets.env` instead: `THINNY_TELEGRAM_MANAGER_TOKEN`
 (the manager bot's) and `THINNY_PURELYMAIL_API_TOKEN`. Its errors name lines, never what they hold.
 
@@ -854,7 +866,8 @@ private ones and the tailnet are always blocked), `[email]` `domain`, `[dashboar
 - Dashboard, while on: its services and timer active (FAIL), nothing of it listening beyond
   127.0.0.1 but Caddy's and Tailscale's sites (FAIL), Incus's metrics at 127.0.0.1:8444 for
   Prometheus's certificate (FAIL), Prometheus reading Incus and the node exporter (FAIL; WARN until
-  its first reading after a start), the instances' disk use under 15 minutes old (WARN), Grafana
+  its first reading after a start), the instances' disk use under 15 minutes old (WARN), with
+  `subscription_usage` their subscription usage under 2 hours old (WARN), Grafana
   answering (FAIL); on but not installed, or not as `config.toml` says (WARN).
 - A check that crashes is reported as FAIL; the others still run.
 - Each host check, and each instance's checks one after another, run alongside the others, four at a time
@@ -1010,6 +1023,11 @@ Tokens out of `config.toml` (2026-11-16), so that printing or sharing it shows n
 3 `doctor`, README and this file. Without users yet, nothing moves the tokens of an existing `config.toml`:
 thinny refuses its old keys until the admin moves them.
 
+Subscription usage on the dashboard (2026-11-16): 1 `subscription_usage` and the hourly file from `thinny
+metrics`; 2 `doctor`, the file taken back with the dashboard; 3 the panels, README and this file. Sandbox test
+**[tested]**: node exporter 1.7.0 read the rendered file (also without series) with no scrape error, and
+Prometheus 2.53.4 answered the panels' queries, nothing once the file's time was 3 hours back.
+
 ## 9. Open questions
 
 - WebUI after a real Hermes update (its restart with the gateway is tested with fakes only), and
@@ -1034,5 +1052,10 @@ thinny refuses its old keys until the admin moves them.
 - The storage pool is sized once at install; growing it is manual.
 - Alerting from the server itself (no mail sender today; the watchdog runs off-server).
 - The dashboard on Debian 13 and Ubuntu 24.04, and a Grafana upgrade by unattended upgrades.
+- Subscription usage on the dashboard is untested on a server: a day with a ChatGPT and a Claude instance
+  (time and CPU per check, Anthropic's 429s). Also open: Codex's usage endpoint may answer 429 at 100 % (a gap
+  where it matters most); the Claude plugin reads Claude Code's older answer (`utilization`) of 1 or less as a
+  fraction, so 1 % or less could show as up to 100 % (upstream); a check that starts `hermes` during the
+  nightly update; whether a timed-out `incus exec` leaves the command running in the container.
 - Per-instance ChatGPT seats versus one API account per organisation (a local proxy such as
   CLIProxyAPI is parked).

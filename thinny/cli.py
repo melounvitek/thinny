@@ -223,8 +223,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if command == "trace":  # without config.toml: a broken one must not stop the trace
             return trace.run()
-        if command == "metrics":  # without config.toml or thinny's lock, which an update holds for long
+        if command == "metrics":  # without thinny's lock, which an update holds for long; disk use without config.toml
             dashboard.write_disk_metrics()
+            dashboard.write_usage_metrics()
             return 0
         if command == "uninstall":
             with lock(update.SELF_UPDATE_LOCK), lock():

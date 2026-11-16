@@ -1,23 +1,25 @@
 """The optional dashboard (README, Dashboard): Prometheus keeps the history of Incus's metrics, of the host's CPU,
-memory and filesystems, and of each instance's disk use from thinny; Grafana shows it. All of them on 127.0.0.1:
-host.reconcile_access publishes Grafana's port like a Webapp's."""
+memory and filesystems, and of each instance's disk use (and, optionally, subscription usage) from thinny; Grafana
+shows it. All of them on 127.0.0.1: host.reconcile_access publishes Grafana's port like a Webapp's."""
 
 from __future__ import annotations
 
 import contextlib
 import hashlib
 import json
+import os
 import secrets
 import shutil
 import ssl
 import sys
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import host, instances, render
 from .registry import Registry
-from .settings import CONFIG_TOML, MONITORING_PORTS, Settings
+from .settings import CONFIG_TOML, MONITORING_PORTS, Settings, load
 from .system import STATE_DIR, CommandError, http_status, log, run, step, tailscale_name, write_file
 
 PACKAGES = ("prometheus", "prometheus-node-exporter", "grafana", "openssl")
@@ -37,6 +39,9 @@ GRAFANA_SOURCE = Path("/etc/apt/sources.list.d/thinny-grafana.list")
 GRAFANA_UPGRADES = Path("/etc/apt/apt.conf.d/52thinny-grafana")
 PROVISIONING = Path("/etc/grafana/provisioning")
 DISK_METRICS = Path("/var/lib/prometheus/node-exporter/thinny.prom")   # read by the node exporter
+USAGE_METRICS = Path("/var/lib/prometheus/node-exporter/thinny-usage.prom")
+# The windows of the subscription limits in USAGE_METRICS, by the labels `hermes usage --json` gives them.
+USAGE_WINDOWS = {"5h": instances.FIVE_HOURS, "week": instances.WEEK}
 UNFINISHED = STATE_DIR / "dashboard-unfinished"   # from writing the services' settings until they run on them
 APT_ENV = {"DEBIAN_FRONTEND": "noninteractive", "NEEDRESTART_SUSPEND": "1", "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
 
@@ -226,8 +231,8 @@ def turn_off() -> None:
         run(["incus", "config", "unset", "core.metrics_address"])
     for path in (*(dropin(service) for service in SERVICES), host.SYSTEMD / "thinny-metrics.service",
                  host.SYSTEMD / "thinny-metrics.timer", PROVISIONING / "datasources/thinny.yaml",
-                 PROVISIONING / "dashboards/thinny.yaml", DISK_METRICS, GRAFANA_SOURCE, GRAFANA_UPGRADES, GRAFANA_KEY,
-                 UNFINISHED):
+                 PROVISIONING / "dashboards/thinny.yaml", DISK_METRICS, USAGE_METRICS, GRAFANA_SOURCE, GRAFANA_UPGRADES,
+                 GRAFANA_KEY, UNFINISHED):
         path.unlink(missing_ok=True)
     for service in SERVICES:
         with contextlib.suppress(OSError):   # gone, or with the admin's own drop-ins
@@ -272,3 +277,44 @@ def write_disk_metrics() -> None:
             for name in sorted(Registry.load().instances) if name in containers]
     write_file(DISK_METRICS, render.disk_metrics(rows))
     DISK_METRICS.touch()   # fresh for doctor also when the numbers stay the same
+
+
+def write_usage_metrics() -> None:
+    """With subscription_usage on: how much of their subscription's 5-hour and weekly limits the users of each running
+    instance used, as its Hermes asks the provider, into the node exporter's file. Once a clock hour, at the timer's
+    first run in it: each run shows in the instances' access trace. Four at a time: each starts Hermes, for Claude
+    also Claude Code."""
+    s = load()
+    if not (s.dashboard_enabled and s.dashboard_subscription_usage):
+        USAGE_METRICS.unlink(missing_ok=True)
+        return
+    now = time.time()
+    if USAGE_METRICS.exists() and USAGE_METRICS.stat().st_mtime // 3600 == now // 3600:
+        return
+    containers = json.loads(run(["incus", "list", "--format", "json"]).stdout)
+    running = {c["name"] for c in containers if c["status"] == "Running"}
+    names = [inst.name for inst in Registry.load().current() if inst.state == "active" and inst.name in running]
+    with ThreadPoolExecutor(4) as pool:
+        rows = [row for rows in pool.map(_usage_of, names) for row in rows]
+    write_file(USAGE_METRICS, render.usage_metrics(rows))
+    os.utime(USAGE_METRICS, (now, now))   # the hour this round is for, also when the numbers stay the same
+
+
+def _usage_of(name: str) -> list[tuple[str, str, str, float]]:
+    """The instance's (name, provider, window, share used) of thinny's providers; none when Hermes got nothing.
+    Hermes asks the provider the instance uses, its lock's included. Its users control what Hermes says."""
+    try:
+        res = instances.hermes(name, ["usage", "--json"], check=False, timeout=instances.USAGE_TIMEOUT)
+        if res.returncode:   # without a credential, or the provider did not answer
+            return []
+        doc = json.loads(res.stdout)
+        provider = instances.PROVIDER_NAMES.get(doc["provider"])
+        windows = {window["label"]: window["used_percent"] for window in doc["windows"]}
+    except (CommandError, ValueError, TypeError, KeyError, AttributeError, RecursionError):
+        return []
+    rows = []
+    for window, labels in USAGE_WINDOWS.items():
+        used = next((windows[label] for label in labels if label in windows), None)
+        if provider and isinstance(used, (int, float)) and not isinstance(used, bool) and 0 <= used <= 100:
+            rows.append((name, provider, window, used / 100))
+    return rows

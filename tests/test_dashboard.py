@@ -4,18 +4,22 @@ import hashlib
 import io
 import json
 import os
+import re
 import subprocess
+import time
 import types
 
 import pytest
 
 from thinny import cli, dashboard, host, instances, render, system
 from thinny.registry import Instance, Registry
-from thinny.settings import Settings
+from thinny.settings import Settings, SettingsError
 from thinny.system import CommandError
 
 S = Settings(model="m1", allowed_models=("m1",), access_default="local", lan_address="192.168.1.10")
 ON = dataclasses.replace(S, dashboard_enabled=True)
+USAGE = dataclasses.replace(ON, dashboard_subscription_usage=True)
+HOUR = 1_800_000_000 // 3600 * 3600   # a clock hour's start
 SERVICES = "prometheus.service prometheus-node-exporter.service grafana-server.service"
 KEY = "-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nmQINBGTnhmkBEADUfake\n-----END PGP PUBLIC KEY BLOCK-----\n"
 
@@ -33,6 +37,11 @@ class Server:
         self.served = set()
         self.tailscale = {"BackendState": "Running"}
         self.containers = {"alice": 30 * 2**30}   # name -> its disk quota
+        self.stopped = set()   # containers not running
+        # name -> its `hermes usage --json`; none: Hermes got nothing; an error: it did not finish
+        self.usage = {}
+        self.settings = ON   # config.toml's
+        self.now = time.time()
         self.answers = []
         self.prompts = []
         self.fails = set()   # commands that fail, by their start
@@ -82,8 +91,15 @@ class Server:
         elif cmd[:4] == ["incus", "config", "trust", "remove"]:
             self.trust = [entry for entry in self.trust if entry["fingerprint"] != cmd[4]]
         elif cmd[:2] == ["incus", "list"]:
-            return json.dumps([{"name": name, "state": {"disk": {"root": {"total": quota}}}}
+            return json.dumps([{"name": name, "status": "Stopped" if name in self.stopped else "Running",
+                                "state": {"disk": {"root": {"total": quota}}}}
                                for name, quota in self.containers.items()]), 0
+        elif cmd[:2] == ["incus", "exec"]:   # as the instance's account
+            assert cmd[-3:] == ["hermes", "usage", "--json"] and cmd[2] not in self.stopped
+            answer = self.usage.get(cmd[2], "")
+            if isinstance(answer, CommandError):
+                raise answer
+            return answer, 0 if answer else 1
         elif cmd[:3] == ["btrfs", "qgroup", "show"]:
             return f"Qgroupid Referenced Exclusive Path\n0/257 {2**30} {2**29} {cmd[-1]}\n", 0
         elif cmd[:2] == ["systemctl", "mask"]:
@@ -127,6 +143,7 @@ def dashboard_files(tmp_path, monkeypatch):
                        ("GRAFANA_UPGRADES", etc / "apt/apt.conf.d/52thinny-grafana"),
                        ("PROVISIONING", etc / "grafana/provisioning"),
                        ("DISK_METRICS", tmp_path / "var/lib/prometheus/node-exporter/thinny.prom"),
+                       ("USAGE_METRICS", tmp_path / "var/lib/prometheus/node-exporter/thinny-usage.prom"),
                        ("UNFINISHED", tmp_path / "var/lib/thinny/dashboard-unfinished")):
         monkeypatch.setattr(dashboard, name, path)
 
@@ -135,8 +152,10 @@ def dashboard_files(tmp_path, monkeypatch):
 def server(tmp_path, monkeypatch):
     """A server with alice, Tailscale running and 513 GB free; the admin at a terminal."""
     srv = Server()
-    for module in (dashboard, instances):
+    for module in (dashboard, instances, system):
         monkeypatch.setattr(module, "run", srv.run)
+    monkeypatch.setattr(dashboard, "load", lambda: srv.settings)
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 0)   # as root: cli.main would run itself again with sudo
     dashboard_files(tmp_path, monkeypatch)
     (tmp_path / "etc/thinny").mkdir(parents=True)
     monkeypatch.setattr(host, "SYSTEMD", tmp_path / "etc/systemd/system")
@@ -151,7 +170,8 @@ def server(tmp_path, monkeypatch):
     monkeypatch.setattr(dashboard.sys, "stdin", Terminal())
     monkeypatch.setattr("builtins.input", srv.input)
     monkeypatch.setattr(dashboard, "http_status", srv.http_status)
-    monkeypatch.setattr(dashboard, "time", types.SimpleNamespace(monotonic=lambda: srv.clock, sleep=srv.sleep))
+    monkeypatch.setattr(dashboard, "time", types.SimpleNamespace(monotonic=lambda: srv.clock, sleep=srv.sleep,
+                                                                  time=lambda: srv.now))
     reg = Registry({"alice": Instance("alice", 9120, "lan", state="active")})
     monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
     srv.tmp = tmp_path
@@ -302,6 +322,7 @@ def test_turning_it_off_takes_back_all_but_the_packages_password_and_history(ser
     srv.answers = ["y"]
     dashboard.apply(dataclasses.replace(ON, dashboard_access="tailscale"), Registry.load())
     srv.served.add(9200)
+    dashboard.USAGE_METRICS.write_text(render.usage_metrics([("alice", "ChatGPT", "week", 0.5)]))
     srv.calls.clear()
     dashboard.apply(S, Registry.load())
     assert not srv.served
@@ -341,7 +362,6 @@ def test_the_timer_writes_the_disk_use_of_every_instance_with_a_container(server
                     "bob": Instance("bob", 9121, "local", state="disabled"),   # its disk stays
                     "carol": Instance("carol", 9122, "local")})   # its add stopped before its container
     monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
-    monkeypatch.setattr(cli.os, "geteuid", lambda: 0)
     monkeypatch.setattr(cli, "load", lambda: pytest.fail("a broken config.toml must not stop it"))
     assert cli.main(["metrics"]) == 0
     assert dashboard.DISK_METRICS.read_text() == \
@@ -350,6 +370,132 @@ def test_the_timer_writes_the_disk_use_of_every_instance_with_a_container(server
     srv.fails.add("btrfs qgroup show")
     assert cli.main(["metrics"]) == 1   # not a 0: the last file stays, and grows old
     assert "bob" in dashboard.DISK_METRICS.read_text()
+
+
+def usage(provider, *windows, reason=None):
+    """`hermes usage --json` of `provider` with these (label, used percent) windows."""
+    return json.dumps({"provider": provider, "source": "s", "title": "t", "plan": "Plus",
+                       "fetched_at": "2026-11-19T15:00:00+00:00", "details": [], "unavailable_reason": reason,
+                       "windows": [{"label": label, "used_percent": used, "resets_at": None, "detail": None}
+                                   for label, used in windows]})
+
+
+def asked(srv):
+    """The instances whose Hermes was asked for its subscription usage."""
+    return sorted(call.split()[2] for call in srv.calls if call.endswith("hermes usage --json"))
+
+
+def test_the_timer_writes_each_running_instances_share_of_its_subscription_limits(server, monkeypatch):
+    srv = server
+    names = ["alice", "bob", "carol", "dave", "erin", "frank", "gina", "hank", "ivy", "jack"]
+    reg = Registry({name: Instance(name, 9120 + i, "lan", state="active") for i, name in enumerate(names)})
+    reg.get("ivy").state = "disabled"   # its container stays
+    reg.get("jack").state = "pending"   # its add goes on
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
+    srv.containers = {name: 30 * 2**30 for name in names}
+    srv.stopped = {"hank"}
+    srv.settings = USAGE
+    srv.usage = {
+        "alice": usage("openai-codex", ("Session", 37.0), ("Weekly", 12.4)),
+        "bob": usage(instances.CLAUDE_PROVIDER, ("Current session", 81), ("Opus week", 90), ("Current week", 64)),
+        "carol": usage(instances.CLAUDE_PROVIDER, reason="no Claude subscription login found (run `claude`)"),
+        # dave: Hermes got nothing (no login, or no answer)
+        "erin": CommandError("hermes usage --json: timed out after 20 s"),
+        "frank": "Traceback (most recent call last):",
+        "gina": usage("openrouter", ("Session", 5)),   # no subscription of thinny's
+        "ivy": usage("openai-codex", ("Session", 1)),
+        "jack": usage("openai-codex", ("Session", 1)),
+    }
+    assert cli.main(["metrics"]) == 0
+    assert dashboard.USAGE_METRICS.read_text() == render.usage_metrics([
+        ("alice", "ChatGPT", "5h", 0.37), ("alice", "ChatGPT", "week", 0.124),
+        ("bob", "Claude", "5h", 0.81), ("bob", "Claude", "week", 0.64)])
+    assert asked(srv) == ["alice", "bob", "carol", "dave", "erin", "frank", "gina"]   # the provider: Hermes's
+    assert "disk_used_bytes{name=\"hank\"}" in dashboard.DISK_METRICS.read_text()
+
+
+def test_only_thinnys_providers_and_percentages_from_an_instances_hermes_count(server, monkeypatch):
+    srv = server
+    names = ["alice", "bob", "carol", "dave", "erin", "frank", "gina", "hank", "ivy"]
+    reg = Registry({name: Instance(name, 9120 + i, "lan", state="active") for i, name in enumerate(names)})
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
+    srv.containers = {name: 30 * 2**30 for name in names}
+    srv.settings = USAGE
+    # Its users control what their Hermes says.
+    srv.usage = {
+        "alice": usage("openai-codex", ("Session", True), ("Weekly", float("nan"))),
+        "bob": usage("openai-codex", ("Session", 10**400), ("Weekly", "37")),
+        "carol": usage("openai-codex", ("Session", 100.5), ("Weekly", -1)),
+        "dave": json.dumps({"provider": ["openai-codex"], "windows": []}),
+        "erin": json.dumps({"provider": "openai-codex", "windows": [["Session", 3]]}),
+        "frank": json.dumps([1]),
+        "gina": usage('openai-codex",name="bob', ("Session", 3)),
+        "hank": usage("openai-codex", ("Session", 0), ("Weekly", 100)),
+        "ivy": "[" * 10**5 + "]" * 10**5,   # too deep for Python's JSON
+    }
+    assert cli.main(["metrics"]) == 0
+    assert dashboard.USAGE_METRICS.read_text() == render.usage_metrics([("hank", "ChatGPT", "5h", 0.0),
+                                                                        ("hank", "ChatGPT", "week", 1.0)])
+
+
+def test_it_asks_once_a_clock_hour_at_the_timers_first_run_in_it(server):
+    srv = server
+    srv.settings = USAGE
+    srv.usage = {"alice": usage("openai-codex", ("Session", 37), ("Weekly", 12))}
+    hours = []
+    for minute in range(-10, 125, 5):   # every 5 minutes, from 10 minutes before the hour to 2 hours after it
+        srv.now = HOUR + minute * 60 + 3
+        srv.calls.clear()
+        assert cli.main(["metrics"]) == 0
+        if asked(srv):
+            hours.append(minute)
+    assert hours == [-10, 0, 60, 120]
+
+
+def test_a_round_keeps_only_what_it_got_and_freshens_the_file_also_when_it_stays(server, monkeypatch):
+    srv = server
+    reg = Registry({name: Instance(name, 9120 + i, "lan", state="active") for i, name in enumerate(["alice", "bob"])})
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
+    srv.containers = {"alice": 30 * 2**30, "bob": 30 * 2**30}
+    srv.settings = USAGE
+    srv.usage = {name: usage("openai-codex", ("Session", 37), ("Weekly", 12)) for name in ("alice", "bob")}
+    srv.now = HOUR
+    cli.main(["metrics"])
+    assert 'name="bob"' in dashboard.USAGE_METRICS.read_text()
+    srv.usage["bob"] = ""   # e.g. the provider did not answer
+    srv.now = HOUR + 3600
+    cli.main(["metrics"])
+    alice = render.usage_metrics([("alice", "ChatGPT", "5h", 0.37), ("alice", "ChatGPT", "week", 0.12)])
+    assert dashboard.USAGE_METRICS.read_text() == alice
+    srv.now = HOUR + 7200
+    cli.main(["metrics"])
+    assert dashboard.USAGE_METRICS.read_text() == alice and dashboard.USAGE_METRICS.stat().st_mtime == HOUR + 7200
+
+
+@pytest.mark.parametrize("off", [ON, dataclasses.replace(USAGE, dashboard_enabled=False)])
+def test_off_it_asks_nothing_and_takes_its_file_away_and_on_again_it_asks_at_once(server, off):
+    srv = server
+    srv.settings = USAGE
+    srv.usage = {"alice": usage("openai-codex", ("Session", 37), ("Weekly", 12))}
+    srv.now = HOUR
+    cli.main(["metrics"])
+    srv.settings = off
+    srv.calls.clear()
+    assert cli.main(["metrics"]) == 0
+    assert not dashboard.USAGE_METRICS.exists() and not asked(srv)
+    assert dashboard.DISK_METRICS.exists()
+    srv.settings = USAGE
+    srv.now = HOUR + 600   # in the same hour
+    cli.main(["metrics"])
+    assert asked(srv) == ["alice"] and dashboard.USAGE_METRICS.exists()
+
+
+def test_a_broken_config_toml_stops_only_the_subscription_usage(server, monkeypatch):
+    def broken():
+        raise SettingsError("/etc/thinny/config.toml: Expected '=' after a key (at line 3, column 5)")
+    monkeypatch.setattr(dashboard, "load", broken)
+    assert cli.main(["metrics"]) == 1
+    assert 'disk_used_bytes{name="alice"}' in dashboard.DISK_METRICS.read_text()
 
 
 def test_the_update_renews_grafanas_key_only_while_its_repository_is_in_use(server, monkeypatch, capsys):
@@ -383,6 +529,28 @@ def test_the_dashboard_reads_the_provisioned_prometheus_and_thinnys_disk_file():
     instances = board["templating"]["list"][0]["query"]   # the instances to choose from: thinny's
     assert instances == "label_values(thinny_instance_disk_quota_bytes, name)"
     assert 'thinny_instance_disk_quota_bytes{name="alice"}' in render.disk_metrics([("alice", 1, 2)])
+
+
+def test_the_dashboard_shows_the_subscription_usage_only_while_thinnys_file_of_it_is_fresh():
+    board = json.loads((host.FILES / "grafana/thinny.json").read_text())
+    fresh = f' and on() (time() - node_textfile_mtime_seconds{{file="{dashboard.USAGE_METRICS}"}} < 7200)'
+    usage = {panel["title"]: panel for panel in board["panels"]
+             if any("thinny_instance_subscription_used_ratio{" in target["expr"] for target in panel.get("targets", []))}
+    assert list(usage) == ["Weekly subscription limit used", "Subscription limits"]
+    exprs = [target["expr"] for panel in usage.values() for target in panel["targets"]]
+    assert all(expr.endswith(fresh) for expr in exprs)
+    assert {window for expr in exprs for window in re.findall(r'window="(\w+)"', expr)} == set(dashboard.USAGE_WINDOWS)
+    assert 'thinny_instance_subscription_used_ratio{name="alice",provider="ChatGPT",window="week"} 0.5' in \
+        render.usage_metrics([("alice", "ChatGPT", "week", 0.5)])
+    # the fleet's in the row of the 10 with the most, the chosen instance's in its row
+    rows = {panel["title"]: panel["gridPos"]["y"] for panel in board["panels"] if panel["type"] == "row"}
+    assert rows["Instances: the 10 with the most"] < usage["Weekly subscription limit used"]["gridPos"]["y"] \
+        < rows["Instance $instance"] < usage["Subscription limits"]["gridPos"]["y"]
+    assert all('{name="$instance",' in target["expr"] for target in usage["Subscription limits"]["targets"])
+    cells = [(x, y) for panel in board["panels"] for grid in [panel["gridPos"]]
+             for x in range(grid["x"], grid["x"] + grid["w"]) for y in range(grid["y"], grid["y"] + grid["h"])]
+    assert len(cells) == len(set(cells))   # no panel covers another
+    assert len({panel["id"] for panel in board["panels"]}) == len(board["panels"])
 
 
 def test_it_waits_for_tailscale_rather_than_forget_what_tailscale_serves(server, monkeypatch):

@@ -228,7 +228,8 @@ def caddy(s: Settings, reg: Registry):
 
 def dashboard(s: Settings, reg: Registry):
     """With the dashboard on: its services, nothing of it beyond 127.0.0.1 but Caddy's and Tailscale's sites,
-    Incus's metrics for Prometheus's certificate, Prometheus reading them and the instances' disk use."""
+    Incus's metrics for Prometheus's certificate, Prometheus reading them and the instances' disk use (and
+    subscription usage, when asked for)."""
     if not s.dashboard_enabled:
         return
     fix = "thinny config apply"
@@ -273,6 +274,11 @@ def dashboard(s: Settings, reg: Registry):
     fresh = dash.DISK_METRICS.exists() and time.time() - dash.DISK_METRICS.stat().st_mtime < 15 * 60
     yield (ok("the instances' disk use is fresh") if fresh
            else warn("the instances' disk use is missing or older than 15 minutes", "journalctl -u thinny-metrics"))
+    if s.dashboard_subscription_usage:   # asked for hourly; the file can be fresh without anybody's answer
+        fresh = dash.USAGE_METRICS.exists() and time.time() - dash.USAGE_METRICS.stat().st_mtime < 2 * 3600
+        yield (ok("the instances' subscription usage is fresh") if fresh
+               else warn("the instances' subscription usage is missing or older than 2 hours",
+                         "journalctl -u thinny-metrics"))
     code = system.http_status(f"http://127.0.0.1:{published[0]}/api/health")
     yield (ok(f"Grafana answers (HTTP {code})") if code == "200"
            else fail(f"Grafana does not answer at 127.0.0.1:{published[0]} (HTTP {code})", "journalctl -u grafana-server"))
