@@ -946,6 +946,8 @@ def test_a_new_instance_can_open_webui_instead_of_the_webapp(incus, capsys):
     assert settings["hidden_tabs"] == ["kanban", "tasks", "skills", "memory", "workspaces", "profiles", "insights", "logs"]
     assert settings["hide_composer_context"] and settings["hide_composer_profile"] and settings["hide_composer_workspace"]
     assert settings["check_for_updates"] is False
+    # its users' chats on Telegram, email and the like in the sidebar, without Claude Code's
+    assert settings["show_cli_sessions"] and settings["show_claude_code_sessions"] is False
     # the gateway first (scheduled jobs, the phone), then WebUI on the port the gateway leaves it
     assert incus.where("hermes gateway install") < incus.where("systemctl --user restart hermes-webui")
     out = capsys.readouterr().out
