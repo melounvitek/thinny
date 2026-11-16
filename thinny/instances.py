@@ -551,7 +551,7 @@ def check_gateway(s: Settings, inst: Instance, timeout: float = 180) -> None:
             break
         if time.time() > deadline:
             raise CommandError(f"{inst.name}: gateway {'active' if active else 'not active'}, Webapp HTTP {code}")
-        time.sleep(5)
+        time.sleep(1)
     if not settings_for(s, inst).model_lock:
         return
     if plugin_states(inst.name).get("model-guard") != "enabled":
