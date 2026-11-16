@@ -27,7 +27,7 @@ def move(s: Settings, reg: Registry, names: list[str], to: str) -> None:
         if inst.state != "active":
             raise RegistryError(f"{inst.name} is {inst.state}")
     if update.UNFINISHED.exists():
-        raise CommandError("an update is unfinished on this server; run thinny update on both servers first")
+        raise CommandError("an update is unfinished on this server; run thinny update --all on both servers first")
     release = host.release()
     for inst in targets:
         if remote(to, receive_args(inst, release, check=True)):
@@ -102,9 +102,9 @@ def receive(s: Settings, reg: Registry, name: str, access: str, url: str, releas
     here = host.release()
     if here not in (None, release):
         raise CommandError(f"{name} runs Hermes {release[0]}, this server {here[0]}, and Hermes databases cannot be "
-                           "downgraded; run thinny update on both servers first")
+                           "downgraded; run thinny update --all on both servers first")
     if update.UNFINISHED.exists():
-        raise CommandError("an update is unfinished on this server; run thinny update on both servers first")
+        raise CommandError("an update is unfinished on this server; run thinny update --all on both servers first")
     reg.next_port(s.port_range)   # raise when none is left
     reg.next_address()
     if archive is None:

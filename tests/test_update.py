@@ -96,33 +96,37 @@ def registry():
                      "carol": Instance("carol", 9122, "lan", state="pending")})
 
 
-@pytest.mark.parametrize("release, age, auto_update, now, result, detail", [
-    (("v2", "c2"), 72, True, False, "up-to-date", "v2"),
-    (("v1", "c1"), 1, True, False, "waiting", "v2 is 1 h old, waiting for 48 h"),
-    (("v1", "c1"), 1, True, True, "ok", "updated to v2"),
-    (("v1", "c1"), 72, False, False, "available", "v2; automatic updates are off"),
-    (("v1", "c1"), 72, False, True, "ok", "updated to v2"),
+# A manual update waits for the same age as the timer, but runs with automatic updates off; `now` waits for nothing.
+@pytest.mark.parametrize("release, age, auto_update, kw, result, detail", [
+    (("v2", "c2"), 72, True, {}, "up-to-date", "v2"),
+    (("v1", "c1"), 1, True, {}, "waiting", "v2 is 1 h old, waiting for 48 h"),
+    (("v1", "c1"), 1, True, {"manual": True}, "waiting", "v2 is 1 h old, waiting for 48 h"),
+    (("v1", "c1"), 1, True, {"manual": True, "now": True}, "ok", "updated to v2"),
+    (("v1", "c1"), 72, False, {}, "available", "v2; automatic updates are off"),
+    (("v1", "c1"), 72, False, {"manual": True}, "ok", "updated to v2"),
 ])
-def test_only_a_due_release_is_installed(server, release, age, auto_update, now, result, detail):
+def test_only_a_due_release_is_installed(server, release, age, auto_update, kw, result, detail):
     server.release, server.age = release, age
-    assert update.run(dataclasses.replace(S, auto_update=auto_update), registry(), now=now) == 0
+    assert update.run(dataclasses.replace(S, auto_update=auto_update), registry(), **kw) == 0
     status = server.status()
     assert (status["result"], status["detail"]) == (result, detail)
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d", status["time"])
     assert ("install alice c2" in server.calls) == (result == "ok")
 
 
-@pytest.mark.parametrize("webui_age, auto_update, now, result, detail", [
-    (72, True, False, "ok", "v2; WebUI updated to w2"),
-    (1, True, False, "up-to-date", "v2; WebUI w2 is 1 h old, waiting for 48 h"),
-    (1, True, True, "ok", "v2; WebUI updated to w2"),
-    (72, False, False, "available", "v2; WebUI w2; automatic updates are off"),
+@pytest.mark.parametrize("webui_age, auto_update, kw, result, detail", [
+    (72, True, {}, "ok", "v2; WebUI updated to w2"),
+    (1, True, {}, "up-to-date", "v2; WebUI w2 is 1 h old, waiting for 48 h"),
+    (1, True, {"manual": True}, "up-to-date", "v2; WebUI w2 is 1 h old, waiting for 48 h"),
+    (1, True, {"manual": True, "now": True}, "ok", "v2; WebUI updated to w2"),
+    (72, False, {}, "available", "v2; WebUI w2; automatic updates are off"),
+    (72, False, {"manual": True}, "ok", "v2; WebUI updated to w2"),
 ])
-def test_instances_with_webui_get_its_latest_release_like_hermes(server, webui_age, auto_update, now, result, detail):
+def test_instances_with_webui_get_its_latest_release_like_hermes(server, webui_age, auto_update, kw, result, detail):
     server.release, server.commits, server.webui_age = ("v2", "c2"), {"alice": "c2", "bob": "c2"}, webui_age
     reg = registry()
     reg.get("bob").frontend = "webui"
-    assert update.run(dataclasses.replace(S, auto_update=auto_update), reg, now=now) == 0
+    assert update.run(dataclasses.replace(S, auto_update=auto_update), reg, **kw) == 0
     assert (server.status()["result"], server.status()["detail"]) == (result, detail)
     # only bob uses WebUI; its restart restarts WebUI too
     assert server.calls == (["webui bob d2", "restart bob"] if result == "ok" else [])
@@ -351,12 +355,14 @@ def head(repo):
     return subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
 
 
-def test_thinny_installs_each_new_commit_of_its_clone_once(clone, tmp_path):
+def test_thinny_installs_each_new_commit_of_its_clone_once(clone, tmp_path, capsys):
     assert update.update_thinny() is False
     git("commit", "-qm", "v2", "--allow-empty", cwd=clone)
     assert update.update_thinny() is True
     assert (tmp_path / "commit").read_text().strip() == head(clone)
+    capsys.readouterr()
     assert update.update_thinny() is False
+    assert capsys.readouterr().err == f"thinny {head(clone)[:12]} is up to date\n"
     assert runs(tmp_path) == 2   # the first install, then v2
 
 

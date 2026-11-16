@@ -177,9 +177,9 @@ def test_a_name_this_server_has_or_had_is_refused(target, incus, monkeypatch):
 
 
 def test_another_release_or_an_unfinished_update_is_refused(target, incus, tmp_path):
-    refused(target, "run thinny update on both servers first", release=("v1", "c1"))
+    refused(target, "run thinny update --all on both servers first", release=("v1", "c1"))
     (tmp_path / "update-unfinished").write_text("v3 c3\n")
-    refused(target, "run thinny update on both servers first")
+    refused(target, "run thinny update --all on both servers first")
     assert not incus.ran("incus import")
 
 
@@ -346,7 +346,7 @@ def test_only_active_instances_move_and_not_during_an_unfinished_update(source, 
     with pytest.raises(RegistryError, match="carol is disabled"):
         move.move(S, reg, ["alice", "carol"], "admin@new")
     (tmp_path / "update-unfinished").write_text("v3 c3\n")
-    with pytest.raises(CommandError, match="run thinny update on both servers first"):
+    with pytest.raises(CommandError, match="run thinny update --all on both servers first"):
         move.move(S, reg, ["alice"], "admin@new")
     assert other.calls == [] and not incus.ran("incus stop")
 

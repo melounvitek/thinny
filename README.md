@@ -166,7 +166,7 @@ Without a terminal, it stops after copying the example. Edit `/etc/thinny/config
 `network.interface` and `access.lan_address`, or `""` and another
 `access.default`), then run `sudo sh /usr/local/src/thinny/install.sh`.
 
-Rerunning `install.sh` is safe. `thinny update` updates thinny itself too (see [Updates](#updates)).
+Rerunning `install.sh` is safe. `thinny update` updates thinny from its clone (see [Updates](#updates)).
 
 In bash, Tab completes thinny's commands and options. Instance names complete only in a root
 shell (`sudo -i`): elsewhere, the completion runs as you, and only root reads the instances.
@@ -333,7 +333,7 @@ thinny instance restart --group sales   # instead of names: resize, login, model
   server gives it its own port, address, policy and packages: `lan`, `tailscale` and `local`
   instances get a new address; for `url` ones, point your DNS or tunnel at the new server. The
   old copy stays here, disabled.
-- Before a move, run `thinny update` on both servers: they need the same Hermes release. Each
+- Before a move, run `thinny update --all` on both servers: they need the same Hermes release. Each
   needs room for one container archive. SSH must reach the new server as root, or as an account
   with sudo without a password. It asks nothing, so connect once as root by hand to accept the
   host key (`sudo ssh admin@new-server true`). sudo hides your SSH agent: thinny uses root's key
@@ -548,11 +548,14 @@ with every gateway restart, which a new Hermes needs.
 With `auto_update = false` the nightly run leaves thinny as it is and only reports a new Hermes
 release. The result is
 in `/var/lib/thinny/update-status.json`, the log in `/var/log/thinny.log`. Nightly runs
-also deliver new built-ins unless `auto_update = false`. Every non-dry run that gets past the thinny update updates Claude Code.
+also deliver new built-ins unless `auto_update = false`. Every nightly or `--all` run that gets past the thinny
+update, except a dry run, updates Claude Code.
 
 ```sh
-thinny update             # thinny, Hermes and WebUI now, ignoring the minimum age and auto_update
-thinny update --dry-run   # only report what it would do
+thinny update                   # thinny only
+thinny update --all             # thinny, then Hermes, WebUI and built-ins, even with auto_update = false
+thinny update --all --now       # the same, without waiting for min_release_age_hours
+thinny update --all --dry-run   # only report what --all would do
 ```
 
 - **There is no rollback.** Hermes databases cannot be downgraded. Snapshot the server before

@@ -1,5 +1,5 @@
-"""thinny update (nightly with --scheduled): thinny itself from its clone, then every instance's Hermes,
-one container at a time, to exactly the same release, then the same for WebUI."""
+"""thinny update: thinny itself from its clone. With --all (nightly with --scheduled), then every instance's
+Hermes, one container at a time, to exactly the same release, then the same for WebUI."""
 
 from __future__ import annotations
 
@@ -23,10 +23,11 @@ UNFINISHED = STATE_DIR / "update-unfinished"
 REBOOT_REQUIRED = Path("/run/reboot-required")
 
 
-def run(s: Settings, reg: Registry, *, dry_run: bool = False, now: bool = False) -> int:
-    """Update when the latest stable release is old enough, or `now`. `dry_run` only reports: no
-    changes and no status file, so the last nightly result stays visible."""
-    log(f"=== thinny update{' --dry-run' if dry_run else ''}{'' if now else ' --scheduled'}")
+def run(s: Settings, reg: Registry, *, dry_run: bool = False, manual: bool = False, now: bool = False) -> int:
+    """Update when the latest stable release is old enough, or `now`; with automatic updates off only when
+    `manual`. `dry_run` only reports: no changes and no status file, so the last nightly result stays visible."""
+    log(f"=== thinny update{' --all' if manual else ' --scheduled'}{' --now' if now else ''}"
+        f"{' --dry-run' if dry_run else ''}")
     try:
         unfinished = UNFINISHED.read_text().split() if UNFINISHED.exists() else []
         if unfinished and not dry_run:  # whatever its age, and without asking GitHub
@@ -35,7 +36,7 @@ def run(s: Settings, reg: Registry, *, dry_run: bool = False, now: bool = False)
             rollout(s, reg, tag, commit, *current)
             result, detail = "ok", f"finished the interrupted update to {tag}"
         else:
-            result, detail, tag = due(s, dry_run=dry_run, now=now)
+            result, detail, tag = due(s, dry_run=dry_run, manual=manual, now=now)
             if result == "due":
                 commit = host.commit_of(tag)
                 write_file(UNFINISHED, f"{tag} {commit}\n", 0o600)
@@ -43,14 +44,14 @@ def run(s: Settings, reg: Registry, *, dry_run: bool = False, now: bool = False)
                 result, detail = "ok", f"updated to {tag}"
             elif result in ("up-to-date", "waiting") and \
                     any(inst.built_ins != render.BUILT_INS for inst in reg.current() if inst.state == "active"):
-                if dry_run or not (s.auto_update or now):
+                if dry_run or not (s.auto_update or manual):
                     result, detail = "available", "new built-ins" + ("" if s.auto_update else "; automatic updates are off")
                 else:  # at the release all instances run
                     tag, commit = host.release()
                     write_file(UNFINISHED, f"{tag} {commit}\n", 0o600)
                     rollout(s, reg, tag, commit)
                     result, detail = "ok", f"new built-ins at {tag}"
-        webui_result, webui_detail = update_webui(s, reg, dry_run=dry_run, now=now)
+        webui_result, webui_detail = update_webui(s, reg, dry_run=dry_run, manual=manual, now=now)
         if webui_result:
             detail += f"; WebUI {webui_detail}"
             if webui_result in ("ok", "available") and result in ("up-to-date", "waiting"):
@@ -88,6 +89,7 @@ def update_thinny() -> bool:
             system.run(["git", "-C", src, "pull", "--ff-only", "-q"], env=env, timeout=300)
             head = system.run(["git", "-C", src, "rev-parse", "HEAD"]).stdout.strip()
             if installed() == head:
+                log(f"thinny {head[:12]} is up to date")
                 return False
             log(f"installing thinny {head[:12]}")
             system.run(["sh", f"{src}/install.sh"], timeout=3600)
@@ -101,7 +103,7 @@ def update_thinny() -> bool:
             raise CommandError(detail) from e
 
 
-def due(s: Settings, *, dry_run: bool, now: bool, repo: str = host.HERMES_REPO,
+def due(s: Settings, *, dry_run: bool, manual: bool, now: bool, repo: str = host.HERMES_REPO,
         path: Path | None = None) -> tuple[str, str, str]:
     """(result, detail, tag) for the latest stable release (of Hermes, or of `repo` with its release in `path`):
     up-to-date, waiting, available or due."""
@@ -115,7 +117,7 @@ def due(s: Settings, *, dry_run: bool, now: bool, repo: str = host.HERMES_REPO,
         return "up-to-date", tag, tag
     if age < s.min_release_age_hours and not now:
         return "waiting", f"{tag} is {age:.0f} h old, waiting for {s.min_release_age_hours:.0f} h", tag
-    if dry_run or not (s.auto_update or now):  # `now` is also the manual update when automatic is off
+    if dry_run or not (s.auto_update or manual):
         return "available", tag + ("" if s.auto_update else "; automatic updates are off"), tag
     return "due", "", tag
 
@@ -132,7 +134,7 @@ def rollout(s: Settings, reg: Registry, tag: str, commit: str, current: str = ""
         log(f"{inst.name}: Hermes {tag}")
         write_file(UNFINISHED, f"{tag} {commit} {inst.name}\n", 0o600)
         instances.mark_restart([inst.name])
-        instances.ensure_packages(inst.name, "thinny update")  # a new Hermes may need packages the list gained since
+        instances.ensure_packages(inst.name, "thinny update --all")  # a new Hermes may need packages the list gained since
         instances.ensure_account(inst.name)   # and the groups new built-ins need
         # Plugins are turned on only when the built-ins change, so a Hermes update keeps what users turned off.
         instances.install_hermes(s, inst.name, commit, enable=inst.built_ins != render.BUILT_INS)
@@ -144,14 +146,15 @@ def rollout(s: Settings, reg: Registry, tag: str, commit: str, current: str = ""
     UNFINISHED.unlink(missing_ok=True)
 
 
-def update_webui(s: Settings, reg: Registry, *, dry_run: bool, now: bool) -> tuple[str, str]:
+def update_webui(s: Settings, reg: Registry, *, dry_run: bool, manual: bool, now: bool) -> tuple[str, str]:
     """The instances that use WebUI to its latest stable release once it is old enough, like Hermes, one at a time,
     each followed by a checked restart; stops at the first failure, and the next run goes on. ("", "") when no
     instance uses WebUI."""
     users = [inst for inst in reg.current() if inst.state == "active" and inst.frontend == "webui"]
     if not users:
         return "", ""
-    result, detail, tag = due(s, dry_run=dry_run, now=now, repo=host.WEBUI_REPO, path=host.WEBUI_RELEASE_FILE)
+    result, detail, tag = due(s, dry_run=dry_run, manual=manual, now=now, repo=host.WEBUI_REPO,
+                              path=host.WEBUI_RELEASE_FILE)
     if result != "due":
         return result, detail
     commit = host.commit_of(tag, host.WEBUI_REPO)
