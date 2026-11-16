@@ -105,12 +105,15 @@ def test_init_suggests_a_model_of_the_claude_subscription(new_server, monkeypatc
     assert (s.model_provider, s.model) == ("claude-subscription-directsdk-experimental", "claude-opus-5-5")
 
 
-def test_init_says_when_it_could_not_check_for_a_language_pack(new_server, monkeypatch, capsys):
-    monkeypatch.setattr(system, "http_status", lambda url, timeout: "503")
-    answering(monkeypatch, "", "gpt-5.5", "cs", "", "3", "")
+@pytest.mark.parametrize("typed, pack", [("", "hermes-lang-cs"), ("-", "")])
+def test_init_asks_for_the_language_pack_when_it_could_not_check_the_catalog(new_server, monkeypatch, capsys,
+                                                                              typed, pack):
+    monkeypatch.setattr(system, "http_status", lambda url, timeout: "000")
+    # OpenAI, its model, language, its pack, interface, local only, write
+    answering(monkeypatch, "", "gpt-5.5", "cs", typed, "", "3", "")
     assert cli.main(["init"]) == 0
-    assert settings.load(new_server).language_pack == ""
-    assert "could not check Hermes's plugin catalog" in capsys.readouterr().out
+    assert settings.load(new_server).language_pack == pack
+    assert "Could not check Hermes's plugin catalog for hermes-lang-cs (HTTP status 000)" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("answers, message", [
