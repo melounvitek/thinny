@@ -182,6 +182,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     a = ap.parse_args(argv)
     command = " ".join(filter(None, (a.command, getattr(a, "action", None))))
+    # Before sudo, which would ask for a password first. chosen() and instance move below check the rest.
+    if command in ("instance resize", "instance login", "instance lock", "instance unlock") and not (a.name or a.group):
+        inst.choices[a.action].error("name the instances, or give --group")
+    if command == "instance move" and not (a.names or a.all or a.group):
+        mov.error("name the instances to move, or give --all or --group")
 
     if os.geteuid() != 0:
         # sudo drops the admin's editor, so config edit passes it on. Only there: sudo refuses variables for

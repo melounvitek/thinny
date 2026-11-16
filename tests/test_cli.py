@@ -417,9 +417,8 @@ def test_instance_move_takes_names_or_all(server, monkeypatch, capsys):
     assert cli.main(["instance", "move", "alice", "bob", "--to", "admin@new"]) == 0
     assert cli.main(["instance", "move", "--all", "--to", "new"]) == 0
     assert moved == [(["alice", "bob"], "admin@new"), ([], "new")]
-    for args in ([], ["alice", "--all"]):
-        assert cli.main(["instance", "move", *args, "--to", "new"]) == 1
-        assert "name the instances to move, or give --all" in capsys.readouterr().err
+    assert cli.main(["instance", "move", "alice", "--all", "--to", "new"]) == 1
+    assert "name the instances to move, or give --all" in capsys.readouterr().err
     assert len(moved) == 2
 
 
@@ -602,8 +601,6 @@ def test_commands_take_the_active_instances_of_a_group(sales):
 @pytest.mark.parametrize("args, message", [
     (["restart", "carol", "--group", "sales"], "name the instances, or give --group"),   # not both
     (["restart", "--group", ""], "name the instances, or give --group"),   # not every instance
-    (["unlock"], "name the instances, or give --group"),
-    (["resize", "--cpu", "4"], "name the instances, or give --group"),
     (["move", "carol", "--group", "sales", "--to", "new"], "name the instances to move, or give --all or --group"),
     (["move", "--all", "--group", "sales", "--to", "new"], "name the instances to move, or give --all or --group"),
 ])
@@ -628,8 +625,16 @@ def test_a_group_without_active_instances_selects_nothing(sales, capsys):
     (["instance", "frontend"], ["alice", "x"], "argument frontend: invalid choice: 'x'"),
     (["instance", "telegram"], ["alice", "--bogus"], "unrecognized arguments: --bogus"),
     (["instance", "group", "list"], ["extra"], "unrecognized arguments: extra"),
+    (["instance", "login"], [], "name the instances, or give --group"),
+    (["instance", "resize"], ["--cpu", "4"], "name the instances, or give --group"),
+    (["instance", "lock"], [], "name the instances, or give --group"),
+    (["instance", "unlock"], ["--group", ""], "name the instances, or give --group"),
+    (["instance", "move"], ["--to", "new"], "name the instances to move, or give --all or --group"),
 ])
-def test_a_usage_error_shows_the_whole_help_of_its_command(capsys, command, args, error):
+def test_a_usage_error_shows_the_whole_help_of_its_command(monkeypatch, capsys, command, args, error):
+    # without root, and before sudo would ask for a password
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(cli.os, "execvp", lambda file, args: pytest.fail("ran sudo"))
     with pytest.raises(SystemExit):
         cli.main([*command, "-h"])
     help = capsys.readouterr().out
