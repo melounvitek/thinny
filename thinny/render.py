@@ -83,6 +83,9 @@ def managed_config(s: Settings) -> str:
         "bot_desktop": {"placement": "terminal"},
         "security": {"redact_secrets": True},
         "approvals": {"mode": s.approvals},
+        # Hermes does not borrow Claude Code's or Codex CLI's sign-ins on its own: their refresh tokens rotate, so it
+        # could log them out, and with Claude Code the Claude plugin, which runs it.
+        "auth": {"adopt_external_logins": False},
     }
     config = merged(s.hermes, config)   # the instance's group's settings, under thinny's own
     return f"# {HEADER}\n# Hermes managed scope: these values win over every instance's own config.\n{to_yaml(config)}\n"
