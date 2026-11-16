@@ -81,7 +81,7 @@ def server(tmp_path, monkeypatch):
                         lambda name, webui=False: (srv.webui_commits if webui else srv.commits)[name])
     monkeypatch.setattr(instances, "install_hermes", srv.install_hermes)
     monkeypatch.setattr(instances, "install_webui", srv.install_webui)
-    monkeypatch.setattr(instances, "ensure_packages", lambda name: srv.calls.append(f"packages {name}"))
+    monkeypatch.setattr(instances, "ensure_packages", lambda name, resume: srv.calls.append(f"packages {name}"))
     monkeypatch.setattr(instances, "ensure_account", lambda name: srv.calls.append(f"account {name}"))
     monkeypatch.setattr(instances, "_gateway_up", srv.restart)
     monkeypatch.setattr(update, "as_user", srv.as_user)

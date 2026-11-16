@@ -226,6 +226,7 @@ def incus(tmp_path, monkeypatch):
                         lambda path=None: ("w1", "beef") if path == host.WEBUI_RELEASE_FILE else ("v2", "c0ffee"))
     monkeypatch.setattr(host, "installer", lambda: "#!/bin/sh\n")
     monkeypatch.setattr(host, "reconcile_access", lambda s, reg: None)
+    monkeypatch.setattr(host, "ufw_lacks_forward", lambda: False)   # whatever this machine's ufw does
     monkeypatch.setattr(host, "POLICIES", tmp_path / "policies")
     monkeypatch.setattr(Registry, "save", lambda self, path=None: None)
     monkeypatch.setattr(instances, "RESTART_PENDING", tmp_path / "restart-pending")
@@ -698,7 +699,26 @@ def test_a_container_without_internet_fails_fast_with_the_fix(incus, monkeypatch
     incus.containers["alice"] = {"state": "RUNNING", "devices": {d: {} for d in ("eth0", "policy", "webapp")},
                                  "internet": False}
     with pytest.raises(CommandError, match="forward chain"):
-        instances.ensure_packages("alice")
+        instances.ensure_packages("alice", "thinny instance add alice")
+    assert not incus.ran("apt-get")
+
+
+@pytest.mark.parametrize("sudo_user, command", [(None, "ufw"), ("admin", "sudo ufw")])
+def test_an_add_that_ufw_blocks_gives_the_ufw_rule_and_how_to_resume(incus, monkeypatch, sudo_user, command):
+    monkeypatch.setattr(instances.time, "sleep", lambda s: None)
+    monkeypatch.setattr(host, "ufw_lacks_forward", lambda: True)
+    monkeypatch.delenv("SUDO_USER", raising=False)
+    if sudo_user:
+        monkeypatch.setenv("SUDO_USER", sudo_user)
+    reg = Registry()
+    reg.add("alice", "local", (9120, 9199))
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {d: {} for d in ("eth0", "policy", "webapp")},
+                                 "internet": False}
+    with pytest.raises(CommandError) as e:
+        instances.add(S, reg, "alice", "local")
+    assert str(e.value) == ("ufw blocks the containers' traffic, so alice's container cannot reach the internet "
+                            f"(see README, Prerequisites). Run: {command} route allow in on thinny-+\n"
+                            "Then run thinny instance add alice again to resume.")
     assert not incus.ran("apt-get")
 
 
