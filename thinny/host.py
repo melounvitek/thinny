@@ -165,6 +165,8 @@ def ufw_lan_rules(s: Settings) -> list[str]:
     if len(words) < 4:
         return []
     office = ipaddress.ip_interface(words[3]).network
+    if office.num_addresses == 1:   # a /32 or /128, or a peer address: no office network around it
+        return []
     low, high = s.port_range
     return [f"ufw allow from {office} to any port {low}:{high} proto tcp",
             f"ufw allow from {office} to any port 80 proto tcp"]

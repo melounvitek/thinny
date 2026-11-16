@@ -214,14 +214,16 @@ def test_setup_ends_with_where_the_tunnel_goes(bare_setup, capsys, tunnel_port, 
 
 @pytest.fixture
 def ufw(bare_setup, tmp_path, monkeypatch):
-    """ufw on a server with 192.168.1.191/24: the test writes its ufw.conf and the rules `ufw show added` lists."""
+    """ufw on a server with 192.168.1.191/24 and 10.0.0.5/32: the test writes its ufw.conf and the rules
+    `ufw show added` lists."""
     monkeypatch.setattr(host.shutil, "which", lambda cmd: f"/usr/sbin/{cmd}")
     monkeypatch.setattr(host, "UFW_CONF", tmp_path / "ufw.conf")
     rules = []
 
     def run(cmd, **kw):
-        if cmd == ["ip", "-o", "addr", "show", "to", "192.168.1.191"]:
-            return subprocess.CompletedProcess(cmd, 0, "2: eth0    inet 192.168.1.191/24 brd 192.168.1.255 scope global eth0\n", "")
+        if cmd[:5] == ["ip", "-o", "addr", "show", "to"]:
+            address = {"192.168.1.191": "192.168.1.191/24", "10.0.0.5": "10.0.0.5/32"}.get(cmd[5])
+            return subprocess.CompletedProcess(cmd, 0, f"2: eth0    inet {address} scope global eth0\n" if address else "", "")
         if cmd != ["ufw", "show", "added"]:
             return subprocess.CompletedProcess(cmd, 1, "", "")
         added = "\n".join(["Added user rules (see 'ufw status' for running firewall):", *(rules or ["(None)"])])
@@ -316,8 +318,10 @@ def test_the_office_hint_has_the_configured_ports_and_sudo(ufw, capsys, monkeypa
         "Ready. Add instances with: thinny instance add <name>\n")
 
 
-def test_setup_names_no_office_network_it_cannot_find(ufw, capsys):
+# On no interface (Caddy cannot bind it either), or on one with no network around it
+@pytest.mark.parametrize("lan_address", ["10.0.0.9", "10.0.0.5"])
+def test_setup_names_no_office_network_it_cannot_find(ufw, capsys, lan_address):
     host.UFW_CONF.write_text("ENABLED=yes\n")
     ufw.append(host.UFW_FORWARD)
-    apply.setup(dataclasses.replace(LAN, lan_address="10.0.0.5"))   # on no interface, so Caddy cannot bind it either
+    apply.setup(dataclasses.replace(LAN, lan_address=lan_address))
     assert capsys.readouterr().out == "Ready. Add instances with: thinny instance add <name>\n"
