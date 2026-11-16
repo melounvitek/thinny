@@ -12,7 +12,7 @@ VALID = '[policy]\nmodel = "m1"\nallowed_models = ["m1"]\n\n[access]\nlan_addres
 @pytest.fixture
 def server(tmp_path, monkeypatch):
     """A root run against config.toml in tmp_path; records the applies and updates it starts. thinny
-    itself has nothing new."""
+    itself has nothing new, and no account or Incus container has an instance's name."""
     site = tmp_path / "config.toml"
     site.write_text(VALID)
     monkeypatch.setattr(settings, "CONFIG_TOML", site)
@@ -20,6 +20,8 @@ def server(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.os, "geteuid", lambda: 0)
     monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: Registry()))
     monkeypatch.setattr(system, "LOCK_FILE", tmp_path / "lock")
+    monkeypatch.setattr(instances, "uid_of", lambda name: None)
+    monkeypatch.setattr(instances, "container_state", lambda name: None)
     calls = []
     monkeypatch.setattr(apply, "apply", lambda s: calls.append(("apply", s.model)))
     monkeypatch.setattr(update, "run", lambda s, reg, **kw: calls.append(("update", kw)) or 0)
@@ -264,6 +266,27 @@ def test_instance_add_asks_no_frontend_when_given_one_or_when_resuming(server, t
     assert frontends == ["webui", None]
     with pytest.raises(SystemExit):
         cli.main(["instance", "add", "carol", "--access", "local", "--frontend", "open-webui"])
+
+
+@pytest.mark.parametrize("name, error", [
+    ("vitek_test", "invalid name 'vitek_test': 2-32 characters"),
+    ("vitek", "'vitek' is a system account name; choose another name"),
+    ("taken", "an Incus container 'taken' already exists; choose another name"),
+    ("alice", "alice already exists (use: thinny instance access alice ...)"),
+    ("bob", "bob was disabled; to reuse its name: thinny instance remove bob --purge"),
+])
+def test_instance_add_refuses_a_name_it_cannot_take_before_asking_anything(server, terminal, added, monkeypatch,
+                                                                          capsys, name, error):
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: Registry(
+        {"alice": Instance("alice", 9120, "local", state="active"),
+         "bob": Instance("bob", 9121, "local", state="disabled")})))
+    monkeypatch.setattr(instances, "uid_of", lambda name: 1000 if name == "vitek" else None)
+    monkeypatch.setattr(instances, "container_state", lambda name: "RUNNING" if name == "taken" else None)
+    asked = []
+    monkeypatch.setattr("builtins.input", lambda prompt="": asked.append(prompt) or "")
+    assert cli.main(["instance", "add", name]) == 1
+    assert error in capsys.readouterr().err
+    assert asked == [] and added == []
 
 
 def test_instance_frontend_switches_an_instance_to_the_other_frontend(server, monkeypatch):
