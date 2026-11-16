@@ -243,6 +243,7 @@ def incus(tmp_path, monkeypatch):
     monkeypatch.setattr(host, "reconcile_access", lambda s, reg: None)
     monkeypatch.setattr(host, "ufw_lacks_forward", lambda: False)   # whatever this machine's ufw does
     monkeypatch.setattr(host, "POLICIES", tmp_path / "policies")
+    monkeypatch.setattr(host, "DASHBOARD_STATE", tmp_path / "dashboard")
     monkeypatch.setattr(Registry, "save", lambda self, path=None: None)
     monkeypatch.setattr(instances, "RESTART_PENDING", tmp_path / "restart-pending")
     monkeypatch.setattr(system, "LOG_FILE", tmp_path / "log")

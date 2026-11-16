@@ -33,6 +33,7 @@ INSTALLER_URL = "https://hermes-agent.nousresearch.com/install.sh"
 CATALOG_URL = "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/plugin-catalog/{}.yaml"
 RELEASE_FILE = STATE_DIR / "release"   # "<tag> <commit>": the Hermes release all instances run
 WEBUI_RELEASE_FILE = STATE_DIR / "webui-release"   # the same for WebUI, of the instances that use it
+DASHBOARD_STATE = STATE_DIR / "dashboard"   # "<port> <access>" while thinny runs the dashboard (dashboard.py)
 
 
 def _github(repo: str, path: str) -> dict:
@@ -210,6 +211,14 @@ def _tailscale_served_ports() -> set[int]:
     except json.JSONDecodeError:
         return set()
     return {int(port) for port in tcp}
+
+
+def dashboard_access() -> tuple[int, str] | None:
+    """Grafana's port and how users open the dashboard while thinny runs it; None while it is off."""
+    if not DASHBOARD_STATE.exists():
+        return None
+    port, access = DASHBOARD_STATE.read_text().split()
+    return int(port), access
 
 
 def caddy_root_ca() -> Path:

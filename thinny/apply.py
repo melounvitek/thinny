@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import os
 
-from . import host, instances
+from . import dashboard, host, instances
 from .registry import Registry
 from .settings import Settings
 from .system import log
@@ -35,6 +35,7 @@ def apply(s: Settings) -> None:
     host.firewall(s)  # before anything could start a container
     host.install_units(s)
     host.ensure_profile(s)
+    dashboard.apply(s, reg)   # before the instances: a question, if any, comes early
     for inst in reg.current():
         # Without a container, its add stopped early and writes its policy. Also moves containers off the
         # policy all instances once shared.
