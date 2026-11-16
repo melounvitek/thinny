@@ -7,6 +7,7 @@ import pytest
 from thinny import host, render, system
 from thinny.registry import Instance, Registry
 from thinny.settings import Settings
+from thinny.system import CommandError
 
 S = Settings(model="m1", allowed_models=("m1",), access_default="local", network_interface="ens3",
              container_memory_mb=2048)
@@ -126,3 +127,14 @@ def test_the_dashboard_is_published_like_an_instance(commands, tmp_path, monkeyp
     host.reconcile_access(lan, Registry())
     assert "9200" not in host.CADDYFILE.read_text()
     assert "tailscale serve --bg --https=9200 http://127.0.0.1:9200" in [c for c, _ in calls]
+
+
+@pytest.mark.parametrize("out, code", [("", 1), ("<html>", 0)])
+def test_what_tailscale_serves_is_known_or_an_error(monkeypatch, out, code):
+    def run(cmd, *, check=True, **kw):
+        if check and code:
+            raise CommandError(f"{' '.join(cmd)} -> exit {code}")
+        return subprocess.CompletedProcess(cmd, code, out, "")
+    monkeypatch.setattr(host, "run", run)
+    with pytest.raises(CommandError, match="tailscale serve status --json"):
+        host.tailscale_served_ports()

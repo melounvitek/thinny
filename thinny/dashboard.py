@@ -157,36 +157,35 @@ def renew_key() -> None:
 def configure(s: Settings) -> None:
     """Incus's metrics for Prometheus's certificate, the services' settings, then the services started (those whose
     settings changed restarted) and the first file of each instance's disk use."""
-    if not CERT.exists():
+    if not CERT.exists():   # made under other names, so it is there only once complete, with its key
+        key, cert = KEY.with_name(f".{KEY.name}.tmp"), CERT.with_name(f".{CERT.name}.tmp")
         run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
-             "-days", "3650", "-subj", "/CN=thinny-metrics", "-keyout", str(KEY), "-out", str(CERT)])
-        KEY.chmod(0o600)
-        run(["chown", "prometheus:prometheus", str(KEY)])
+             "-days", "3650", "-subj", "/CN=thinny-metrics", "-keyout", str(key), "-out", str(cert)])
+        key.chmod(0o600)
+        run(["chown", "prometheus:prometheus", str(key)])
+        key.replace(KEY)
+        cert.replace(CERT)
     if not PASSWORD.exists():
         write_file(PASSWORD, f"GF_SECURITY_ADMIN_PASSWORD={secrets.token_urlsafe(18)}\n", 0o600)
     if run(["incus", "config", "get", "core.metrics_address"]).stdout.strip() != METRICS_ADDRESS:
         run(["incus", "config", "set", "core.metrics_address", METRICS_ADDRESS])
     if fingerprint() not in trusted():
         run(["incus", "config", "trust", "add-certificate", str(CERT), "--type=metrics", "--name=thinny-metrics"])
-    changed = {
-        "prometheus.service": [write_file(PROMETHEUS_CONFIG, render.prometheus_config(str(CERT), str(KEY))),
-                               write_file(dropin("prometheus.service"),
-                                          render.prometheus_dropin(s, str(PROMETHEUS_CONFIG)))],
-        "prometheus-node-exporter.service": [write_file(dropin("prometheus-node-exporter.service"),
-                                                        render.NODE_EXPORTER_DROPIN)],
-        "grafana-server.service": [write_file(dropin("grafana-server.service"), render.grafana_dropin(s, str(PASSWORD))),
-                                   write_file(PROVISIONING / "datasources/thinny.yaml", render.GRAFANA_DATASOURCE),
-                                   write_file(PROVISIONING / "dashboards/thinny.yaml",
-                                              render.grafana_dashboards(str(host.FILES / "grafana")))],
-        "thinny-metrics.timer": [write_file(host.SYSTEMD / "thinny-metrics.service", render.METRICS_SERVICE),
-                                 write_file(host.SYSTEMD / "thinny-metrics.timer", render.METRICS_TIMER)],
-    }
+    for path, text in ((PROMETHEUS_CONFIG, render.prometheus_config(str(CERT), str(KEY))),
+                       (dropin("prometheus.service"), render.prometheus_dropin(s, str(PROMETHEUS_CONFIG))),
+                       (dropin("prometheus-node-exporter.service"), render.NODE_EXPORTER_DROPIN),
+                       (dropin("grafana-server.service"), render.grafana_dropin(s, str(PASSWORD))),
+                       (PROVISIONING / "datasources/thinny.yaml", render.GRAFANA_DATASOURCE),
+                       (PROVISIONING / "dashboards/thinny.yaml", render.grafana_dashboards(str(host.FILES / "grafana"))),
+                       (host.SYSTEMD / "thinny-metrics.service", render.METRICS_SERVICE),
+                       (host.SYSTEMD / "thinny-metrics.timer", render.METRICS_TIMER)):
+        write_file(path, text)
     run(["systemctl", "daemon-reload"])
     run(["promtool", "check", "config", str(PROMETHEUS_CONFIG)])   # Prometheus would stop on a bad one
     run(["systemctl", "unmask", *SERVICES])
-    if restart := [unit for unit, writes in changed.items() if any(writes)]:
-        run(["systemctl", "restart", *restart])
-    run(["systemctl", "enable", "--now", *SERVICES, "thinny-metrics.timer"])
+    run(["systemctl", "enable", *SERVICES, "thinny-metrics.timer"])
+    # Every time: a run that failed after writing their settings left them running on the old ones.
+    run(["systemctl", "restart", *SERVICES, "thinny-metrics.timer"])
     write_disk_metrics()
 
 
@@ -218,9 +217,16 @@ def turn_off() -> None:
 
 
 def unpublish(published: tuple[int, str] | None) -> None:
-    """Stop serving the dashboard over Tailscale; Caddy's site goes with the next reconcile_access."""
-    if published and published[1] == "tailscale" and host.tailscale_status() is not None:
-        run(["tailscale", "serve", f"--https={published[0]}", "off"], check=False)   # not served: nothing to do
+    """Stop serving the dashboard over Tailscale; Caddy's site goes with the next reconcile_access. Tailscale keeps
+    what it serves while it is down, and reconcile_access leaves ports outside webapp.port_range alone, so this waits
+    for Tailscale rather than forget the port."""
+    if not published or published[1] != "tailscale" or not shutil.which("tailscale"):
+        return
+    if host.tailscale_status() is None:
+        raise CommandError(f"Tailscale is not running, so thinny cannot stop serving the dashboard at port "
+                           f"{published[0]}: start it, then run this again")
+    if published[0] in host.tailscale_served_ports():
+        run(["tailscale", "serve", f"--https={published[0]}", "off"])
 
 
 def dropin(service: str) -> Path:
@@ -245,3 +251,4 @@ def write_disk_metrics() -> None:
     rows = [(name, instances.disk_used(name), containers[name]["state"]["disk"]["root"]["total"])
             for name in sorted(Registry.load().instances) if name in containers]
     write_file(DISK_METRICS, render.disk_metrics(rows))
+    DISK_METRICS.touch()   # fresh for doctor also when the numbers stay the same

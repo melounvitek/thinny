@@ -204,7 +204,7 @@ def reconcile_access(s: Settings, reg: Registry) -> None:
     wanted = {inst.port for inst in reg.current() if inst.access == "tailscale"}
     if dashboard == "tailscale":
         wanted.add(dashboard_port)
-    served = _tailscale_served_ports()
+    served = tailscale_served_ports()
     low, high = s.port_range
     for port in sorted(wanted - served):
         run(["tailscale", "serve", "--bg", f"--https={port}", f"http://127.0.0.1:{port}"])
@@ -213,13 +213,13 @@ def reconcile_access(s: Settings, reg: Registry) -> None:
             run(["tailscale", "serve", f"--https={port}", "off"])
 
 
-def _tailscale_served_ports() -> set[int]:
-    res = run(["tailscale", "serve", "status", "--json"], check=False)
+def tailscale_served_ports() -> set[int]:
+    """The ports `tailscale serve` publishes; an error rather than a guess."""
+    out = run(["tailscale", "serve", "status", "--json"]).stdout
     try:
-        tcp = json.loads(res.stdout or "{}").get("TCP") or {}
-    except json.JSONDecodeError:
-        return set()
-    return {int(port) for port in tcp}
+        return {int(port) for port in json.loads(out or "{}").get("TCP") or {}}
+    except ValueError as e:
+        raise CommandError(f"tailscale serve status --json: {e}") from None
 
 
 def dashboard_access() -> tuple[int, str] | None:

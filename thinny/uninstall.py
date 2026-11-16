@@ -55,12 +55,7 @@ def run() -> None:
             log(f"deleting {inst.name}'s container")
             system.run(["incus", "delete", "--force", inst.name])
     if host.tailscale_status() is not None:
-        out = system.run(["tailscale", "serve", "status", "--json"]).stdout
-        try:
-            served = {int(port) for port in json.loads(out).get("TCP") or {}}
-        except ValueError as e:
-            raise CommandError(f"tailscale serve status --json: {e}") from None
-        for port in sorted(served & {inst.port for inst in reg.instances.values()}):
+        for port in sorted(host.tailscale_served_ports() & {inst.port for inst in reg.instances.values()}):
             system.run(["tailscale", "serve", f"--https={port}", "off"])
     if host.CADDYFILE.exists() and render.HEADER in host.CADDYFILE.read_text():
         system.run(["systemctl", "disable", "--now", "caddy"])

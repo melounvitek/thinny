@@ -31,6 +31,7 @@ class Server:
         self.trust = [{"fingerprint": "c1", "type": "client", "name": "admin"}]
         self.masked, self.enabled = set(), set()
         self.served = set()
+        self.tailscale = {"BackendState": "Running"}
         self.containers = {"alice": 30 * 2**30}   # name -> its disk quota
         self.answers = []
         self.prompts = []
@@ -54,9 +55,9 @@ class Server:
         elif cmd[:2] == ["apt-get", "install"]:
             self.installed |= {arg for arg in cmd[2:] if not arg.startswith("-")}
         elif cmd[0] == "openssl":
-            dashboard.KEY.write_text("private key")
+            open(cmd[cmd.index("-keyout") + 1], "w").write("private key")
             der = base64.b64encode(b"certificate").decode()
-            dashboard.CERT.write_text(f"-----BEGIN CERTIFICATE-----\n{der}\n-----END CERTIFICATE-----\n")
+            open(cmd[cmd.index("-out") + 1], "w").write(f"-----BEGIN CERTIFICATE-----\n{der}\n-----END CERTIFICATE-----\n")
         elif cmd[:4] == ["incus", "config", "get", "core.metrics_address"]:
             return self.metrics_address + "\n", 0
         elif cmd[:4] == ["incus", "config", "set", "core.metrics_address"]:
@@ -81,9 +82,9 @@ class Server:
             self.enabled -= self.masked
         elif cmd[:2] == ["systemctl", "unmask"]:
             self.masked -= set(cmd[2:])
-        elif cmd[:3] == ["systemctl", "enable", "--now"]:
-            assert not set(cmd[3:]) & self.masked
-            self.enabled |= set(cmd[3:])
+        elif cmd[:2] == ["systemctl", "enable"]:
+            assert not set(cmd[2:]) & self.masked
+            self.enabled |= set(cmd[2:])
         elif cmd[:3] == ["systemctl", "disable", "--now"]:
             self.enabled -= set(cmd[3:])
         elif cmd[:2] == ["tailscale", "serve"] and cmd[-1] == "off":
@@ -130,7 +131,9 @@ def server(tmp_path, monkeypatch):
     monkeypatch.setattr(host, "SYSTEMD", tmp_path / "etc/systemd/system")
     monkeypatch.setattr(host, "DASHBOARD_STATE", tmp_path / "var/lib/thinny/dashboard")
     monkeypatch.setattr(system, "LOG_FILE", tmp_path / "log")
-    monkeypatch.setattr(host, "tailscale_status", lambda: {"BackendState": "Running"})
+    monkeypatch.setattr(host, "tailscale_status", lambda: srv.tailscale)
+    monkeypatch.setattr(host, "tailscale_served_ports", lambda: set(srv.served))
+    monkeypatch.setattr(dashboard.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(dashboard, "tailscale_name", lambda: "server.tailnet.ts.net")
     monkeypatch.setattr(dashboard.urllib.request, "urlopen", lambda url, timeout: io.BytesIO(KEY.encode()))
     monkeypatch.setattr(dashboard.shutil, "disk_usage", lambda path: types.SimpleNamespace(free=513_000_000_000))
@@ -191,13 +194,15 @@ def test_once_confirmed_it_installs_and_starts_everything_on_127_0_0_1(server, c
     assert srv.metrics_address == "127.0.0.1:8444"
     assert srv.trust[1:] == [{"fingerprint": dashboard.fingerprint(), "type": "metrics", "name": "thinny-metrics"}]
     assert oct(dashboard.KEY.stat().st_mode & 0o777) == "0o600"
-    assert f"chown prometheus:prometheus {dashboard.KEY}" in srv.calls
+    assert dashboard.KEY.read_text() == "private key"
+    assert any(call.startswith("chown prometheus:prometheus") and call.endswith(".metrics.key.tmp") for call in srv.calls)
     assert oct(dashboard.PASSWORD.stat().st_mode & 0o777) == "0o600"
     assert dashboard.PASSWORD.read_text().startswith("GF_SECURITY_ADMIN_PASSWORD=")
     assert dashboard.dropin("grafana-server.service").read_text() == render.grafana_dropin(ON, str(dashboard.PASSWORD))
     assert dashboard.dropin("prometheus.service").read_text() == \
         render.prometheus_dropin(ON, str(dashboard.PROMETHEUS_CONFIG))
-    assert srv.index("promtool check config") < srv.index("systemctl unmask") < srv.index("systemctl enable --now")
+    assert srv.index("promtool check config") < srv.index("systemctl unmask") < srv.index("systemctl enable") \
+        < srv.index(f"systemctl restart {SERVICES} thinny-metrics.timer")
     assert not srv.masked and srv.enabled == {*SERVICES.split(), "thinny-metrics.timer"}
     assert 'thinny_instance_disk_used_bytes{name="alice"} 1073741824' in dashboard.DISK_METRICS.read_text()
     assert host.dashboard_access() == (9200, "local")
@@ -207,23 +212,23 @@ def test_once_confirmed_it_installs_and_starts_everything_on_127_0_0_1(server, c
 
     srv.calls.clear()
     password = dashboard.PASSWORD.read_text()
-    dashboard.apply(ON, Registry.load())   # nothing to do
+    dashboard.apply(ON, Registry.load())   # nothing new
     assert not [call for call in srv.calls if call.startswith(
-        ("apt-get", "systemctl mask", "systemctl restart", "openssl", "incus config set", "incus config trust add"))]
+        ("apt-get", "systemctl mask", "openssl", "incus config set", "incus config trust add"))]
+    # restarted all the same: a run that failed before restarting them left them on their old settings
+    assert f"systemctl restart {SERVICES} thinny-metrics.timer" in srv.calls
     assert dashboard.PASSWORD.read_text() == password and srv.prompts == ["Install the dashboard? [y/N] "]
     assert capsys.readouterr().out == ""
 
 
-def test_a_new_port_or_access_restarts_grafana_alone_and_moves_its_address(server, capsys):
+def test_a_new_port_or_access_moves_its_address(server, capsys):
     srv = server
     srv.answers = ["y"]
     dashboard.apply(dataclasses.replace(ON, dashboard_access="tailscale"), Registry.load())
     srv.served.add(9200)   # reconcile_access serves it
-    srv.calls.clear()
     lan = dataclasses.replace(ON, dashboard_access="lan", dashboard_port=9300)
     dashboard.apply(lan, Registry.load())
-    assert [call for call in srv.calls if call.startswith("systemctl restart")] == \
-        ["systemctl restart grafana-server.service"]
+    assert "Environment=GF_SERVER_HTTP_PORT=9300\n" in dashboard.dropin("grafana-server.service").read_text()
     assert not srv.served and host.dashboard_access() == (9300, "lan")
     assert capsys.readouterr().out.endswith(
         "Dashboard: https://192.168.1.10:9300/ (user admin; its first password: sudo cat "
@@ -333,3 +338,47 @@ def test_the_dashboard_reads_the_provisioned_prometheus_and_thinnys_disk_file():
     instances = board["templating"]["list"][0]["query"]   # the instances to choose from: thinny's
     assert instances == "label_values(thinny_instance_disk_quota_bytes, name)"
     assert 'thinny_instance_disk_quota_bytes{name="alice"}' in render.disk_metrics([("alice", 1, 2)])
+
+
+def test_it_waits_for_tailscale_rather_than_forget_what_tailscale_serves(server, monkeypatch):
+    srv = server
+    srv.answers = ["y"]
+    dashboard.apply(dataclasses.replace(ON, dashboard_access="tailscale"), Registry.load())
+    srv.served.add(9200)
+    srv.tailscale = None   # Tailscale keeps serving the port once it is back
+    for s in (S, ON):   # off, or local
+        with pytest.raises(CommandError, match="Tailscale is not running, so thinny cannot stop serving the "
+                                               "dashboard at port 9200"):
+            dashboard.apply(s, Registry.load())
+        assert host.dashboard_access() == (9200, "tailscale")
+    srv.tailscale = {"BackendState": "Running"}
+
+    def unknown():
+        raise CommandError("tailscale serve status --json -> exit 1")
+    monkeypatch.setattr(host, "tailscale_served_ports", unknown)
+    with pytest.raises(CommandError, match="tailscale serve status"):
+        dashboard.apply(S, Registry.load())
+    assert host.dashboard_access() == (9200, "tailscale")
+    monkeypatch.setattr(host, "tailscale_served_ports", lambda: set(srv.served))
+    dashboard.apply(S, Registry.load())
+    assert not srv.served and host.dashboard_access() is None
+
+
+def test_turning_it_off_takes_back_a_turn_on_that_stopped_halfway(server):
+    srv = server
+    srv.answers, srv.fails = ["y"], {"openssl"}
+    with pytest.raises(CommandError):
+        dashboard.apply(ON, Registry.load())
+    assert not dashboard.CERT.exists() and srv.masked
+    srv.fails = set()
+    dashboard.apply(S, Registry.load())
+    assert host.dashboard_access() is None and not dashboard.GRAFANA_SOURCE.exists()
+    assert srv.masked == set(SERVICES.split()) and srv.metrics_address == ""
+
+
+def test_doctor_sees_the_disk_file_fresh_also_when_its_numbers_stay(server):
+    dashboard.write_disk_metrics()
+    old = dashboard.DISK_METRICS.stat().st_mtime - 600
+    os.utime(dashboard.DISK_METRICS, (old, old))
+    dashboard.write_disk_metrics()
+    assert dashboard.DISK_METRICS.stat().st_mtime > old + 500
