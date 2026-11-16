@@ -29,7 +29,7 @@ DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y -q \
 echo "Installing thinny into $LIB"
 mkdir -p "$LIB"
 rm -rf "$LIB/thinny"
-cp -r "$SRC/thinny" "$SRC/bin" "$SRC/config.example.toml" "$SRC/group.example.toml" "$LIB/"
+cp -r "$SRC/thinny" "$SRC/bin" "$SRC/config.example.toml" "$SRC/group.example.toml" "$SRC/secrets.example.env" "$LIB/"
 # In place: every instance's container mounts files/model-guard, and a replaced directory would
 # leave them an empty one. Gateways load a changed model guard at their next restart.
 mkdir -p "$LIB/files"
@@ -59,7 +59,7 @@ if [ ! -f "$CONFIG" ]; then
 		exit 0
 	fi
 fi
-# Only root reads it: it may hold the Telegram manager bot's token.
+# Only root reads it: one from before secrets.env may still hold tokens.
 chmod 600 "$CONFIG"
 
 /usr/local/sbin/thinny setup

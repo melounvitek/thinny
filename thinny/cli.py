@@ -103,8 +103,11 @@ def main(argv: list[str] | None = None) -> int:
                      help="as the nightly timer: respect auto_update, wait for min_release_age_hours")
     cfg = sub.add_parser("config", help="the server settings, /etc/thinny/config.toml")
     cfg = cfg.add_subparsers(dest="action", required=True, metavar="action")
-    cfg.add_parser("edit", help="edit config.toml (or a group's file) in $VISUAL or $EDITOR, check it, then apply it") \
-        .add_argument("--group", help="the group's Hermes settings instead, /etc/thinny/groups/<group>.toml")
+    edt = cfg.add_parser("edit", help="edit config.toml (or a group's file, or the tokens) in $VISUAL or $EDITOR, "
+                                      "check it, then apply it").add_mutually_exclusive_group()
+    edt.add_argument("--group", help="the group's Hermes settings instead, /etc/thinny/groups/<group>.toml")
+    edt.add_argument("--secrets", action="store_true",
+                     help="the tokens instead, /etc/thinny/secrets.env (commands read them when they need them)")
     cfg.add_parser("apply", help="bring the server in line with config.toml after editing it")
     inst = sub.add_parser("instance", help="instances, one container each")
     inst = inst.add_subparsers(dest="action", required=True, metavar="action")
@@ -233,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
                 if a.group == "none":
                     raise CommandError("'none' means no group; choose another name")
             with lock():  # before editing: a running update says so now, not after the edit
-                if edit_config(a.group):
+                if edit_config(a.group, a.secrets) and not a.secrets:
                     apply.apply(load())
             return 0
         s = load()
@@ -363,16 +366,17 @@ def check_group(s: settings.Settings, group: str) -> None:
         raise CommandError(f"no group {group}: create it with thinny config edit --group {group}")
 
 
-def edit_config(group: str | None = None) -> bool:
-    """Edit a copy of config.toml, or of a group's file (a new one starts as the example), like visudo: only a
-    valid change replaces it. True when it did."""
-    path = settings.group_file(group) if group else settings.CONFIG_TOML
+def edit_config(group: str | None = None, secrets: bool = False) -> bool:
+    """Edit a copy of config.toml, of a group's file or of secrets.env (a new one starts as its example), like
+    visudo: only a valid change replaces it. True when it did."""
+    path = settings.SECRETS_ENV if secrets else settings.group_file(group) if group else settings.CONFIG_TOML
     # sudo drops the admin's $EDITOR; `editor` is Debian's and Ubuntu's default (nano).
     editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or shutil.which("editor")
     if not editor:
         raise CommandError(f"no editor found (set EDITOR), or edit {path}, then run: thinny config apply")
-    original = (path if path.exists() or not group else host.LIB / "group.example.toml").read_text(encoding="utf-8")
-    fd, name = tempfile.mkstemp(prefix="config-", suffix=".toml")
+    original = (path if path.exists() or not (group or secrets) else
+                host.LIB / ("secrets.example.env" if secrets else "group.example.toml")).read_text(encoding="utf-8")
+    fd, name = tempfile.mkstemp(prefix="config-", suffix=path.suffix)   # only root reads it
     copy = Path(name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -389,8 +393,13 @@ def edit_config(group: str | None = None) -> bool:
                 print(f"{path.name} is unchanged.")
                 return False
             try:
-                settings.parse_group(text, str(path)) if group else settings.parse(text, source=str(path))
-            except SettingsError as e:
+                if secrets:
+                    settings.parse_secrets(text, str(path))
+                elif group:
+                    settings.parse_group(text, str(path))
+                else:
+                    settings.parse(text, source=str(path))
+            except SettingsError as e:   # never what secrets.env holds
                 print(e)
                 try:
                     answer = input("Edit again or discard the changes? [E/d] ")
@@ -400,7 +409,7 @@ def edit_config(group: str | None = None) -> bool:
                     print(f"Discarded; {path.name} is unchanged.")
                     return False
                 continue
-            write_file(path, text, 0o600)   # it may hold tokens: the Telegram manager bot's, MCP servers'
+            write_file(path, text, 0o600)   # secrets.env holds tokens, a group's file may hold MCP servers'
             return True
     finally:
         copy.unlink(missing_ok=True)
