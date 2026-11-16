@@ -17,7 +17,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 from . import host, render, trace
-from .registry import Instance, Registry, RegistryError
+from .registry import Instance, Registry, RegistryError, validate_name
 from .settings import ACCESS_METHODS, Settings, group_file
 from .system import (INSTANCE_UID, STATE_DIR, CommandError, as_user, as_user_interactive, gateway_active, http_status,
                      in_container, log, read_user_file, run, step, tailscale_name, uid_of, write_file,
@@ -493,15 +493,11 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     instance: none). `just_imported`: it was moved here a moment ago, with the Hermes release this server runs."""
     access = access or s.access_default
     check_access(s, reg, name, access, url)
+    check_name(reg, name)
     if name in reg.instances:
         inst = reg.get(name)
-        if inst.state == "active":
-            raise CommandError(f"{name} already exists (use: thinny instance access {name} ...)")
-        if inst.state in ("disabled", "removed"):
-            raise CommandError(f"{name} was {inst.state}; to reuse its name: thinny instance remove {name} --purge")
         log(f"resuming the unfinished setup of {name}")
     else:
-        check_free_name(name)
         inst = reg.add(name, access, s.port_range)
         inst.frontend = s.frontend
     inst.access, inst.url = access, url if access == "url" else ""
@@ -590,6 +586,18 @@ def check_access(s: Settings, reg: Registry, name: str, access: str, url: str) -
         raise CommandError("set access.lan_address in config.toml first")
     if access == "tailscale" and host.tailscale_status() is None:
         raise CommandError("Tailscale is not running on this server")
+
+
+def check_name(reg: Registry, name: str) -> None:
+    """Refuse a name `add` cannot take. The name of an unfinished add passes: the add resumes."""
+    inst = reg.instances.get(name)
+    if inst is None:
+        validate_name(name)
+        check_free_name(name)
+    elif inst.state == "active":
+        raise CommandError(f"{name} already exists (use: thinny instance access {name} ...)")
+    elif inst.state in ("disabled", "removed"):
+        raise CommandError(f"{name} was {inst.state}; to reuse its name: thinny instance remove {name} --purge")
 
 
 def check_free_name(name: str) -> None:
