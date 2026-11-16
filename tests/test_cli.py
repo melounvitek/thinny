@@ -383,6 +383,17 @@ def test_instance_lock_takes_the_models_and_unlock_the_name(server, monkeypatch)
     assert calls == [("lock", "alice", ["m2", "m3"]), ("lock", "bob", []), ("unlock", "alice")]
 
 
+def test_instance_model_shows_or_sets_the_default_model_of_an_instance(server, monkeypatch):
+    calls = []
+    monkeypatch.setattr(instances, "default_model",
+                        lambda s, reg, name, model, provider: calls.append((name, model, provider)))
+    assert cli.main(["instance", "model", "alice"]) == 0
+    assert cli.main(["instance", "model", "alice", "gpt-5.5"]) == 0
+    assert cli.main(["instance", "model", "alice", "claude-opus-5-5", "--provider", "anthropic"]) == 0
+    assert calls == [("alice", None, None), ("alice", "gpt-5.5", None),
+                     ("alice", "claude-opus-5-5", instances.CLAUDE_PROVIDER)]
+
+
 def test_instance_resize_changes_only_the_given_limits(server, monkeypatch):
     changed = []
     monkeypatch.setattr(instances, "limits", lambda reg, *args: changed.append(args))
@@ -586,6 +597,8 @@ def sales(server, monkeypatch):
                         lambda s, insts, reg: done.append(("restart", [inst.name for inst in insts])))
     monkeypatch.setattr(instances, "lock", lambda s, reg, name, models: done.append(("lock", name, models)))
     monkeypatch.setattr(instances, "unlock", lambda s, reg, name: done.append(("unlock", name)))
+    monkeypatch.setattr(instances, "default_model",
+                        lambda s, reg, name, model, provider: done.append(("model", name, model, provider)))
     monkeypatch.setattr(instances, "limits", lambda reg, name, *limits: done.append(("limits", name, *limits)))
     monkeypatch.setattr(instances, "login", lambda reg, name, provider: done.append(("login", name, provider)))
     monkeypatch.setattr(move, "move", lambda s, reg, names, to: done.append(("move", names, to)))
@@ -593,13 +606,16 @@ def sales(server, monkeypatch):
 
 
 def test_commands_take_the_active_instances_of_a_group(sales):
-    for args in (["restart"], ["lock", "m2", "m3"], ["lock"], ["unlock"], ["resize", "--cpu", "4"],
-                 ["login", "--provider", "openai"], ["move", "--to", "new"]):
+    for args in (["restart"], ["lock", "m2", "m3"], ["lock"], ["unlock"], ["model", "gpt-5.5", "--provider", "openai"],
+                 ["model"], ["resize", "--cpu", "4"], ["login", "--provider", "openai"], ["move", "--to", "new"]):
         assert cli.main(["instance", *args, "--group", "sales"]) == 0
     assert sales == [("restart", ["alice", "dave"]),
                      ("lock", "alice", ["m2", "m3"]), ("lock", "dave", ["m2", "m3"]),   # models, not names
                      ("lock", "alice", []), ("lock", "dave", []),
                      ("unlock", "alice"), ("unlock", "dave"),
+                     ("model", "alice", "gpt-5.5", "openai-codex"),   # a model, not a name
+                     ("model", "dave", "gpt-5.5", "openai-codex"),
+                     ("model", "alice", None, None), ("model", "dave", None, None),
                      ("limits", "alice", 4, None, None), ("limits", "dave", 4, None, None),
                      ("login", "alice", "openai-codex"), ("login", "dave", "openai-codex"),
                      ("move", ["alice", "dave"], "new")]
@@ -608,6 +624,7 @@ def test_commands_take_the_active_instances_of_a_group(sales):
 @pytest.mark.parametrize("args, message", [
     (["restart", "carol", "--group", "sales"], "name the instances, or give --group"),   # not both
     (["restart", "--group", ""], "name the instances, or give --group"),   # not every instance
+    (["model", "carol", "gpt-5.5", "--group", "sales"], "name the instances, or give --group"),
     (["move", "carol", "--group", "sales", "--to", "new"], "name the instances to move, or give --all or --group"),
     (["move", "--all", "--group", "sales", "--to", "new"], "name the instances to move, or give --all or --group"),
 ])
@@ -636,6 +653,7 @@ def test_a_group_without_active_instances_selects_nothing(sales, capsys):
     (["instance", "resize"], ["--cpu", "4"], "name the instances, or give --group"),
     (["instance", "lock"], [], "name the instances, or give --group"),
     (["instance", "unlock"], ["--group", ""], "name the instances, or give --group"),
+    (["instance", "model"], [], "name the instances, or give --group"),
     (["instance", "move"], ["--to", "new"], "name the instances to move, or give --all or --group"),
 ])
 def test_a_usage_error_shows_the_whole_help_of_its_command(monkeypatch, capsys, command, args, error):
@@ -666,6 +684,7 @@ def tab(capsys, *words):
     (["instance", "login", "--provider", ""], ["openai", "anthropic"]),
     (["instance", "login", "--provider", "="], ["openai", "anthropic"]),   # bash's words for --provider=
     (["instance", "login", "--provider", "=", "op"], ["openai"]),
+    (["instance", "model", "--provider", ""], ["openai", "anthropic"]),
     (["instance", "add", "alice", "--frontend", "webu"], ["webui"]),
     (["instance", "frontend", "alice", ""], ["webapp", "webui"]),
     (["instance", "login", ""], []),   # only root reads the instances
@@ -689,4 +708,6 @@ def test_tab_completes_the_names_of_instances_for_root(monkeypatch, capsys):
     assert tab(capsys, "instance", "group", "set", "a") == ["alice"]
     assert tab(capsys, "instance", "remove", "--purge", "") == ["alice", "bob", "carol"]
     assert tab(capsys, "instance", "lock", "alice", "") == []   # models
+    assert tab(capsys, "instance", "model", "") == ["alice", "bob"]
+    assert tab(capsys, "instance", "model", "alice", "") == []  # a model
     assert tab(capsys, "instance", "add", "") == []             # a new name

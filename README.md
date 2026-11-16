@@ -198,6 +198,8 @@ thinny instance usage [alice]           # its users' share of their 5-hour and w
 thinny instance access alice tailscale  # lan | tailscale | url=<URL> | local
 thinny instance frontend alice webui    # webapp | webui
 thinny instance resize alice --cpu 4 --memory-mb 8192 --disk-gb 50
+thinny instance model alice             # the model its new chats start on, and the models it can use
+thinny instance model alice gpt-5.5     # new chats start on it; --provider openai | anthropic: of another provider
 thinny instance lock alice [model ...]  # only these models (default: the one it uses)
 thinny instance unlock alice            # its users choose, even with the server's lock
 thinny instance reset-password alice
@@ -206,7 +208,7 @@ thinny instance remove alice            # then delete its container and data; as
 thinny instance remove alice --purge    # also free its name and port, even once removed
 thinny instance restart [alice ...]
 thinny instance move alice bob --to admin@new-server   # or --all; experimental
-thinny instance restart --group sales   # instead of names: resize, lock, unlock, login and move too (see Groups)
+thinny instance restart --group sales   # instead of names: resize, login, model, lock, unlock and move too (see Groups)
 ```
 
 - `add` prints the address, the username (Webapp only) and the password. **The password is shown
@@ -253,6 +255,15 @@ thinny instance restart --group sales   # instead of names: resize, lock, unlock
   pins effort and plugins as the server's lock does. `unlock` leaves `alice` on the model it was
   locked to, for its users to change. Either stays whatever `policy.model_lock` says. The model
   picker keeps showing every model; the model guard refuses the others.
+- `model` sets the model `alice`'s new chats start on, in its own config, at once (no restart); its
+  users can still choose others. Hermes must offer it to `alice`, as its model picker does: a model
+  of the provider `alice` uses, or with `--provider`, of another one it is signed in to (`login`).
+  Open chats keep their model, but Telegram and phone chats take the new one at their next message.
+  A browser where a user picked a model in the Webapp keeps that pick for new chats, and an open
+  WebUI tab keeps the old model until it is reloaded.
+- `policy.model` is only what `add` suggests; `model` changes an instance's later. On a locked
+  instance (the server's lock, or its own `lock`), the lock decides where new chats start, so
+  `model` refuses it: change its lock with `lock`, or `unlock` it first.
 - Names are 2-32 lowercase letters, digits and `-`, starting with a letter. Names and ports are
   not reused, and a disabled instance cannot be re-enabled.
 - `remove` takes a disabled instance, or a pending one whose `add` you give up on. Its name
@@ -288,7 +299,7 @@ thinny instance add alice --group sales
 thinny instance group set bob sales     # join or switch; none: leave
 thinny instance group list              # groups and their instances
 thinny instance list --group sales
-thinny instance restart --group sales   # also resize, lock, unlock, login and move
+thinny instance restart --group sales   # also resize, login, model, lock, unlock and move
 ```
 
 - A group's file holds Hermes settings, keys of Hermes's `config.yaml` in TOML (see
@@ -307,8 +318,8 @@ thinny instance restart --group sales   # also resize, lock, unlock, login and m
 - Every account in a member's container can read the group's settings, MCP servers' tokens
   included.
 - `--group` takes the group's active instances one after another and stops at the first failure.
-  With `lock`, every name is a model: `thinny instance lock --group sales gpt-5.5`. `login` waits
-  for each instance's users in turn.
+  With `lock` and `model`, the names are models: `thinny instance model --group sales gpt-5.5`.
+  `login` waits for each instance's users in turn.
 - To remove a group, move its instances to another group or none, then delete its file. While an
   instance is in a group without a file, `config apply` changes nothing and says so.
 
