@@ -160,11 +160,14 @@ WantedBy=default.target
 
 def webui_settings(s: Settings) -> dict:
     """WebUI's settings for an instance that starts using it (keys of its settings.json); then its users'.
-    A simpler look than its own: Chat and Todos only in the sidebar, a plain message box."""
+    A simpler look than its own: Chat and Todos only in the sidebar, a plain message box; chats from Telegram,
+    email and the like in the sidebar too."""
     return {"language": s.language, "theme": s.theme,
             "skin": "graphite",   # its server refuses the GitHub and Codex skins its picker offers (v0.52.678)
             "hidden_tabs": ["kanban", "tasks", "skills", "memory", "workspaces", "profiles", "insights", "logs"],
             "hide_composer_context": True, "hide_composer_profile": True, "hide_composer_workspace": True,
+            # WebUI turns them off when settings.json exists before its first start (v0.52.679)
+            "show_cli_sessions": True, "show_claude_code_sessions": False,
             # its own update check offers WebUI and Hermes beyond the releases thinny installs
             "check_for_updates": False}
 
