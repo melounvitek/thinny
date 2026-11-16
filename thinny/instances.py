@@ -612,8 +612,9 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
         reg.save()
         configure_webapp(s, inst)
         if not inst.moved:  # a moved instance keeps its users' choices
-            if not s.model_lock:   # else the lock's
-                s = dataclasses.replace(s, model=hermes_default_model(name, s.model_provider))
+            if not s.model_lock:   # else the lock's: its group's, or its Hermes's default for its provider
+                s = dataclasses.replace(s, model=str(s.hermes["model"]["default"]) if "model.default" in pinned_keys(s)
+                                        else hermes_default_model(name, s.model_provider))
             # Piper (the phone's voice) speaks slowly at its own speed; lower is faster.
             set_config(s, name, {"display.language": s.language, "tts.piper.length_scale": "0.65",
                                  **starting_model(s)})
@@ -643,8 +644,9 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     else:
         print(f"Next: sign {name} in to {s.model_provider} before handing over: thinny instance login {name}")
         if not s.model_lock:
-            print(f"{name} starts on {s.model}. To pick another once it is signed in: "
-                  f"thinny instance model {name} <model>")
+            print(f"{name} starts on {s.model}" + (f", which its group sets: thinny config edit --group {inst.group}"
+                  if "model.default" in pinned_keys(s) else
+                  f". To pick another once it is signed in: thinny instance model {name} <model>"))
         if s.telegram_manager_token:
             print(f"Then send its user a Telegram bot: thinny instance telegram {name}")
 

@@ -314,6 +314,14 @@ def test_a_new_instance_starts_on_hermess_default_model_for_its_provider(incus, 
         in capsys.readouterr().out.splitlines()
 
 
+def test_a_new_instance_in_a_group_that_sets_the_model_starts_on_the_groups(incus, capsys):
+    s = dataclasses.replace(S, groups={"sales": {"model": {"default": "gpt-5.5"}}})
+    instances.add(s, Registry(), "alice", "local", group="sales")
+    assert not incus.ran(instances.DEFAULT_MODEL) and not incus.ran("hermes config set model.default")
+    assert "alice starts on gpt-5.5, which its group sets: thinny config edit --group sales" \
+        in capsys.readouterr().out.splitlines()
+
+
 def test_an_add_without_a_default_model_stops_before_the_gateway_and_resumes(incus):
     reg = Registry()
     incus.default_models = {}   # e.g. a Hermes that moved its default models elsewhere
