@@ -14,7 +14,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import apply, checks, dashboard, host, instances, mail, move, settings, system, telegram, trace, uninstall, update
+from . import (apply, checks, dashboard, export, host, instances, mail, move, settings, system, telegram, trace, uninstall,
+               update)
 from .registry import Registry, RegistryError, validate_name
 from .settings import SettingsError, load
 from .system import CommandError, lock, write_file
@@ -161,6 +162,8 @@ def main(argv: list[str] | None = None) -> int:
     eml.add_argument("senders", nargs="*", metavar="ADDRESS",
                      help="who may write to it; the first also gets its scheduled jobs' mail (default: as before)")
     eml.add_argument("--new-password", action="store_true", help="give its mailbox a new password")
+    inst.add_parser("export", help="save an instance's chats, memories, skills and settings for its users, without "
+                                   "sign-ins (see README)").add_argument("name")
     trc = inst.add_parser("trace-sheet", help="send an instance's access trace to its users' Google Sheet too")
     trc.add_argument("name")
     trc.add_argument("url", metavar="URL|off", help="the URL of the sheet's script (see README, Access trace)")
@@ -325,6 +328,8 @@ def main(argv: list[str] | None = None) -> int:
                     instances.unlock(s, reg, name)
             elif command == "instance email":
                 mail.connect(s, reg, a.name, a.senders, a.new_password)
+            elif command == "instance export":
+                export.export(reg, a.name)
             elif command == "instance trace-sheet":
                 trace.connect_sheet(reg, a.name, a.url)
             elif command == "instance reset-password":
