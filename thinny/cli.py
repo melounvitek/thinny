@@ -199,6 +199,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("uninstall", help="remove thinny and every instance, with all their data")
     sub.add_parser("trace")  # without help, so not listed: thinny-trace.service runs it
     sub.add_parser("metrics")  # without help, so not listed: thinny-metrics.timer runs it
+    for commands in (sub, cfg, inst, grp):   # listed alphabetically in help
+        commands._choices_actions.sort(key=lambda action: action.dest)
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["complete"]:   # not listed: the bash completion runs it, as whoever presses Tab
         for word in complete(ap, argv[1:]):

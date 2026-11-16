@@ -751,8 +751,8 @@ def tab(capsys, *words):
 
 
 @pytest.mark.parametrize("words, offered", [
-    ([""], ["init", "setup", "status", "doctor", "update", "config", "instance", "uninstall"]),   # not trace
-    (["instance", "re"], ["resize", "reset-password", "remove", "restart"]),                      # not receive
+    ([""], ["config", "doctor", "init", "instance", "setup", "status", "uninstall", "update"]),   # not trace
+    (["instance", "re"], ["remove", "reset-password", "resize", "restart"]),                      # not receive
     (["instance", "e"], ["email", "export"]),
     (["instance", "group", ""], ["list", "set"]),
     (["update", "--d"], ["--dry-run"]),
