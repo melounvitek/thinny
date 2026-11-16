@@ -942,8 +942,7 @@ def test_a_new_instance_can_open_webui_instead_of_the_webapp(incus, capsys):
     assert incus.ran("systemctl --user enable hermes-webui")
     # it starts in the site's language and theme, and a simpler look
     settings = json.loads(alice["files"]["/home/alice/.hermes/webui/settings.json"])
-    assert (settings["language"], settings["theme"], settings["skin"], settings["font_size"]) == \
-        ("cs", "light", "graphite", "large")
+    assert (settings["language"], settings["theme"], settings["skin"]) == ("cs", "light", "graphite")
     assert settings["hidden_tabs"] == ["kanban", "tasks", "skills", "memory", "workspaces", "profiles", "insights", "logs"]
     assert settings["hide_composer_context"] and settings["hide_composer_profile"] and settings["hide_composer_workspace"]
     assert settings["check_for_updates"] is False

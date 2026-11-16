@@ -245,7 +245,7 @@ thinny instance restart --group sales   # instead of names: resize, login, model
   **The password is shown only once.** If `add` fails, fix the cause and run it again: it continues where it stopped.
 - **WebUI** ([hermes-webui](https://github.com/nesquena/hermes-webui), `--frontend webui`) runs on
   the instance's port in place of the Webapp; the gateway keeps running for scheduled jobs and the
-  phone. It starts in `policy.language` and `webapp.theme`, with Graphite colours, large text, only
+  phone. It starts in `policy.language` and `webapp.theme`, with Graphite colours, only
   Chat and Todos in the sidebar and a plain message box; then it keeps its users' settings. A
   browser shows every sidebar tab until it has opened WebUI's Settings once (WebUI v0.52.678).
   `frontend` switches an instance either way; one added before thinny had WebUI gets a new
