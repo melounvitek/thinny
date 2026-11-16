@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from thinny.settings import Settings, SettingsError, fill, load, parse, parse_group
+from thinny import settings
+from thinny.settings import Settings, SettingsError, fill, load, parse, parse_group, secret
 
 EXAMPLE = Path(__file__).parent.parent / "config.example.toml"
 
@@ -84,11 +85,10 @@ def test_model_lock_is_off_by_default_and_then_needs_no_model():
     ({"container__cpu": 0}, "container.cpu must be at least 1"),
     ({"container__disk_gb": 1.5}, "container_disk_gb must be int"),
     ({"network__interface": "eth0; drop"}, "network.interface must be an interface name"),
-    ({"telegram__manager_token": "@acme_hermes_bot"}, "telegram.manager_token must be"),
-    ({"email__domain": "<domain>", "email__api_token": "pm-live-x"}, "email.domain must be a domain"),
-    ({"email__domain": "Example.org", "email__api_token": "pm-live-x"}, "email.domain must be a domain"),
-    ({"email__domain": "example.org"}, "set both email.domain and email.api_token, or neither"),
-    ({"email__api_token": "pm-live-x"}, "set both email.domain and email.api_token, or neither"),
+    ({"telegram__manager_token": "1000:ABC"}, "unknown setting telegram.manager_token"),   # in secrets.env
+    ({"email__api_token": "pm-live-x"}, "unknown setting email.api_token"),
+    ({"email__domain": "<domain>"}, "email.domain must be a domain"),
+    ({"email__domain": "Example.org"}, "email.domain must be a domain"),
     ({"dashboard__access": "url"}, "dashboard.access must be one of lan, tailscale, local"),
     ({"dashboard__enabled": True, "dashboard__access": "lan", "access__default": "local", "access__lan_address": None},
      "lan_address is required when dashboard.access is lan"),
@@ -120,16 +120,42 @@ def test_lan_address_is_optional_without_lan_default():
     assert parse(site(access__lan_address=None, access__default="tailscale")).lan_address == ""
 
 
-def test_telegram_is_off_without_a_manager_bot():
-    assert parse(site()).telegram_manager_token == ""
-    token = "8721778198:AAH" + "x" * 32
-    assert parse(site(telegram__manager_token=token)).telegram_manager_token == token
+def test_mailboxes_are_off_without_a_domain():
+    assert parse(site()).email_domain == ""
+    assert parse(site(email__domain="agents.example.org")).email_domain == "agents.example.org"
 
 
-def test_mailboxes_are_off_without_a_purelymail_account():
-    assert (parse(site()).email_domain, parse(site()).email_api_token) == ("", "")
-    s = parse(site(email__domain="agents.example.org", email__api_token="pm-live-x"))
-    assert (s.email_domain, s.email_api_token) == ("agents.example.org", "pm-live-x")
+def test_tokens_come_from_secrets_env_or_for_one_run_from_the_environment(monkeypatch):
+    assert secret("THINNY_PURELYMAIL_API_TOKEN") == ""   # without secrets.env
+    settings.SECRETS_ENV.write_text("# thinny's tokens\n\nTHINNY_PURELYMAIL_API_TOKEN = pm-live-x\n"
+                                    "THINNY_TELEGRAM_MANAGER_TOKEN=\n")
+    assert secret("THINNY_PURELYMAIL_API_TOKEN") == "pm-live-x"
+    assert secret("THINNY_TELEGRAM_MANAGER_TOKEN") == ""
+    monkeypatch.setenv("THINNY_PURELYMAIL_API_TOKEN", "pm-live-y")
+    assert secret("THINNY_PURELYMAIL_API_TOKEN") == "pm-live-y"
+
+
+@pytest.mark.parametrize("text, message", [
+    ("pm-live-hush\n", "line 1 is not NAME=value"),
+    ("# thinny's tokens\nTHINNY_HUSH=pm-live-hush\n", "line 2 is not one of thinny's tokens"),
+    ("THINNY_TELEGRAM_MANAGER_TOKEN=@hush_bot\n", "THINNY_TELEGRAM_MANAGER_TOKEN must be the manager bot's token"),
+])
+def test_secrets_env_is_refused_without_showing_what_it_holds(text, message):
+    settings.SECRETS_ENV.write_text(text)
+    with pytest.raises(SettingsError, match=message) as refused:
+        secret("THINNY_PURELYMAIL_API_TOKEN")
+    assert "hush" not in str(refused.value).lower()
+
+
+@pytest.mark.parametrize("name, token, message", [
+    ("THINNY_TELEGRAM_MANAGER_TOKEN", "1000:hush hush", "must be the manager bot's token"),   # in a URL
+    ("THINNY_PURELYMAIL_API_TOKEN", "pm-live-hush\nX-Other: 1", "line 2 is not NAME=value"),   # in a header
+])
+def test_a_token_from_the_environment_is_refused_like_one_from_secrets_env(monkeypatch, name, token, message):
+    monkeypatch.setenv(name, token)
+    with pytest.raises(SettingsError, match=f"{name} in the environment: .*{message}") as refused:
+        secret(name)
+    assert "hush" not in str(refused.value)
 
 
 def test_the_dashboard_is_off_by_default_and_then_only_through_an_ssh_tunnel():

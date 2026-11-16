@@ -195,6 +195,26 @@ suggests, `model` is ignored, and `reasoning_effort` is where new instances star
 lock on removes the models users chose, and turning it off leaves each locked instance on the
 lock's model, for its users to change (as `instance unlock` does).
 
+Tokens are not in `config.toml`, so you can show and share it. They are in `/etc/thinny/secrets.env`,
+which only root can read. Never show or share it, not even in part.
+
+```sh
+thinny config edit --secrets   # edit a copy, check it, then save it (nothing to apply)
+```
+
+It takes one `NAME=value` per line, without quotes: `THINNY_TELEGRAM_MANAGER_TOKEN` (see
+[Telegram](#telegram)) and `THINNY_PURELYMAIL_API_TOKEN` (see [Email](#email)). Commands read it when
+they need a token. `sudo grep -o '^[A-Z_]*=' /etc/thinny/secrets.env` lists the names set without their
+tokens, and `thinny doctor` warns when others than root can read the file.
+
+For one run, an environment variable of the same name wins, e.g. to try a token before saving it. In a
+root shell, or through sudo by name:
+
+```sh
+read -rs THINNY_PURELYMAIL_API_TOKEN && export THINNY_PURELYMAIL_API_TOKEN   # not shown, not in the history
+sudo --preserve-env=THINNY_PURELYMAIL_API_TOKEN thinny doctor
+```
+
 ## Instances
 
 ```sh
@@ -397,11 +417,10 @@ Each instance's user can get a Telegram bot of their own with one link, through 
 1. In Telegram, create the manager bot with [@BotFather](https://t.me/BotFather) (`/newbot`), e.g.
    `@acme_hermes_bot`.
 2. In BotFather's app (*Open*), choose the bot, then *Bot Settings*, and turn on *Bot Management Mode*.
-3. Put its token in `config.toml` with `thinny config edit`:
+3. Put its token in `secrets.env` with `thinny config edit --secrets`:
 
-   ```toml
-   [telegram]
-   manager_token = "123456:ABC-..."
+   ```sh
+   THINNY_TELEGRAM_MANAGER_TOKEN=123456:ABC-...
    ```
 
 Then, after `thinny instance login alice`:
@@ -419,7 +438,7 @@ can write to it. Their chat is also Hermes's Telegram home channel, so Hermes do
 - Anyone who knows the manager bot can create a bot through it, also with the suggested name.
   Check the name and Telegram ID before you answer `y`.
 - The manager token gets the token of every bot created through it. It stays on the server, in
-  `config.toml`, which only root can read.
+  `secrets.env`, which only root can read.
 - The bot belongs to its user: it is in their BotFather, where they can rename or delete it.
 - Ctrl+C stops the wait. A bot created meanwhile waits up to 24 hours: run the command again and
   confirm it. One wait at a time per server; other thinny commands run meanwhile.
@@ -441,13 +460,17 @@ Set it up once:
    Cloudflare, keep them *DNS only*, not proxied.
 2. In the domain's settings, turn off *symbolic subaddressing*. With it on, Purelymail ignores dots
    and may cut addresses at symbols such as `-`: mail for `office-sales@` could reach `office@`.
-3. Create an API token in Purelymail and put it, with the domain, in `config.toml` with
-   `thinny config edit`:
+3. Set the domain with `thinny config edit`:
 
    ```toml
    [email]
    domain = "example.org"
-   api_token = "..."
+   ```
+
+   Then create an API token in Purelymail and put it in `secrets.env` with `thinny config edit --secrets`:
+
+   ```sh
+   THINNY_PURELYMAIL_API_TOKEN=...
    ```
 
 The server must reach `smtp.purelymail.com` on port 587 and `imap.purelymail.com` on 993. Some
@@ -485,7 +508,7 @@ the first.
   nothing is deleted: run it again. `--keep-mailbox` leaves the mailbox in Purelymail. `uninstall`
   deletes every mailbox it can and names the rest.
 - The API token manages every mailbox of the Purelymail account. It stays on the server, in
-  `config.toml`, which only root can read. Keep people's mailboxes in another account, or at least
+  `secrets.env`, which only root can read. Keep people's mailboxes in another account, or at least
   on another domain.
 - `move` takes the mailbox along: the new server deletes it when it removes the instance, with its
   own `[email]` settings (the same Purelymail account). After the move, check that the instance

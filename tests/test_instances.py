@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from thinny import host, instances, render, system, trace
+from thinny import host, instances, render, settings, system, trace
 from thinny.registry import Instance, Registry, RegistryError
 from thinny.settings import Settings
 from thinny.system import CommandError
@@ -365,7 +365,8 @@ def get_provider_profile(slug):
 
 @pytest.mark.parametrize("token, step", [("", False), ("1000:" + "M" * 35, True)])
 def test_a_new_instance_ends_with_the_telegram_step_on_a_site_with_a_manager_bot(incus, capsys, token, step):
-    instances.add(dataclasses.replace(S, telegram_manager_token=token), Registry(), "alice", "local")
+    settings.SECRETS_ENV.write_text(f"THINNY_TELEGRAM_MANAGER_TOKEN={token}\n")
+    instances.add(S, Registry(), "alice", "local")
     out = capsys.readouterr().out
     assert "thinny instance login alice" in out
     assert ("Then send its user a Telegram bot: thinny instance telegram alice" in out) == step
@@ -373,8 +374,7 @@ def test_a_new_instance_ends_with_the_telegram_step_on_a_site_with_a_manager_bot
 
 @pytest.mark.parametrize("domain, step", [("", False), ("example.org", True)])
 def test_a_new_instance_ends_with_the_mailbox_step_on_a_site_with_purelymail(incus, capsys, domain, step):
-    instances.add(dataclasses.replace(S, email_domain=domain, email_api_token=domain and "pm-live-x"), Registry(),
-                  "alice", "local")
+    instances.add(dataclasses.replace(S, email_domain=domain), Registry(), "alice", "local")
     out = capsys.readouterr().out
     assert ("Then give it a mailbox, alice@example.org: thinny instance email alice <its user's address>" in out) \
         == step

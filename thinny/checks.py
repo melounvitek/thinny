@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 from . import dashboard as dash
-from . import host, instances, purelymail, render, system, trace
+from . import host, instances, purelymail, render, settings, system, trace
 from .registry import Instance, Registry
 from .settings import MONITORING_PORTS, Settings
 
@@ -75,6 +75,13 @@ def install(s: Settings, reg: Registry):
     yield update_status(UPDATE_STATUS, dt.datetime.now(dt.UTC))
 
 
+def tokens(s: Settings, reg: Registry):
+    path = settings.SECRETS_ENV
+    if path.exists():   # config edit --secrets keeps it so; another editor may not
+        yield (ok(f"only root can read {path}") if not path.stat().st_mode & 0o077 else
+               warn(f"others than root can read {path}, with thinny's tokens", f"chmod 600 {path}"))
+
+
 def access_trace(s: Settings, reg: Registry):
     enabled, running = (system.run(["systemctl", query, "thinny-trace.service"], check=False).stdout.strip()
                         for query in ("is-enabled", "is-active"))
@@ -100,7 +107,7 @@ def mailboxes(s: Settings, reg: Registry):
                        f"let outgoing TCP to port {port} through, also at your hosting provider (see README, Email)")
     try:
         purelymail.check_domain(s)
-        found = purelymail.api(s.email_api_token, "listUser")["users"]
+        found = purelymail.api("listUser")["users"]
     except system.CommandError as e:
         yield warn(f"mailboxes: {e}")
         return
@@ -397,7 +404,7 @@ def running(s: Settings, inst: Instance):
 
 # ---------- runner ----------
 
-CHECKS = [install, access_trace, mailboxes, prerequisites, firewall, caddy, dashboard]
+CHECKS = [install, tokens, access_trace, mailboxes, prerequisites, firewall, caddy, dashboard]
 INSTANCE_CHECKS = [container, webapp, version, built_ins, bypass]
 
 

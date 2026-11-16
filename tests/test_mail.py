@@ -7,12 +7,13 @@ import urllib.request
 import pytest
 from test_instances import S, gateways, incus, typed  # noqa: F401 - the fake Incus, gateway and terminal fixtures
 
-from thinny import checks, instances, mail
+from thinny import checks, instances, mail, settings
 from thinny.registry import Instance, Registry, RegistryError
 from thinny.system import CommandError
 
 TOKEN = "pm-live-" + "t" * 32
-SITE = dataclasses.replace(S, email_domain="example.org", email_api_token=TOKEN)
+SITE = dataclasses.replace(S, email_domain="example.org")
+NO_TOKEN = "set THINNY_PURELYMAIL_API_TOKEN first: thinny config edit --secrets \\(see README, Email\\)"
 ENV = "/home/alice/.hermes/.env"
 
 
@@ -79,6 +80,8 @@ class Purelymail:
 
 @pytest.fixture
 def purelymail(monkeypatch):
+    """The fake Purelymail, whose account's token is in secrets.env."""
+    settings.SECRETS_ENV.write_text(f"THINNY_PURELYMAIL_API_TOKEN={TOKEN}\n")
     fake = Purelymail()
     monkeypatch.setattr(urllib.request, "urlopen", fake.urlopen)
     monkeypatch.setattr(socket, "create_connection", fake.connect)
@@ -224,9 +227,12 @@ def test_a_mailbox_needs_its_domain_set_up_in_purelymail(alice, purelymail, chan
     assert "createUser" not in purelymail.methods()
 
 
-def test_a_mailbox_needs_the_sites_purelymail_account(alice, purelymail):
-    with pytest.raises(CommandError, match="set email.domain and email.api_token in config.toml first"):
+def test_a_mailbox_needs_the_sites_domain_and_purelymail_account(alice, purelymail):
+    with pytest.raises(CommandError, match="set email.domain first: thinny config edit \\(see README, Email\\)"):
         mail.connect(S, alice, "alice", ["anna@example.com"])
+    settings.SECRETS_ENV.unlink()
+    with pytest.raises(CommandError, match=NO_TOKEN):
+        mail.connect(SITE, alice, "alice", ["anna@example.com"])
     assert purelymail.calls == []
 
 
@@ -272,6 +278,7 @@ def test_a_remove_that_purelymail_fails_deletes_nothing_and_runs_again(disabled,
 
 def test_a_remove_can_leave_the_mailbox_to_another_server(disabled, incus, purelymail, capsys):
     purelymail.users = {"alice@example.org": "x"}
+    settings.SECRETS_ENV.unlink()
     instances.remove(S, disabled, "alice", keep_mailbox=True)   # without the site's Purelymail account too
     assert "Its mailbox alice@example.org stays in Purelymail." in capsys.readouterr().out
     assert purelymail.users == {"alice@example.org": "x"} and purelymail.calls == []
@@ -279,7 +286,8 @@ def test_a_remove_can_leave_the_mailbox_to_another_server(disabled, incus, purel
 
 
 def test_a_mailbox_needs_the_sites_purelymail_account_to_go(disabled, incus, purelymail):
-    with pytest.raises(CommandError, match="set email.domain and email.api_token in config.toml first"):
+    settings.SECRETS_ENV.unlink()
+    with pytest.raises(CommandError, match=NO_TOKEN):
         instances.remove(S, disabled, "alice")
     assert "alice" in incus.containers and purelymail.calls == []
 
@@ -290,6 +298,10 @@ def test_doctor_checks_purelymail_only_on_a_site_with_mailboxes(purelymail):
     purelymail.domain["symbolicSubaddressing"] = True
     assert list(checks.mailboxes(SITE, Registry())) == [
         ("WARN", "mailboxes: turn off symbolic subaddressing for example.org in Purelymail (see README, Email)", "")]
+    settings.SECRETS_ENV.unlink()
+    assert list(checks.mailboxes(SITE, Registry())) == [
+        ("WARN", "mailboxes: set THINNY_PURELYMAIL_API_TOKEN first: thinny config edit --secrets (see README, Email)",
+         "")]
 
 
 def test_doctor_warns_when_this_server_cannot_reach_purelymails_mail_servers(purelymail):

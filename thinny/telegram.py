@@ -14,7 +14,7 @@ from pathlib import Path
 
 from . import instances
 from .registry import Registry, RegistryError
-from .settings import Settings
+from .settings import Settings, secret
 from .system import CommandError, lock
 
 LOCK = Path("/run/thinny-telegram.lock")   # one wait at a time: Telegram gives the manager's updates to one reader
@@ -50,9 +50,9 @@ def connect(s: Settings, name: str) -> None:
     """Print the link that creates the instance's bot, wait until its user creates it and connect it. The wait
     leaves thinny's lock to other runs, such as the nightly update; the update Telegram sent about the bot is
     done only once the bot is connected, so a failure leaves it for the next try."""
-    if not s.telegram_manager_token:
-        raise CommandError("set telegram.manager_token in config.toml first (see README, Telegram)")
-    manager = s.telegram_manager_token
+    manager = secret("THINNY_TELEGRAM_MANAGER_TOKEN")
+    if not manager:
+        raise CommandError("set THINNY_TELEGRAM_MANAGER_TOKEN first: thinny config edit --secrets (see README, Telegram)")
     _active(name)
     with lock(LOCK):
         username = api(manager, "getMe")["username"]

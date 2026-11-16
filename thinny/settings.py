@@ -1,15 +1,19 @@
-"""Server settings from /etc/thinny/config.toml."""
+"""Server settings from /etc/thinny/config.toml, and tokens from /etc/thinny/secrets.env."""
 
 from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import re
 import tomllib
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
 CONFIG_TOML = Path("/etc/thinny/config.toml")
+# Tokens, which config.toml never holds, so that it is safe to show. Only root reads this file.
+SECRETS_ENV = CONFIG_TOML.parent / "secrets.env"
+SECRETS = ("THINNY_TELEGRAM_MANAGER_TOKEN", "THINNY_PURELYMAIL_API_TOKEN")
 ACCESS_METHODS = ("lan", "tailscale", "url", "local")
 FRONTENDS = ("webapp", "webui")   # Hermes's built-in Webapp, or hermes-webui
 DASHBOARD_ACCESS = ("lan", "tailscale", "local")
@@ -49,9 +53,7 @@ class Settings:
     tunnel_port: int = 0
     network_interface: str = "eth0"
     blocked_networks: tuple[str, ...] = ()
-    telegram_manager_token: str = ""
     email_domain: str = ""
-    email_api_token: str = ""
     dashboard_enabled: bool = False
     dashboard_access: str = "local"
     dashboard_port: int = 9200
@@ -88,9 +90,7 @@ KEYS = {
     ("access", "tunnel_port"): "tunnel_port",
     ("network", "interface"): "network_interface",
     ("network", "blocked_networks"): "blocked_networks",
-    ("telegram", "manager_token"): "telegram_manager_token",
     ("email", "domain"): "email_domain",
-    ("email", "api_token"): "email_api_token",
     ("dashboard", "enabled"): "dashboard_enabled",
     ("dashboard", "access"): "dashboard_access",
     ("dashboard", "port"): "dashboard_port",
@@ -126,6 +126,37 @@ def parse_group(text: str, source: str) -> dict:
     if "webapp" in config:
         raise SettingsError(f"{source}: webapp is thinny's: it gives each instance its address and port")
     return config
+
+
+def secret(name: str) -> str:
+    """A token from the environment, for one run, or else from secrets.env; "" without one."""
+    if name in os.environ:   # checked alike: a malformed token would show in the error of a URL or header
+        return parse_secrets(f"{name}={os.environ[name]}", f"{name} in the environment")[name]
+    try:
+        text = SECRETS_ENV.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+    return parse_secrets(text, str(SECRETS_ENV)).get(name, "")
+
+
+def parse_secrets(text: str, source: str) -> dict[str, str]:
+    """The tokens in secrets.env's NAME=value lines, besides comments and blank lines. Its errors never show what
+    it holds."""
+    tokens = {}
+    for number, line in enumerate(text.splitlines(), 1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        name, equals, value = line.partition("=")
+        if not equals:
+            raise SettingsError(f"{source}: line {number} is not NAME=value")
+        if name.strip() not in SECRETS:
+            raise SettingsError(f"{source}: line {number} is not one of thinny's tokens: {', '.join(SECRETS)}")
+        tokens[name.strip()] = value.strip()
+    telegram = tokens.get("THINNY_TELEGRAM_MANAGER_TOKEN")
+    if telegram and not re.fullmatch(r"\d+:[\w-]+", telegram):
+        raise SettingsError(f"{source}: THINNY_TELEGRAM_MANAGER_TOKEN must be the manager bot's token from @BotFather, "
+                            "like 123456:ABC-xyz")
+    return tokens
 
 
 def parse(text: str, source: str = "config.toml") -> Settings:
@@ -225,12 +256,8 @@ def _validate(s: Settings, source: str) -> None:
             ipaddress.ip_network(network)
         except ValueError:
             fail(f"network.blocked_networks: {network!r} is not a network")
-    if s.telegram_manager_token and not re.fullmatch(r"\d+:[\w-]+", s.telegram_manager_token):
-        fail("telegram.manager_token must be the manager bot's token from @BotFather, like 123456:ABC-xyz")
     if s.email_domain and not re.fullmatch(r"([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}", s.email_domain):
         fail("email.domain must be a domain in lowercase, like example.org")
-    if bool(s.email_domain) != bool(s.email_api_token):
-        fail("set both email.domain and email.api_token, or neither")
     if s.dashboard_access not in DASHBOARD_ACCESS:
         fail(f"dashboard.access must be one of {', '.join(DASHBOARD_ACCESS)}")
     if s.dashboard_retention_days < 1:

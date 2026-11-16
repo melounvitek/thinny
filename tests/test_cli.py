@@ -571,6 +571,29 @@ def test_config_edit_starts_a_new_group_from_the_example_and_applies_it(server, 
     assert not (tmp_path / "groups/support.toml").exists() and len(calls) == 1
 
 
+def test_config_edit_secrets_starts_from_the_example_and_applies_nothing(server, monkeypatch):
+    _, calls = server
+    example = (host.LIB / "secrets.example.env").read_text()
+    editor(monkeypatch, example)   # left as the example
+    assert cli.main(["config", "edit", "--secrets"]) == 0
+    assert not settings.SECRETS_ENV.exists()
+
+    editor(monkeypatch, example + "THINNY_PURELYMAIL_API_TOKEN=pm-live-x\n")
+    assert cli.main(["config", "edit", "--secrets"]) == 0
+    assert settings.secret("THINNY_PURELYMAIL_API_TOKEN") == "pm-live-x"
+    assert settings.SECRETS_ENV.stat().st_mode & 0o777 == 0o600
+    assert calls == []   # commands read it when they need a token
+
+
+def test_config_edit_secrets_refuses_a_line_that_is_no_token_without_showing_it(server, monkeypatch, capsys):
+    editor(monkeypatch, "pm-live-hush\n")
+    monkeypatch.setattr("builtins.input", lambda prompt: "d")
+    assert cli.main(["config", "edit", "--secrets"]) == 0
+    out = capsys.readouterr().out
+    assert "secrets.env: line 1 is not NAME=value" in out and "hush" not in out
+    assert not settings.SECRETS_ENV.exists()
+
+
 def test_config_edit_refuses_an_invalid_group(server, monkeypatch, capsys, tmp_path):
     _, calls = server
     editor(monkeypatch, "[webapp]\nhost = \"0.0.0.0\"\n")

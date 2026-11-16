@@ -65,7 +65,8 @@ tamper-proof against users who are root in their container.
   `/etc/thinny/config.toml`; the repo ships `config.example.toml` with placeholders.
 - Secrets are generated on the server (Webapp sign-in) or entered by the admin on the
   server (ChatGPT device login). Never logged, never committed, never printed except the
-  one-time hand-over of an instance's Webapp password.
+  one-time hand-over of an instance's Webapp password. The admin's tokens stay out of
+  `config.toml`, in `/etc/thinny/secrets.env`, so `config.toml` is safe to show.
 - Code, comments, docs and CLI output in English. User-facing strings the server shows
   users (UI language, the model-guard message) come from settings.
 - Opinionated defaults (pinned model, approvals `smart`, browser on) are settings with
@@ -587,6 +588,8 @@ extras/, tests/     netcup snapshot and nightly watch (run off the server); pyte
 ```
 /etc/thinny/config.toml           admin-edited settings
 /etc/thinny/groups/<group>.toml   a group's Hermes settings, pinned in its members' policies
+/etc/thinny/secrets.env           the admin's tokens, NAME=value, root only; read when a command
+                                  needs one, an environment variable of the same name wins
 /var/lib/thinny/instances.json  registry: name, port, container address, access, URL, state,
                                 the built-ins (render.BUILT_INS) its container last got,
                                 whether it moved here from another server, its own model lock
@@ -687,9 +690,12 @@ status | doctor                   quick look (release, last update, containers, 
                                   every check (section 7)
 update [--dry-run] [--scheduled]  update now (6.8); the timer runs --scheduled, which waits
                                   for the minimum age and respects auto_update
-config edit [--group] | apply     visudo-like edit of config.toml or a group's file (a new one
+config edit [--group|--secrets] | apply
+                                  visudo-like edit of config.toml or a group's file (a new one
                                   from group.example.toml), then apply; re-render and restart
-                                  where needed. A member of a missing group stops apply first
+                                  where needed. A member of a missing group stops apply first.
+                                  --secrets: secrets.env (a new one from secrets.example.env),
+                                  no apply
 instance add <name> [--access ...] [--frontend webapp|webui]
                                   port, address, container, packages, account (uid 1000, sudo,
                                   linger, docker), Hermes at the recorded release, Webapp build,
@@ -779,10 +785,10 @@ address is a host of its own, without a path (section 5).
 `language_pack` (a catalog plugin name), `[container]` `cpu`, `memory_mb`, `disk_gb`,
 `[webapp]` port range, `frontend` and the look for new instances (`text_scale` 110), `[access]` `default`,
 `lan_address`, `tunnel_port`, `[network]` `interface` (`eth0`) and `blocked_networks` (public networks;
-private ones and the tailnet are always blocked), `[telegram]` `manager_token` (only root reads
-`config.toml`), `[email]` `domain` and `api_token` (Purelymail's), `[dashboard]` `enabled`, `access` (`local`,
-`lan`, `tailscale`), `port`, `retention_days`.
-`config.example.toml` lists every key.
+private ones and the tailnet are always blocked), `[email]` `domain`, `[dashboard]` `enabled`, `access`
+(`local`, `lan`, `tailscale`), `port`, `retention_days`.
+`config.example.toml` lists every key. Tokens are in `secrets.env` instead: `THINNY_TELEGRAM_MANAGER_TOKEN`
+(the manager bot's) and `THINNY_PURELYMAIL_API_TOKEN`. Its errors name lines, never what they hold.
 
 ### 6.8 Nightly update
 
@@ -828,7 +834,8 @@ private ones and the tailnet are always blocked), `[telegram]` `manager_token` (
 - Install: Incus pool `default` and profile `thinny-instance`, the incus.service drop-in, IPv4
   forwarding (FAIL); instance policies match `config.toml` (WARN); the recorded release; nightly
   timer enabled (WARN); last update status (FAIL when failed, WARN when missing or older than
-  48 h); thinny-trace.service enabled and active, no rows waiting for a Google Sheet (WARN); with
+  48 h); `secrets.env` readable by root only (WARN); thinny-trace.service enabled and active, no
+  rows waiting for a Google Sheet (WARN); with
   `[email]`, the server reaches Purelymail's IMAP (993) and SMTP (587), the domain passes Purelymail's checks
   and every instance's mailbox is there (WARN).
 - Prerequisites (section 6.3), all WARN.
@@ -995,6 +1002,11 @@ API and its records through Cloudflare's; `doctor` OK; a new instance, `instance
 mail both ways in one thread once netcup's mail block was gone, a rerun keeping the password, `remove`
 deleting the mailbox. Back on `main`, the registry's empty `mailbox` fields had to go: an older thinny
 refuses fields it does not know.
+
+Tokens out of `config.toml` (2026-11-16), so that printing or sharing it shows none: 1 tokens from
+`secrets.env` or the environment, read only where used, so `Settings` holds none; 2 `config edit --secrets`;
+3 `doctor`, README and this file. Without users yet, nothing moves the tokens of an existing `config.toml`:
+thinny refuses its old keys until the admin moves them.
 
 ## 9. Open questions
 

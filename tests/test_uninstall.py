@@ -104,6 +104,7 @@ def server(tmp_path, monkeypatch):
         monkeypatch.setattr(module, "run", srv.run)
     monkeypatch.setattr(host, "tailscale_status", lambda: srv.tailscale)
     monkeypatch.setattr(settings, "CONFIG_TOML", write(tmp_path / "etc/thinny/config.toml"))
+    monkeypatch.setattr(settings, "SECRETS_ENV", settings.CONFIG_TOML.parent / "secrets.env")
     write(tmp_path / "etc/thinny/thinny.nft")
     monkeypatch.setattr(host, "MANAGED", write(tmp_path / "etc/hermes/config.yaml").parent)
     monkeypatch.setattr(system, "STATE_DIR", tmp_path / "var/lib/thinny")
@@ -167,13 +168,10 @@ def test_uninstall_deletes_every_instance_and_everything_thinny_set_up(server, c
     assert "apt purge" in out and "until the next reboot" in out
 
 
-@pytest.mark.parametrize("config", ["with", "broken"])
-def test_uninstall_deletes_the_instances_mailboxes_or_names_those_left(server, monkeypatch, capsys, config):
-    load = settings.load   # its default path is the real one
-    monkeypatch.setattr(settings, "load", lambda: load(settings.CONFIG_TOML))
-    if config == "with":
-        settings.CONFIG_TOML.write_text('[access]\nlan_address = "192.168.1.10"\n'
-                                        f'[email]\ndomain = "example.org"\napi_token = "{TOKEN}"\n')
+@pytest.mark.parametrize("token", [True, False])
+def test_uninstall_deletes_the_instances_mailboxes_or_names_those_left(server, monkeypatch, capsys, token):
+    if token:   # config.toml is not needed: the registry names the mailboxes
+        write(settings.SECRETS_ENV, f"THINNY_PURELYMAIL_API_TOKEN={TOKEN}\n")
     path = system.STATE_DIR / "instances.json"
     reg = Registry.load()
     reg.get("alice").mailbox, reg.get("bob").mailbox = "alice@example.org", "bob@example.org"
@@ -186,7 +184,7 @@ def test_uninstall_deletes_the_instances_mailboxes_or_names_those_left(server, m
     out = capsys.readouterr().out
     assert "alice (active, mailbox alice@example.org)" in out and "bob (disabled, mailbox bob@example.org)" in out
     assert not server.containers and thinny_files() == []   # whatever Purelymail did
-    left = "alice@example.org" if config == "with" else "alice@example.org, bob@example.org"
+    left = "alice@example.org" if token else "alice@example.org, bob@example.org"
     assert f"  Mailboxes it could not delete stay in Purelymail: {left}\n" in out
     assert list(purelymail.users) == left.split(", ")
 
