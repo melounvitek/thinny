@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from thinny import apply, cli, dashboard, host, instances, mail, move, render, settings, system, telegram, trace, update
+from thinny import (apply, cli, dashboard, export, host, instances, mail, move, render, settings, system, telegram, trace,
+                    update)
 from thinny.registry import Instance, Registry
 
 VALID = '[policy]\nmodel = "m1"\nallowed_models = ["m1"]\n\n[access]\nlan_address = "192.168.1.10"\n'
@@ -443,6 +444,19 @@ def test_instance_email_takes_who_may_write_and_runs_with_thinnys_lock(server, m
     assert connected == [("alice", ["anna@example.com", "ben@example.com"], False), ("alice", [], True)]
 
 
+def test_instance_export_runs_with_thinnys_lock(server, monkeypatch):
+    exported = []
+
+    def export_(reg, name):
+        with pytest.raises(system.CommandError, match="in progress"):
+            with system.lock():
+                pass
+        exported.append(name)
+    monkeypatch.setattr(export, "export", export_)
+    assert cli.main(["instance", "export", "alice"]) == 0
+    assert exported == ["alice"]
+
+
 def test_instance_trace_sheet_takes_a_url_or_off(server, monkeypatch):
     connected = []
     monkeypatch.setattr(trace, "connect_sheet", lambda reg, name, url: connected.append((name, url)))
@@ -726,6 +740,7 @@ def tab(capsys, *words):
 @pytest.mark.parametrize("words, offered", [
     ([""], ["init", "setup", "status", "doctor", "update", "config", "instance", "uninstall"]),   # not trace
     (["instance", "re"], ["resize", "reset-password", "remove", "restart"]),                      # not receive
+    (["instance", "e"], ["email", "export"]),
     (["instance", "group", ""], ["list", "set"]),
     (["update", "--d"], ["--dry-run"]),
     (["instance", "restart", "--"], ["--help", "--group"]),
@@ -754,6 +769,7 @@ def test_tab_completes_the_names_of_instances_for_root(monkeypatch, capsys):
     assert tab(capsys, "instance", "login", "--provider", "=", "openai", "") == ["alice", "bob"]
     assert tab(capsys, "instance", "restart", "alice", "") == ["alice", "bob"]
     assert tab(capsys, "instance", "group", "set", "a") == ["alice"]
+    assert tab(capsys, "instance", "export", "") == ["alice", "bob"]
     assert tab(capsys, "instance", "remove", "--purge", "") == ["alice", "bob", "carol"]
     assert tab(capsys, "instance", "lock", "alice", "") == []   # models
     assert tab(capsys, "instance", "model", "") == ["alice", "bob"]

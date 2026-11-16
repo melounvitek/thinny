@@ -23,9 +23,9 @@ from urllib.parse import urlsplit
 from . import host, purelymail, render, trace
 from .registry import Instance, Registry, RegistryError, validate_name
 from .settings import ACCESS_METHODS, Settings, group_file, secret
-from .system import (INSTANCE_UID, STATE_DIR, CommandError, as_user, as_user_interactive, gateway_active, http_status,
-                     in_container, log, printable, read_user_file, run, step, tailscale_name, uid_of, write_file,
-                     write_user_file)
+from .system import (INSTANCE_UID, STATE_DIR, CommandError, as_user, as_user_cmd, as_user_interactive, gateway_active,
+                     http_status, in_container, log, printable, read_user_file, run, step, tailscale_name, uid_of,
+                     write_file, write_user_file)
 
 AUTH_PREFIX = "HERMES_DASHBOARD_BASIC_AUTH_"
 RESTART_TIMEOUT = 45 * 60  # a restart waits for a running reply (up to 30 min by default)
@@ -469,9 +469,14 @@ def seed_ui(s: Settings, name: str) -> None:
 
 
 def hermes_python(name: str, script: str, **kw):
-    """`script` run by the newest Python environment of the instance's Hermes, with its Hermes home as argv[1]."""
-    return as_user(name, ["sh", "-c", 'py=$(ls -t "$2"/installs/*/environments/*/venv/bin/python3 | head -n 1) && '
-                          'exec "$py" -I -c "$1" "$2"', "sh", script, str(home(name))], **kw)
+    return run(hermes_python_cmd(name, script), **kw)
+
+
+def hermes_python_cmd(name: str, script: str) -> list[str]:
+    """`script` run by the newest Python environment of the instance's Hermes, as its account, with its Hermes home as
+    argv[1]."""
+    return as_user_cmd(name, ["sh", "-c", 'py=$(ls -t "$2"/installs/*/environments/*/venv/bin/python3 | head -n 1) && '
+                              'exec "$py" -I -c "$1" "$2"', "sh", script, str(home(name))])
 
 
 # Hermes's default model for the provider on stdin (what its Telegram chats fall back on; its Webapp's need one set),

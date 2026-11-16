@@ -233,6 +233,7 @@ thinny instance model alice gpt-5.5     # new chats start on it; --provider open
 thinny instance lock alice [model ...]  # only these models (default: the one it uses)
 thinny instance unlock alice            # its users choose, even with the server's lock
 thinny instance reset-password alice
+thinny instance export alice            # its chats, memories and skills for its users, without sign-ins
 thinny instance disable alice           # stop it for good, keep its data
 thinny instance remove alice            # then delete its container and data; asks you to type its name
 thinny instance remove alice --purge    # also free its name and port, even once removed
@@ -303,6 +304,23 @@ thinny instance restart --group sales   # instead of names: resize, login, model
 - `remove --purge` frees the name and port of a removed instance too, for a new one. Old
   bookmarks and saved passwords for its address then lead to the new instance. Its access trace
   stays, renamed to `alice.purged-<time>`; rows still waiting for its Google Sheet are dropped.
+- `export` saves `alice`'s Hermes data for its users, e.g. when someone leaves: their chats, memories,
+  skills, settings and scheduled jobs, as its Hermes backs them up (`hermes backup`). It lands in
+  `/var/lib/thinny/exports/alice-<time>.zip`, which only root can read. They load it into a Hermes of
+  their own with `hermes import alice-<time>.zip`, and sign in there again.
+- It leaves out the files that hold sign-ins or passwords: those Hermes counts as credentials (`.env`,
+  `auth.json`, MCP servers' and other services' tokens, its credential vault, the Webapp's sign-in),
+  WebUI's keys and sign-in sessions, and the phone line's Asterisk config. Some belong to you (the
+  mailbox, the phone line, the OpenAI key). Chats and settings can still hold secrets users typed in:
+  hand it over as you would a password. Copy it to your account
+  (`sudo install -m 600 -o "$USER" /var/lib/thinny/exports/alice-<time>.zip ~/`), then e.g. with `scp`,
+  and delete both copies once it is handed over. `remove` leaves it, `uninstall` deletes it.
+- Export before `disable`: only an active instance's container runs. Hermes makes the archive in the
+  container first, so it needs room there (`resize --disk-gb`). Before that, the server needs the
+  instance's disk quota free on top of a tenth of its disk: the archive takes from the same disk. Its copy
+  stops at the quota, or before it would leave the server's disk less than 10% free. Files the agent made
+  outside Hermes's home (`~/.hermes`) are not in it.
+  The [access trace](#access-trace) notes `thinny instance export alice ran its commands in alice`.
 - Shell in a container: `sudo incus exec alice -- runuser -l alice` (or `-- bash` for root).
   Both show in the [access trace](#access-trace).
 - **`move` is experimental:** it has not moved an instance between two real servers yet.

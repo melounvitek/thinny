@@ -543,6 +543,33 @@ issues **[docs]**, not tried.
   turn the platform on **[src]**. The reply to the note got an answer in the thread. A reconnect within
   one gateway process takes the mail that came meanwhile; only a new process skips it.
 
+### Export (2026-11-16)
+Hermes v0.23.1 (3b42157) **[src]**, hermes-webui 0.52 and hermes-3310 **[src]**; nothing run.
+
+- `hermes backup -o <zip>` zips the Hermes root (`~/.hermes`, profiles included) without the codebase,
+  venvs and dependency trees, browser profiles, `backups/`, `state-snapshots/`, `checkpoints/`, runtime roots
+  (`installs`, `tools`, `models`, `runtimes`, `node`), `cache/` but its media and evidence, and secret caches.
+  SQLite files go in as `sqlite3.backup()` copies staged beside the zip; symlinks and other non-regular files
+  are skipped; a memory provider's state elsewhere under `~` goes in as `_external/<path>`. Exit 1 when the
+  zip was written without some files, 2 while another backup runs. Its pruning (`--keep 3`) touches only
+  `hermes-backup-*.zip` beside the output.
+- It takes the credential stores too: `.env`, `auth.json`, the vault, `mcp-tokens/`, `webapp/session-token`,
+  other services' tokens; also WebUI's `webui/.signing_key` (signs its sign-in cookies), `.pbkdf2_key`,
+  `.sessions.json` and `passkeys.json`, and the phone plugin's `phone/asterisk/pjsip.conf`, with the SIP
+  password. Hermes lists its own stores (`PROFILE_CREDENTIAL_PATHS`) behind
+  `hermes_cli.profiles.profile_path_is_private(parts)`, relative to a profile's home and case-folded; its
+  profile export also drops `auth.json`, `.env`, `.envrc`, `bot-desktop` and the OS credential folders
+  (`agent.file_safety.HOME_CREDENTIAL_DIRS`) at any depth (`_EXPORT_CREDENTIAL_FILES`, private).
+- `hermes import <zip>` takes a zip with any of `config.yaml`, `.env`, `state.db`, checks the CRC of every
+  member it restores before writing, and asks before overwriting a home (`--force` does not). Without `.env`
+  and `auth.json` its user signs in again.
+- thinny's export: `hermes backup` as the instance's account in `~/.thinny-export`, then the instance's
+  Hermes's Python streams a copy without those files to the host (their names on stderr; no archive when its
+  list is missing). The host never looks into it: it writes it as it comes, up to the instance's disk quota
+  and never into the last tenth of its disk. The backup in the container takes from that disk too (the
+  storage pool is a sparse file on it), up to the quota, so the server needs the quota free on top of the
+  tenth before it starts; containers filling the pool meanwhile are not the export's to stop.
+
 ## 5. Rejected options (and why)
 
 - Docker: docker group = root.
@@ -613,6 +640,7 @@ extras/, tests/     netcup snapshot and nightly watch (run off the server); pyte
 /var/lib/thinny/trace/<name>/admin-access.log  the instance's access trace, written by
                                 thinny-trace.service (also to the journal)
 /var/lib/thinny/trace-unsent/<name>/  each row for its Google Sheet as a file, until sent
+/var/lib/thinny/exports/<name>-<time>.zip  an instance's Hermes data for its users (0600, folder 0700)
 /var/lib/thinny/dashboard       "<port> <access>" while thinny runs the dashboard (and publishes it)
 /var/lib/thinny/dashboard-unfinished  while apply writes the dashboard's settings, until the services run on them
 /etc/thinny/prometheus.yml, metrics.crt, metrics.key (Prometheus's), dashboard.env (Grafana's first
@@ -739,6 +767,8 @@ instance email <name> [ADDRESS...] [--new-password]
 instance trace-sheet <name> <URL|off>
                                   its users' Google Sheet gets its access trace too, once it took
                                   a test row; the sheet it had gets a last row
+instance export <name>            an active instance's `hermes backup`, without the files that hold
+                                  sign-ins or passwords, in a file only root reads (section 4, Export)
 instance disable <name>           autostart off, container stopped (forced after 60 s), access
                                   removed; container and data stay
 instance remove <name>            a disabled or pending instance, once the admin types its name:
@@ -1028,6 +1058,10 @@ metrics`; 2 `doctor`, the file taken back with the dashboard; 3 the panels, READ
 **[tested]**: node exporter 1.7.0 read the rendered file (also without series) with no scrape error, and
 Prometheus 2.53.4 answered the panels' queries, nothing once the file's time was 3 hours back.
 
+Export (2026-11-16): 1 a command's output into a file, never after the command ended; 2 the copy without the
+files that hold sign-ins or passwords, run by a stand-in for Hermes on a zip laid out like its backup; 3
+`instance export` against the fake Incus; 4 README and this file. Not tried on a server (section 9).
+
 ## 9. Open questions
 
 - WebUI after a real Hermes update (its restart with the gateway is tested with fakes only), and
@@ -1046,6 +1080,9 @@ Prometheus 2.53.4 answered the panels' queries, nothing once the file's time was
 - Telegram: `instance telegram` against a real instance is untested on a server.
 - Mailboxes: not yet tried are a scheduled job's mail, mail from another Purelymail mailbox (dropped?),
   `move` and `uninstall` with a mailbox.
+- Export: untested on a server: a real `hermes backup` in a container, its time on a large `state.db`, the
+  copy with Hermes's real `profile_path_is_private`, and `hermes import` of the result. It follows Hermes's
+  list of credentials, but mirrors its private any-depth names: check them when Hermes changes.
 - Per-instance SSH and Tailscale are left to the users; SSH needs the host as jump host.
 - Not tested: `systemctl restart nftables` with containers running (do Incus's per-NIC
   anti-spoofing rules come back without restarting the containers?).
