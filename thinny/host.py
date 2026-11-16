@@ -160,7 +160,8 @@ def ufw_lacks_forward() -> bool:
 
 
 def ufw_lan_rules(s: Settings) -> list[str]:
-    """The ufw rules that let office PCs, in lan_address's network, open the Webapps and the root certificate."""
+    """The ufw rules that let office PCs, in lan_address's network, open the Webapps, the dashboard and the root
+    certificate."""
     # "2: eth0    inet 192.168.1.191/24 brd ...", nothing when no interface has lan_address
     words = run(["ip", "-o", "addr", "show", "to", s.lan_address], check=False, timeout=10).stdout.split()
     if len(words) < 4:
@@ -169,14 +170,20 @@ def ufw_lan_rules(s: Settings) -> list[str]:
     if office.num_addresses == 1:   # a /32 or /128, or a peer address: no office network around it
         return []
     low, high = s.port_range
+    dashboard_port, dashboard = dashboard_access() or (0, "")
     return [f"ufw allow from {office} to any port {low}:{high} proto tcp",
+            *([f"ufw allow from {office} to any port {dashboard_port} proto tcp"] if dashboard == "lan" else []),
             f"ufw allow from {office} to any port 80 proto tcp"]
 
 
 def reconcile_access(s: Settings, reg: Registry) -> None:
     """Caddy sites for LAN instances and, with a tunnel port, url instances; `tailscale serve` for
-    Tailscale instances; nothing else published in the Webapp port range."""
+    Tailscale instances; nothing else published in the Webapp port range. The dashboard's port too, like an
+    instance's (dashboard.py stops serving an old one over Tailscale)."""
+    dashboard_port, dashboard = dashboard_access() or (0, "")
     lan = [inst.port for inst in reg.current() if inst.access == "lan"]
+    if dashboard == "lan":
+        lan.append(dashboard_port)
     tunnel = [(inst.url, inst.port) for inst in reg.current() if inst.access == "url"] if s.tunnel_port else []
     if lan or tunnel or CADDYFILE.exists() and "thinny" in CADDYFILE.read_text():
         if (lan or tunnel) and not shutil.which("caddy"):
@@ -195,6 +202,8 @@ def reconcile_access(s: Settings, reg: Registry) -> None:
     if status is None:
         return
     wanted = {inst.port for inst in reg.current() if inst.access == "tailscale"}
+    if dashboard == "tailscale":
+        wanted.add(dashboard_port)
     served = _tailscale_served_ports()
     low, high = s.port_range
     for port in sorted(wanted - served):

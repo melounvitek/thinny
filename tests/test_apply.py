@@ -14,10 +14,9 @@ S = Settings(model="m1", allowed_models=("m1",), access_default="local")
 
 
 @pytest.fixture
-def policies(tmp_path, monkeypatch):
+def policies(monkeypatch):
     """Every instance has a container; records which instances' policies are written."""
     written = []
-    monkeypatch.setattr(host, "DASHBOARD_STATE", tmp_path / "dashboard")
     monkeypatch.setattr(instances, "container_state", lambda name: "RUNNING")
     monkeypatch.setattr(instances, "ensure_device", lambda *a: None)
     monkeypatch.setattr(instances, "devices", lambda name: {})
@@ -381,6 +380,14 @@ def test_the_office_hint_has_the_configured_ports_and_sudo(ufw, capsys, monkeypa
         "  sudo ufw allow from 192.168.1.0/24 to any port 9200:9249 proto tcp\n"
         "  sudo ufw allow from 192.168.1.0/24 to any port 80 proto tcp\n"
         "Ready. Add instances with: thinny instance add <name>\n")
+
+
+def test_the_office_hint_opens_the_dashboard_on_the_lan_too(ufw, capsys):
+    host.UFW_CONF.write_text("ENABLED=yes\n")
+    ufw.append(host.UFW_FORWARD)
+    host.DASHBOARD_STATE.write_text("9200 lan\n")
+    apply.setup(dataclasses.replace(LAN, access_default="tailscale"))   # no instance on the LAN
+    assert "\n  ufw allow from 192.168.1.0/24 to any port 9200 proto tcp\n" in capsys.readouterr().out
 
 
 # On no interface (Caddy cannot bind it either), or on one with no network around it

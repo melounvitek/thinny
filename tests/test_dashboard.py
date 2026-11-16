@@ -106,12 +106,8 @@ class Terminal:
         return True
 
 
-@pytest.fixture
-def server(tmp_path, monkeypatch):
-    """A server with alice, Tailscale running and 513 GB free; the admin at a terminal."""
-    srv = Server()
-    for module in (dashboard, instances):
-        monkeypatch.setattr(module, "run", srv.run)
+def dashboard_files(tmp_path, monkeypatch):
+    """The dashboard's files in tmp_path."""
     etc = tmp_path / "etc"
     for name, path in (("PROMETHEUS_CONFIG", etc / "thinny/prometheus.yml"), ("CERT", etc / "thinny/metrics.crt"),
                        ("KEY", etc / "thinny/metrics.key"), ("PASSWORD", etc / "thinny/dashboard.env"),
@@ -121,8 +117,17 @@ def server(tmp_path, monkeypatch):
                        ("PROVISIONING", etc / "grafana/provisioning"),
                        ("DISK_METRICS", tmp_path / "var/lib/prometheus/node-exporter/thinny.prom")):
         monkeypatch.setattr(dashboard, name, path)
-    (etc / "thinny").mkdir(parents=True)
-    monkeypatch.setattr(host, "SYSTEMD", etc / "systemd/system")
+
+
+@pytest.fixture
+def server(tmp_path, monkeypatch):
+    """A server with alice, Tailscale running and 513 GB free; the admin at a terminal."""
+    srv = Server()
+    for module in (dashboard, instances):
+        monkeypatch.setattr(module, "run", srv.run)
+    dashboard_files(tmp_path, monkeypatch)
+    (tmp_path / "etc/thinny").mkdir(parents=True)
+    monkeypatch.setattr(host, "SYSTEMD", tmp_path / "etc/systemd/system")
     monkeypatch.setattr(host, "DASHBOARD_STATE", tmp_path / "var/lib/thinny/dashboard")
     monkeypatch.setattr(system, "LOG_FILE", tmp_path / "log")
     monkeypatch.setattr(host, "tailscale_status", lambda: {"BackendState": "Running"})

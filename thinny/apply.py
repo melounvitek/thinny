@@ -20,7 +20,8 @@ def setup(s: Settings) -> None:
     if host.ufw_lacks_forward():
         print("ufw blocks the containers' traffic, so instances cannot reach the internet (see README, "
               f"Prerequisites). Run: {sudo}{host.UFW_FORWARD}")
-    lan = s.access_default == "lan" or any(inst.access == "lan" for inst in Registry.load().current())
+    lan = s.access_default == "lan" or any(inst.access == "lan" for inst in Registry.load().current()) or \
+        (host.dashboard_access() or (0, ""))[1] == "lan"
     if lan and (missing := host.ufw_lacks(host.ufw_lan_rules(s))):
         print("ufw blocks office PCs, so they cannot open the Webapps or get the root certificate (see README, "
               "Prerequisites). Run:" + "".join(f"\n  {sudo}{rule}" for rule in missing))

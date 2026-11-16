@@ -10,7 +10,7 @@ import socket
 import sys
 from pathlib import Path
 
-from . import host, instances, render, settings, system, telegram, update
+from . import dashboard, host, instances, render, settings, system, telegram, update
 from .registry import Registry
 from .system import CommandError, log
 
@@ -32,7 +32,8 @@ def run() -> None:
     print("\n".join(f"  {inst.name} ({inst.state})" for inst in reg.instances.values()) or "  (none)")
     print("It also removes what thinny set up: the Incus profile and storage pool (unless something else\n"
           "uses the pool), the firewall table, the nightly update, the access trace, the Webapps' Caddy and\n"
-          f"Tailscale sites, {settings.CONFIG_TOML.parent}, {host.MANAGED}, {system.STATE_DIR} and thinny itself.")
+          f"Tailscale sites, the dashboard, {settings.CONFIG_TOML.parent}, {host.MANAGED}, {system.STATE_DIR} and\n"
+          "thinny itself.")
     hostname = socket.gethostname()
     try:
         answer = input(f"Type this server's hostname ({hostname}) to remove it all: ")
@@ -47,6 +48,8 @@ def run() -> None:
         system.run(["systemctl", "stop", "thinny-update.service"])
     if (host.SYSTEMD / "thinny-trace.service").exists():
         system.run(["systemctl", "disable", "--now", "thinny-trace.service"])
+    had_dashboard = host.dashboard_access() is not None
+    dashboard.turn_off()
     for inst in reg.instances.values():
         if instances.container_state(inst.name) is not None:
             log(f"deleting {inst.name}'s container")
@@ -104,6 +107,8 @@ def run() -> None:
           "  The packages stay (Incus, Caddy, btrfs-progs, nftables, curl, Git, Python 3,\n"
           "  bash-completion); apt purge removes those nothing else uses.\n"
           "  IP forwarding and user namespaces stay on until the next reboot.")
+    if had_dashboard:
+        print("  The dashboard's Prometheus and Grafana stay installed, masked, with their history.")
     if pool_kept:
         print(f"  The Incus storage pool {render.POOL} stays (up to 80% of the disk): something else uses it.\n"
               f"  See: incus storage volume list {render.POOL}")
