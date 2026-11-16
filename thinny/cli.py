@@ -273,7 +273,7 @@ def main(argv: list[str] | None = None) -> int:
             elif command == "config apply":
                 apply.apply(s)
             elif command == "update":
-                return update.run(s, reg, dry_run=a.dry_run, now=not a.scheduled)
+                return update.run(s, reg, dry_run=a.dry_run, manual=not a.scheduled, now=not a.scheduled)
             elif command == "instance add":
                 instances.check_name(reg, a.name)   # before the questions, not after them
                 if a.group:

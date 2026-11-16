@@ -149,10 +149,10 @@ def test_init_leaves_an_existing_site_toml_alone(server, capsys):
 
 # Grafana's key first, whatever auto_update says: install.sh's apt-get update would fail on an expired one.
 @pytest.mark.parametrize("args, auto_update, kw, thinny", [
-    ([], "false", {"dry_run": False, "now": True}, True),
-    (["--dry-run"], "true", {"dry_run": True, "now": True}, False),
-    (["--scheduled"], "true", {"dry_run": False, "now": False}, True),
-    (["--scheduled"], "false", {"dry_run": False, "now": False}, False),
+    ([], "false", {"dry_run": False, "manual": True, "now": True}, True),
+    (["--dry-run"], "true", {"dry_run": True, "manual": True, "now": True}, False),
+    (["--scheduled"], "true", {"dry_run": False, "manual": False, "now": False}, True),
+    (["--scheduled"], "false", {"dry_run": False, "manual": False, "now": False}, False),
 ])
 def test_a_manual_update_runs_now_and_only_the_timer_waits(server, args, auto_update, kw, thinny):
     site, calls = server
