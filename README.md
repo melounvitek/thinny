@@ -185,7 +185,8 @@ suggests. A new `language_pack` reaches existing
 instances with their next Hermes update. `model_provider` and `model` count only with the model
 lock, which needs `model`. Without it, `model_provider` is only the provider `instance add`
 suggests, `model` is ignored, and `reasoning_effort` is where new instances start; turning the
-lock on removes the models users chose.
+lock on removes the models users chose, and turning it off leaves each locked instance on the
+lock's model, for its users to change (as `instance unlock` does).
 
 ## Instances
 

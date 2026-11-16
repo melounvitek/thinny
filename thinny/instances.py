@@ -119,18 +119,43 @@ def settings_for(s: Settings, inst: Instance) -> Settings:
 
 
 def update_policy(s: Settings, inst: Instance) -> None:
-    """The instance's policy as the settings and its own lock say; a change restarts its gateway."""
+    """The instance's policy as the settings and its own lock say; a change restarts its gateway. One that unlocks
+    it leaves it on the model it was locked to, in its own config (unless it has one), for its users to change."""
     s = settings_for(s, inst)
+    kept = host.POLICIES / inst.name / "starting-model.json"   # the lock's model, until its own config has it
     if not host.policy_current(s, inst.name):
         if inst.state == "active":
             log(f"{inst.name}: its policy changes: its gateway restarts")
             mark_restart([inst.name])  # before the change, so a failure keeps the intent
+            if not s.model_lock and (model := locked_model(inst.name)):
+                write_file(kept, json.dumps(model))   # before the policy, its only record, changes
         # Before the policy pins them: Hermes drops pinned keys from an instance's config whenever it saves it,
         # writes a `model:` section left empty as invalid YAML (v0.23.1), and refuses to unset them once pinned.
         # Pending instances too: a resumed add would start its gateway under the policy.
         for key in pinned_keys(s):
             hermes(inst.name, ["config", "unset", key], check=False)  # 1 when not set
     ensure_policy(s, inst)
+    if kept.exists():   # also after a failure here: apply finishes it
+        if not hermes(inst.name, ["config", "get", "model.default"], check=False).stdout.strip():
+            set_config(s, inst.name, json.loads(kept.read_text(encoding="utf-8")))
+        kept.unlink()
+
+
+def locked_model(name: str) -> dict[str, str]:
+    """The model the instance's policy locks it to, as starting_model has it ({}: none), read back from the lines
+    render.to_yaml wrote. model.default last: until it is set, a repeat sets the others again."""
+    path = host.POLICIES / name / "config.yaml"
+    values, section = {}, ""
+    decode = json.JSONDecoder().raw_decode
+    for line in path.read_text(encoding="utf-8").splitlines() if path.is_file() else []:
+        if line.startswith('"'):
+            section = decode(line)[0]
+        elif line.startswith('  "'):
+            key, end = decode(line, 2)
+            values[f"{section}.{key}"] = line[end + 1:]   # its value as JSON, if any
+    if "model-guard" not in json.loads(values.get("plugins.enabled", "[]")):   # the lock's own plugin
+        return {}
+    return {key: json.loads(values[key]) for key in ("model.provider", "agent.reasoning_effort", "model.default")}
 
 
 def pinned_keys(s: Settings) -> list[str]:
@@ -785,14 +810,11 @@ def lock(s: Settings, reg: Registry, name: str, models: list[str]) -> None:
 
 def unlock(s: Settings, reg: Registry, name: str) -> None:
     """Let the instance's users choose their models, whatever the server's lock. It starts with the model it was
-    locked to: the lock took the model out of its own config."""
+    locked to (see update_policy)."""
     inst = _active(reg, name)
-    locked = settings_for(s, inst)
     inst.lock, inst.lock_provider = [], ""
+    reg.save()  # first: a failure on the way leaves the unlock for apply to finish
     update_policy(s, inst)
-    if locked.model_lock:
-        set_config(settings_for(s, inst), name, starting_model(locked))
-    reg.save()  # last: until then, unlock again gives it its model
     restart_all(s, [], reg)
     print(f"{name} is unlocked: its users choose their models")
 
