@@ -1,4 +1,5 @@
 import dataclasses
+import subprocess
 
 import pytest
 from test_instances import LOCKED, incus  # noqa: F401 - incus: the fake Incus fixture
@@ -195,9 +196,67 @@ def test_a_member_of_a_missing_group_stops_apply_before_any_change(server, incus
     assert changed == [] and not host.POLICIES.exists()
 
 
-@pytest.mark.parametrize("tunnel_port, hint", [(0, False), (8080, True)])
-def test_setup_ends_with_where_the_tunnel_goes(monkeypatch, capsys, tunnel_port, hint):
+@pytest.fixture
+def bare_setup(monkeypatch):
+    """setup without Incus, apply or ufw."""
     monkeypatch.setattr(host, "init_incus", lambda: None)
     monkeypatch.setattr(apply, "apply", lambda s: None)
+    monkeypatch.setattr(host.shutil, "which", lambda cmd: None)
+    monkeypatch.delenv("SUDO_USER", raising=False)
+
+
+@pytest.mark.parametrize("tunnel_port, hint", [(0, False), (8080, True)])
+def test_setup_ends_with_where_the_tunnel_goes(bare_setup, capsys, tunnel_port, hint):
     apply.setup(dataclasses.replace(S, tunnel_port=tunnel_port))
     assert ("Point your tunnel at http://127.0.0.1:8080" in capsys.readouterr().out) == hint
+
+
+@pytest.fixture
+def ufw(bare_setup, tmp_path, monkeypatch):
+    """ufw on the server: the test writes its ufw.conf and the rules `ufw show added` lists."""
+    monkeypatch.setattr(host.shutil, "which", lambda cmd: f"/usr/sbin/{cmd}")
+    monkeypatch.setattr(host, "UFW_CONF", tmp_path / "ufw.conf")
+    rules = []
+
+    def run(cmd, **kw):
+        if cmd != ["ufw", "show", "added"]:
+            return subprocess.CompletedProcess(cmd, 1, "", "")
+        added = "\n".join(["Added user rules (see 'ufw status' for running firewall):", *(rules or ["(None)"])])
+        return subprocess.CompletedProcess(cmd, 0, added + "\n", "")
+    monkeypatch.setattr(host, "run", run)
+    return rules
+
+
+@pytest.mark.parametrize("enabled, rules, hint", [
+    ("no", [], False),
+    ("yes", [], True),
+    ("yes", ["ufw allow 22/tcp"], True),
+    ("yes", ["ufw allow 22/tcp", "ufw route allow in on thinny-+"], False),
+    ("yes", ["ufw route allow in on thinny-+ comment 'Incus containers'"], False),
+])
+def test_setup_tells_the_admin_when_ufw_lacks_the_containers_forward_rule(ufw, capsys, enabled, rules, hint):
+    host.UFW_CONF.write_text(f"# Set to yes to start on boot.\nENABLED={enabled}\n\nLOGLEVEL=low\n")
+    ufw.extend(rules)
+    apply.setup(S)
+    out = capsys.readouterr().out
+    assert ("ufw route allow in on thinny-+" in out) == hint
+    assert out.endswith("Ready. Add instances with: thinny instance add <name>\n")
+
+
+def test_setup_skips_the_ufw_hint_while_ufw_waits_for_its_lock(ufw, capsys, monkeypatch):
+    host.UFW_CONF.write_text("ENABLED=yes\n")
+
+    def waiting(cmd, **kw):   # an admin's `ufw delete` holds ufw's lock while it asks to confirm
+        raise CommandError(f"{' '.join(cmd)}: timed out after 30 s")
+    monkeypatch.setattr(host, "run", waiting)
+    apply.setup(S)
+    assert capsys.readouterr().out == "Ready. Add instances with: thinny instance add <name>\n"
+
+
+@pytest.mark.parametrize("sudo_user, command", [(None, "ufw"), ("admin", "sudo ufw")])
+def test_the_ufw_hint_has_sudo_when_the_admin_used_it(ufw, capsys, monkeypatch, sudo_user, command):
+    host.UFW_CONF.write_text("ENABLED=yes\n")
+    if sudo_user:
+        monkeypatch.setenv("SUDO_USER", sudo_user)
+    apply.setup(S)
+    assert f"(see README, Prerequisites). Run: {command} route allow in on thinny-+\n" in capsys.readouterr().out

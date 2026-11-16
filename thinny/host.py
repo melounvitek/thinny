@@ -12,7 +12,7 @@ from pathlib import Path
 from . import render
 from .registry import Registry
 from .settings import Settings
-from .system import STATE_DIR, log, run, tailscale_status, write_file
+from .system import STATE_DIR, CommandError, log, run, tailscale_status, write_file
 
 MANAGED = Path("/etc/hermes")   # Hermes's managed scope in each container (on the host, the one they once shared)
 POLICIES = STATE_DIR / "policies"   # each instance's managed scope, in a folder of its own
@@ -23,6 +23,8 @@ CADDYFILE = Path("/etc/caddy/Caddyfile")
 OFFICE_CA = Path("/etc/thinny/office-root.crt")   # Caddy's root certificate, readable by any account
 FIREWALL_FILE = Path(render.FIREWALL_FILE)
 SYSCTL_FILE = Path("/etc/sysctl.d/90-thinny.conf")
+UFW_CONF = Path("/etc/ufw/ufw.conf")
+UFW_FORWARD = "ufw route allow in on thinny-+"   # lets the containers' traffic through ufw (README, Prerequisites)
 SYSTEMD = Path("/etc/systemd/system")
 HERMES_REPO = "NousResearch/hermes-agent"
 WEBUI_REPO = "nesquena/hermes-webui"
@@ -136,6 +138,17 @@ def firewall(s: Settings) -> None:
     write_file(FIREWALL_FILE, render.firewall(s.network_interface, list(s.blocked_networks)))
     run(["nft", "-c", "-f", str(FIREWALL_FILE)])
     run(["nft", "-f", str(FIREWALL_FILE)])
+
+
+def ufw_lacks_forward() -> bool:
+    """ufw is on without UFW_FORWARD, so the containers cannot reach the internet."""
+    if not shutil.which("ufw") or "ENABLED=yes" not in UFW_CONF.read_text().splitlines():
+        return False
+    try:
+        added = run(["ufw", "show", "added"], check=False, timeout=30).stdout.splitlines()
+    except CommandError:   # ufw waits for its lock while an admin's ufw command asks to confirm
+        return False
+    return UFW_FORWARD not in (line.partition(" comment ")[0] for line in added)   # ufw lists a rule as its command
 
 
 def reconcile_access(s: Settings, reg: Registry) -> None:
