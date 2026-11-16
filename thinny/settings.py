@@ -130,8 +130,8 @@ def parse_group(text: str, source: str) -> dict:
 
 def secret(name: str) -> str:
     """A token from the environment, for one run, or else from secrets.env; "" without one."""
-    if name in os.environ:
-        return os.environ[name]
+    if name in os.environ:   # checked alike: a malformed token would show in the error of a URL or header
+        return parse_secrets(f"{name}={os.environ[name]}", f"{name} in the environment")[name]
     try:
         text = SECRETS_ENV.read_text(encoding="utf-8")
     except FileNotFoundError:

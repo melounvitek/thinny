@@ -147,6 +147,17 @@ def test_secrets_env_is_refused_without_showing_what_it_holds(text, message):
     assert "hush" not in str(refused.value).lower()
 
 
+@pytest.mark.parametrize("name, token, message", [
+    ("THINNY_TELEGRAM_MANAGER_TOKEN", "1000:hush hush", "must be the manager bot's token"),   # in a URL
+    ("THINNY_PURELYMAIL_API_TOKEN", "pm-live-hush\nX-Other: 1", "line 2 is not NAME=value"),   # in a header
+])
+def test_a_token_from_the_environment_is_refused_like_one_from_secrets_env(monkeypatch, name, token, message):
+    monkeypatch.setenv(name, token)
+    with pytest.raises(SettingsError, match=f"{name} in the environment: .*{message}") as refused:
+        secret(name)
+    assert "hush" not in str(refused.value)
+
+
 def test_the_dashboard_is_off_by_default_and_then_only_through_an_ssh_tunnel():
     s = parse(site())
     assert (s.dashboard_enabled, s.dashboard_access, s.dashboard_port, s.dashboard_retention_days) == \
