@@ -652,6 +652,51 @@ def test_a_new_default_model_must_be_one_hermes_offers_the_instance(incus, model
     assert not incus.ran("hermes config set")
 
 
+def test_a_group_that_sets_the_model_keeps_it(incus):
+    reg = unlocked_alice(incus, {"openai-codex": CODEX, instances.CLAUDE_PROVIDER: CLAUDE})
+    reg.get("alice").group = "sales"
+    s = dataclasses.replace(S, groups={"sales": {"model": {"default": "gpt-5.5"}}})
+    with pytest.raises(CommandError, match=re.escape("alice's group sales decides its model.default: "
+                                                     "thinny config edit --group sales")):
+        instances.default_model(s, reg, "alice", "claude-opus-5-5", instances.CLAUDE_PROVIDER)
+    assert not incus.ran("hermes config set")
+
+
+def test_only_providers_the_instance_is_signed_in_to_list_their_models(tmp_path):
+    """MODELS with a stand-in for Hermes: what its model picker offers, and whether each provider is signed in."""
+    for path, text in {
+        "hermes_cli/__init__.py": "",
+        "hermes_cli/env_loader.py": "import os\ndef load_hermes_dotenv():\n    os.environ['OPENROUTER_API_KEY'] = 'k'\n",
+        "hermes_cli/inventory.py": """
+import os
+def load_picker_context():
+    return "ctx"
+def build_models_payload(ctx, **kw):
+    return {"providers": [
+        {"slug": "openai-codex", "models": ["gpt-5.5"]},
+        {"slug": "nous", "models": ["hermes-4"], "authenticated": False},   # in use, its sign-in gone
+        {"slug": "claude-out", "models": ["opus"]},   # its program says it is signed out
+        {"slug": "claude-in", "models": ["sonnet"]},
+    ] + ([{"slug": "openrouter", "models": ["x"]}] if os.environ.get("OPENROUTER_API_KEY") else [])}   # from .env
+""",
+        "providers/__init__.py": """
+class Profile:
+    def __init__(self, status):
+        self.status = status
+    def setup_status(self):
+        return self.status
+def get_provider_profile(slug):
+    return {"openai-codex": Profile(None), "claude-out": Profile({"logged_in": False}),
+            "claude-in": Profile({"logged_in": True})}.get(slug)
+""",
+    }.items():
+        (tmp_path / "hermes-agent" / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "hermes-agent" / path).write_text(text)
+    out = subprocess.run([sys.executable, "-I", "-c", instances.MODELS, str(tmp_path)], capture_output=True, text=True,
+                         check=True).stdout
+    assert json.loads(out) == {"openai-codex": ["gpt-5.5"], "claude-in": ["sonnet"], "openrouter": ["x"]}
+
+
 @pytest.mark.parametrize("models", [None, "Traceback (most recent call last):", '["gpt-5.5"]', '{"openai-codex": 1}'])
 def test_without_the_list_of_models_nothing_is_set(incus, capsys, models):
     reg = unlocked_alice(incus, models)   # Hermes failed, or its users made it say something else

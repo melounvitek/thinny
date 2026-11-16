@@ -439,6 +439,7 @@ import json, sys
 from pathlib import Path
 home = Path(sys.argv[1])
 sys.path.insert(0, str(home / "hermes-agent"))
+from hermes_cli.env_loader import load_hermes_dotenv
 from hermes_cli.inventory import build_models_payload, load_picker_context
 from providers import get_provider_profile
 
@@ -449,6 +450,7 @@ def signed_in(row):
     return row.get("authenticated") is not False and (status is None or status["logged_in"])
 
 
+load_hermes_dotenv()   # its keys and settings in .env, as `hermes` starts
 rows = build_models_payload(load_picker_context(), explicit_only=True, for_picker=True, non_blocking_catalogs=True,
                             probe_custom_providers=False)["providers"]
 json.dump({row["slug"]: row["models"] for row in rows if signed_in(row)}, sys.stdout)
@@ -761,14 +763,19 @@ def default_model(s: Settings, reg: Registry, name: str, model: str | None = Non
     """Show the model the instance's new chats start on and the models it can use, or make it `model` of `provider`
     (default: the one it uses), one Hermes offers it, in its own config. Its users can still choose others; with a
     lock, the lock decides. No restart: Hermes reads it for each new chat."""
-    locked = settings_for(s, _active(reg, name))
-    if locked.model_lock:
+    inst = _active(reg, name)
+    policy = settings_for(s, inst)
+    if policy.model_lock:
         if model:
             raise CommandError(f"{name} is locked, and its lock decides its default: "
                                f"thinny instance lock {name} {model} ...")
-        print(f"{name}: new chats start on {locked.model} ({_provider_name(locked.model_provider)}); "
-              f"its lock allows {', '.join(locked.allowed_models)}")
+        print(f"{name}: new chats start on {policy.model} ({_provider_name(policy.model_provider)}); "
+              f"its lock allows {', '.join(policy.allowed_models)}")
         return
+    # Before either is set: Hermes would refuse the second after setting the first.
+    if model and (pinned := [key for key in ("model.provider", "model.default") if key in pinned_keys(policy)]):
+        raise CommandError(f"{name}'s group {inst.group} decides its {' and '.join(pinned)}: "
+                           f"thinny config edit --group {inst.group}")
     uses, default = map(_printable, model_of(s, reg, name))   # its users' text, for the admin's terminal
     available = available_models(name)
     if not model:
