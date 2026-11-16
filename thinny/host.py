@@ -4,6 +4,7 @@ Hermes release all instances run, and the proxies that publish Webapps."""
 from __future__ import annotations
 
 import datetime as dt
+import ipaddress
 import json
 import shutil
 import urllib.request
@@ -140,15 +141,35 @@ def firewall(s: Settings) -> None:
     run(["nft", "-f", str(FIREWALL_FILE)])
 
 
+def ufw_lacks(rules: list[str]) -> list[str]:
+    """Those of `rules` (ufw commands) ufw has not got while it is on; none while it is off or busy."""
+    if not shutil.which("ufw") or "ENABLED=yes" not in UFW_CONF.read_text().splitlines():
+        return []
+    try:
+        added = {line.partition(" comment ")[0]   # ufw lists a rule as its command
+                 for line in run(["ufw", "show", "added"], check=False, timeout=30).stdout.splitlines()}
+    except CommandError:   # ufw waits for its lock while an admin's ufw command asks to confirm
+        return []
+    return [rule for rule in rules if rule not in added]
+
+
 def ufw_lacks_forward() -> bool:
     """ufw is on without UFW_FORWARD, so the containers cannot reach the internet."""
-    if not shutil.which("ufw") or "ENABLED=yes" not in UFW_CONF.read_text().splitlines():
-        return False
-    try:
-        added = run(["ufw", "show", "added"], check=False, timeout=30).stdout.splitlines()
-    except CommandError:   # ufw waits for its lock while an admin's ufw command asks to confirm
-        return False
-    return UFW_FORWARD not in (line.partition(" comment ")[0] for line in added)   # ufw lists a rule as its command
+    return bool(ufw_lacks([UFW_FORWARD]))
+
+
+def ufw_lan_rules(s: Settings) -> list[str]:
+    """The ufw rules that let office PCs, in lan_address's network, open the Webapps and the root certificate."""
+    # "2: eth0    inet 192.168.1.191/24 brd ...", nothing when no interface has lan_address
+    words = run(["ip", "-o", "addr", "show", "to", s.lan_address], check=False, timeout=10).stdout.split()
+    if len(words) < 4:
+        return []
+    office = ipaddress.ip_interface(words[3]).network
+    if office.num_addresses == 1:   # a /32 or /128, or a peer address: no office network around it
+        return []
+    low, high = s.port_range
+    return [f"ufw allow from {office} to any port {low}:{high} proto tcp",
+            f"ufw allow from {office} to any port 80 proto tcp"]
 
 
 def reconcile_access(s: Settings, reg: Registry) -> None:

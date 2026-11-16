@@ -16,10 +16,14 @@ def setup(s: Settings) -> None:
     apply(s)
     if s.tunnel_port:
         print(f"Point your tunnel at http://127.0.0.1:{s.tunnel_port} (see README, Access).")
+    sudo = "sudo " if os.environ.get("SUDO_USER") else ""
     if host.ufw_lacks_forward():
-        sudo = "sudo " if os.environ.get("SUDO_USER") else ""
         print("ufw blocks the containers' traffic, so instances cannot reach the internet (see README, "
               f"Prerequisites). Run: {sudo}{host.UFW_FORWARD}")
+    lan = s.access_default == "lan" or any(inst.access == "lan" for inst in Registry.load().current())
+    if lan and (missing := host.ufw_lacks(host.ufw_lan_rules(s))):
+        print("ufw blocks office PCs, so they cannot open the Webapps or get the root certificate (see README, "
+              "Prerequisites). Run:" + "".join(f"\n  {sudo}{rule}" for rule in missing))
     print("Ready. Add instances with: thinny instance add <name>")
 
 

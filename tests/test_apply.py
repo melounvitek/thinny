@@ -198,9 +198,10 @@ def test_a_member_of_a_missing_group_stops_apply_before_any_change(server, incus
 
 @pytest.fixture
 def bare_setup(monkeypatch):
-    """setup without Incus, apply or ufw."""
+    """setup without Incus, apply, instances or ufw."""
     monkeypatch.setattr(host, "init_incus", lambda: None)
     monkeypatch.setattr(apply, "apply", lambda s: None)
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: Registry()))
     monkeypatch.setattr(host.shutil, "which", lambda cmd: None)
     monkeypatch.delenv("SUDO_USER", raising=False)
 
@@ -213,18 +214,27 @@ def test_setup_ends_with_where_the_tunnel_goes(bare_setup, capsys, tunnel_port, 
 
 @pytest.fixture
 def ufw(bare_setup, tmp_path, monkeypatch):
-    """ufw on the server: the test writes its ufw.conf and the rules `ufw show added` lists."""
+    """ufw on a server with 192.168.1.191/24 and 10.0.0.5/32: the test writes its ufw.conf and the rules
+    `ufw show added` lists."""
     monkeypatch.setattr(host.shutil, "which", lambda cmd: f"/usr/sbin/{cmd}")
     monkeypatch.setattr(host, "UFW_CONF", tmp_path / "ufw.conf")
     rules = []
 
     def run(cmd, **kw):
+        if cmd[:5] == ["ip", "-o", "addr", "show", "to"]:
+            address = {"192.168.1.191": "192.168.1.191/24", "10.0.0.5": "10.0.0.5/32"}.get(cmd[5])
+            return subprocess.CompletedProcess(cmd, 0, f"2: eth0    inet {address} scope global eth0\n" if address else "", "")
         if cmd != ["ufw", "show", "added"]:
             return subprocess.CompletedProcess(cmd, 1, "", "")
         added = "\n".join(["Added user rules (see 'ufw status' for running firewall):", *(rules or ["(None)"])])
         return subprocess.CompletedProcess(cmd, 0, added + "\n", "")
     monkeypatch.setattr(host, "run", run)
     return rules
+
+
+LAN = dataclasses.replace(S, access_default="lan", lan_address="192.168.1.191")
+OFFICE = ["ufw allow from 192.168.1.0/24 to any port 9120:9199 proto tcp",
+          "ufw allow from 192.168.1.0/24 to any port 80 proto tcp"]
 
 
 @pytest.mark.parametrize("enabled, rules, hint", [
@@ -243,13 +253,16 @@ def test_setup_tells_the_admin_when_ufw_lacks_the_containers_forward_rule(ufw, c
     assert out.endswith("Ready. Add instances with: thinny instance add <name>\n")
 
 
-def test_setup_skips_the_ufw_hint_while_ufw_waits_for_its_lock(ufw, capsys, monkeypatch):
+def test_setup_skips_the_ufw_hints_while_ufw_waits_for_its_lock(ufw, capsys, monkeypatch):
     host.UFW_CONF.write_text("ENABLED=yes\n")
+    answer = host.run
 
     def waiting(cmd, **kw):   # an admin's `ufw delete` holds ufw's lock while it asks to confirm
+        if cmd[0] != "ufw":
+            return answer(cmd, **kw)
         raise CommandError(f"{' '.join(cmd)}: timed out after 30 s")
     monkeypatch.setattr(host, "run", waiting)
-    apply.setup(S)
+    apply.setup(LAN)
     assert capsys.readouterr().out == "Ready. Add instances with: thinny instance add <name>\n"
 
 
@@ -260,3 +273,55 @@ def test_the_ufw_hint_has_sudo_when_the_admin_used_it(ufw, capsys, monkeypatch, 
         monkeypatch.setenv("SUDO_USER", sudo_user)
     apply.setup(S)
     assert f"(see README, Prerequisites). Run: {command} route allow in on thinny-+\n" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("enabled, rules, hint", [
+    ("no", [], []),
+    ("yes", [], OFFICE),
+    ("yes", [OFFICE[1]], OFFICE[:1]),
+    ("yes", [OFFICE[0], f"{OFFICE[1]} comment 'root certificate'"], []),
+])
+def test_setup_tells_the_admin_when_ufw_keeps_office_pcs_out(ufw, capsys, enabled, rules, hint):
+    host.UFW_CONF.write_text(f"ENABLED={enabled}\n")
+    ufw.extend([host.UFW_FORWARD, *rules])
+    apply.setup(LAN)
+    out = capsys.readouterr().out
+    assert [rule for rule in OFFICE if f"\n  {rule}\n" in out] == hint
+    assert out.endswith("Ready. Add instances with: thinny instance add <name>\n")
+
+
+@pytest.mark.parametrize("default, instance, hint", [
+    ("lan", None, True),
+    ("tailscale", Instance("alice", 9120, "lan", state="active"), True),
+    ("tailscale", Instance("alice", 9120, "lan", state="disabled"), False),
+    ("tailscale", Instance("alice", 9120, "tailscale", state="active"), False),
+])
+def test_the_office_hint_comes_only_with_lan_access_in_use(ufw, capsys, monkeypatch, default, instance, hint):
+    host.UFW_CONF.write_text("ENABLED=yes\n")
+    ufw.append(host.UFW_FORWARD)
+    reg = Registry({instance.name: instance} if instance else {})
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
+    apply.setup(dataclasses.replace(LAN, access_default=default))
+    assert (OFFICE[0] in capsys.readouterr().out) == hint
+
+
+def test_the_office_hint_has_the_configured_ports_and_sudo(ufw, capsys, monkeypatch):
+    host.UFW_CONF.write_text("ENABLED=yes\n")
+    ufw.append(host.UFW_FORWARD)
+    monkeypatch.setenv("SUDO_USER", "admin")
+    apply.setup(dataclasses.replace(LAN, port_range=(9200, 9249)))
+    assert capsys.readouterr().out == (
+        "ufw blocks office PCs, so they cannot open the Webapps or get the root certificate (see README, "
+        "Prerequisites). Run:\n"
+        "  sudo ufw allow from 192.168.1.0/24 to any port 9200:9249 proto tcp\n"
+        "  sudo ufw allow from 192.168.1.0/24 to any port 80 proto tcp\n"
+        "Ready. Add instances with: thinny instance add <name>\n")
+
+
+# On no interface (Caddy cannot bind it either), or on one with no network around it
+@pytest.mark.parametrize("lan_address", ["10.0.0.9", "10.0.0.5"])
+def test_setup_names_no_office_network_it_cannot_find(ufw, capsys, lan_address):
+    host.UFW_CONF.write_text("ENABLED=yes\n")
+    ufw.append(host.UFW_FORWARD)
+    apply.setup(dataclasses.replace(LAN, lan_address=lan_address))
+    assert capsys.readouterr().out == "Ready. Add instances with: thinny instance add <name>\n"
