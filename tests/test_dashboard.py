@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import subprocess
 import time
 import types
@@ -528,6 +529,28 @@ def test_the_dashboard_reads_the_provisioned_prometheus_and_thinnys_disk_file():
     instances = board["templating"]["list"][0]["query"]   # the instances to choose from: thinny's
     assert instances == "label_values(thinny_instance_disk_quota_bytes, name)"
     assert 'thinny_instance_disk_quota_bytes{name="alice"}' in render.disk_metrics([("alice", 1, 2)])
+
+
+def test_the_dashboard_shows_the_subscription_usage_only_while_thinnys_file_of_it_is_fresh():
+    board = json.loads((host.FILES / "grafana/thinny.json").read_text())
+    fresh = f' and on() (time() - node_textfile_mtime_seconds{{file="{dashboard.USAGE_METRICS}"}} < 7200)'
+    usage = {panel["title"]: panel for panel in board["panels"]
+             if any("thinny_instance_subscription_used_ratio{" in target["expr"] for target in panel.get("targets", []))}
+    assert list(usage) == ["Weekly subscription limit used", "Subscription limits"]
+    exprs = [target["expr"] for panel in usage.values() for target in panel["targets"]]
+    assert all(expr.endswith(fresh) for expr in exprs)
+    assert {window for expr in exprs for window in re.findall(r'window="(\w+)"', expr)} == set(dashboard.USAGE_WINDOWS)
+    assert 'thinny_instance_subscription_used_ratio{name="alice",provider="ChatGPT",window="week"} 0.5' in \
+        render.usage_metrics([("alice", "ChatGPT", "week", 0.5)])
+    # the fleet's in the row of the 10 with the most, the chosen instance's in its row
+    rows = {panel["title"]: panel["gridPos"]["y"] for panel in board["panels"] if panel["type"] == "row"}
+    assert rows["Instances: the 10 with the most"] < usage["Weekly subscription limit used"]["gridPos"]["y"] \
+        < rows["Instance $instance"] < usage["Subscription limits"]["gridPos"]["y"]
+    assert all('{name="$instance",' in target["expr"] for target in usage["Subscription limits"]["targets"])
+    cells = [(x, y) for panel in board["panels"] for grid in [panel["gridPos"]]
+             for x in range(grid["x"], grid["x"] + grid["w"]) for y in range(grid["y"], grid["y"] + grid["h"])]
+    assert len(cells) == len(set(cells))   # no panel covers another
+    assert len({panel["id"] for panel in board["panels"]}) == len(board["panels"])
 
 
 def test_it_waits_for_tailscale_rather_than_forget_what_tailscale_serves(server, monkeypatch):
