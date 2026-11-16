@@ -1018,23 +1018,33 @@ def list_groups(s: Settings, reg: Registry) -> None:
 
 
 def list_instances(reg: Registry, group: str | None = None) -> None:
-    """CPU is the use over a second, as a share of the instance's own CPU limit. `group`: its members only."""
+    """CPU is the use over a second, as a share of the instance's own CPU limit; each instance's gateway and disk use
+    are read meanwhile. `group`: its members only."""
+    shown = [inst for inst in sorted(reg.instances.values(), key=lambda inst: inst.port)
+             if group is None or inst.group == group]
+
+    def probe(inst: Instance) -> tuple[bool | None, int]:
+        """Whether its gateway is active (None: a disabled or removed instance shows none), and its disk use."""
+        return None if inst.state in ("disabled", "removed") else gateway_active(inst.name), disk_used(inst.name)
+
     before = _containers()
     start = time.monotonic()
-    time.sleep(1)
-    containers = _containers()
-    seconds = time.monotonic() - start
+    with ThreadPoolExecutor() as pool:
+        probes = {inst.name: pool.submit(probe, inst) for inst in shown if inst.name in before}
+        time.sleep(1)
+        containers = _containers()
+        seconds = time.monotonic() - start
     rows = [("NAME", "STATE", "GROUP", "ACCESS", "FRONTEND", "PORT", "GATEWAY", "CPU", "RAM", "DISK", "URL")]
-    for inst in sorted(reg.instances.values(), key=lambda inst: inst.port):
-        if group is not None and inst.group != group:
-            continue
+    for inst in shown:
         c = containers.get(inst.name)
-        gateway = "-" if inst.state in ("disabled", "removed") or c is None else \
-            ("active" if gateway_active(inst.name) else "INACTIVE")
-        cpu = ram = disk = "-"
+        gateway = cpu = ram = disk = "-"
         if c:
+            # A container started during the second is read now.
+            active, used = probes[inst.name].result() if inst.name in probes else probe(inst)
+            if active is not None:
+                gateway = "active" if active else "INACTIVE"
             state = c["state"]
-            disk = _gib(disk_used(inst.name), state["disk"]["root"]["total"])
+            disk = _gib(used, state["disk"]["root"]["total"])
             if c["status"] == "Running":
                 ram = _gib(_memory_used(inst.name, state["memory"]["usage"]), state["memory"]["total"])
                 if before.get(inst.name, {}).get("status") == "Running":   # not started in between
