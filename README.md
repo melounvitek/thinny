@@ -12,8 +12,10 @@ Status: in development. Design notes: [`PLAN.md`](PLAN.md).
   process and disk limits. A firewall lets it reach the internet and nothing else. Its users
   have `sudo` in it.
 - **One central policy** from `config.toml`, mounted read-only as each container's `/etc/hermes`
-  (Hermes "managed scope"): approvals, the agent kept in its container, and Hermes not borrowing
-  Claude Code's or Codex CLI's sign-ins on its own (it could log them out). The optional **model
+  (Hermes "managed scope"): approvals, the agent kept in its container, Hermes not borrowing
+  Claude Code's or Codex CLI's sign-ins on its own (it could log them out), and no messages to
+  users on Telegram, email or the phone whenever Hermes restarts, such as at the nightly update or
+  a reboot. The optional **model
   lock** (`policy.model_lock`) also pins the provider, model, reasoning effort and plugins, and
   allows only `allowed_models`. Without it, users choose their own. One instance can have its own
   lock, or none, whatever the server's (`thinny instance lock` and `unlock`).
@@ -471,6 +473,8 @@ the first.
 - **Best effort:** Hermes skips mail that arrives while its gateway restarts (a Hermes update,
   `config apply`, `reset-password`, a reboot) or while the instance is disabled. That mail stays
   unread in the mailbox, and its sender has to write again.
+- Hermes does not mail the first address about its restarts ("back online", "shutting down"):
+  thinny's policy turns that off.
 - Run it again to change who can write to it; without addresses it keeps them. `--new-password`
   gives the mailbox a new password. The password is in the instance's `.env`, where its users can
   read it: the mailbox is theirs.

@@ -526,9 +526,12 @@ issues **[docs]**, not tried.
   with `purelymail.com;` (DMARC, SPF and DKIM pass); `listUser` gives whole addresses; `modifyUser` takes
   the unchanged password; `addDomain` passed at once once the records were on Cloudflare. netcup's default
   firewall policy "netcup Mail block" drops outgoing 25, 465 and 587: Hermes then fails SMTP, takes no mail
-  either and retries (1 to 4 min). On its first connect it mailed the home address a startup note; the
-  reply to it got an answer in the thread. A reconnect within one gateway process takes the mail that came
-  meanwhile; only a new process skips it.
+  either and retries (1 to 4 min). On its first connect it mailed the home address a startup note, and a
+  restart a "shutting down" one; `platforms.<platform>.gateway_restart_notification: false` stops both,
+  also from the managed scope, where it leaves `enabled` to the instance **[src]**. thinny's policy pins it
+  for email, the phone and Telegram: a block there makes Hermes load that adapter at start, but not
+  turn the platform on **[src]**. The reply to the note got an answer in the thread. A reconnect within
+  one gateway process takes the mail that came meanwhile; only a new process skips it.
 
 ## 5. Rejected options (and why)
 

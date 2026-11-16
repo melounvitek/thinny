@@ -86,6 +86,8 @@ def managed_config(s: Settings) -> str:
         # Hermes does not borrow Claude Code's or Codex CLI's sign-ins on its own: their refresh tokens rotate, so it
         # could log them out, and with Claude Code the Claude plugin, which runs it.
         "auth": {"adopt_external_logins": False},
+        # Else Hermes messages users at every restart of its gateway, e.g. at the nightly update or a reboot.
+        "platforms": {platform: {"gateway_restart_notification": False} for platform in ("email", "phone", "telegram")},
     }
     config = merged(s.hermes, config)   # the instance's group's settings, under thinny's own
     return f"# {HEADER}\n# Hermes managed scope: these values win over every instance's own config.\n{to_yaml(config)}\n"
