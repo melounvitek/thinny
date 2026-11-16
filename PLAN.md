@@ -610,7 +610,8 @@ instance add <name> [--access ...] [--frontend webapp|webui]
                                   Claude Code, language pack and built-in plugins (turned on),
                                   WebUI at its recorded release when chosen, model-guard,
                                   password, language, look, without the
-                                  model lock the starting model, Piper's speed, a phone line
+                                  model lock the provider and its Hermes's default model for
+                                  it (Claude: the plugin's first), Piper's speed, a phone line
                                   when asked (.env, config, Asterisk), access, gateway
 instance access | login [--provider] | reset-password <name>
                                   access method, OpenAI or Claude device login, new password

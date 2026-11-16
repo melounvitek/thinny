@@ -20,7 +20,7 @@ class SettingsError(Exception):
 
 @dataclass(frozen=True)
 class Settings:
-    model: str
+    model: str = ""
     allowed_models: tuple[str, ...] = ()
     model_lock: bool = False
     model_provider: str = "openai-codex"
@@ -132,8 +132,6 @@ def parse(text: str, source: str = "config.toml") -> Settings:
     types = {f.name: f.type for f in fields(Settings)}
     for name, value in values.items():
         values[name] = _convert(name, types[name], value, source)
-    if "model" not in values:
-        raise SettingsError(f"{source}: policy.model is required")
     settings = Settings(**values)
     _validate(settings, source)
     return settings
@@ -175,11 +173,11 @@ def _validate(s: Settings, source: str) -> None:
     def fail(message):
         raise SettingsError(f"{source}: {message}")
 
-    for model in (s.model, *s.allowed_models):
+    for model in s.allowed_models:
         if not model or "<" in model:
-            fail("set policy.model and policy.allowed_models to real model ids")
-    if s.model_lock and s.model not in s.allowed_models:
-        fail("with policy.model_lock, policy.model must be one of policy.allowed_models")
+            fail("set policy.allowed_models to real model ids")
+    if s.model_lock and s.model not in s.allowed_models:   # so it is required
+        fail("with policy.model_lock, set policy.model to one of policy.allowed_models")
     if s.approvals not in ("manual", "smart"):
         fail("policy.approvals must be manual or smart (off runs every command and computer_use unasked)")
     if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", s.update_time):

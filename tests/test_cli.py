@@ -74,52 +74,42 @@ def answering(monkeypatch, *answers):
 
 @pytest.mark.parametrize("typed, language", [("cs", "cs"), ("pt-BR", "pt-br")])
 def test_init_writes_the_answers_into_the_commented_example(new_server, monkeypatch, capsys, typed, language):
-    # OpenAI, its model, language, interface, own addresses, tunnel port, write
-    answering(monkeypatch, "", "", typed, "", "2", "", "")
+    # language, interface, own addresses, tunnel port, write: no model, each instance starts on Hermes's default
+    answering(monkeypatch, typed, "", "2", "", "")
     assert cli.main(["init"]) == 0
     s = settings.load(new_server)
     assert (s.model_provider, s.model, s.language, s.language_pack, s.network_interface) == \
-        ("openai-codex", "gpt-5.5", language, f"hermes-lang-{language}", "enp1s0")
+        ("openai-codex", "", language, f"hermes-lang-{language}", "enp1s0")
     assert (s.access_default, s.lan_address, s.tunnel_port) == ("url", "", 8080)
-    assert "# default model" in new_server.read_text()
+    assert "# with model_lock: where new chats start" in new_server.read_text()
     assert new_server.stat().st_mode & 0o777 == 0o600   # it may hold the Telegram manager bot's token
     assert "one tunnel at http://127.0.0.1:8080" in capsys.readouterr().out
 
 
 def test_init_offers_the_detected_lan_address(new_server, monkeypatch):
-    # Anthropic, another model, language (no pack in the catalog), interface, LAN (the default), its address,
-    # write
-    answering(monkeypatch, "2", "claude", "de", "eth1", "", "", "y")
+    # language (no pack in the catalog), interface, LAN (the default), its address, write
+    answering(monkeypatch, "de", "eth1", "", "", "y")
     assert cli.main(["init"]) == 0
     s = settings.load(new_server)
-    assert (s.model_provider, s.model, s.language, s.language_pack, s.network_interface) == \
-        ("claude-subscription-directsdk-experimental", "claude", "de", "", "eth1")
+    assert (s.language, s.language_pack, s.network_interface) == ("de", "", "eth1")
     assert (s.access_default, s.lan_address, s.tunnel_port) == ("lan", "192.168.1.5", 0)
-
-
-def test_init_suggests_a_model_of_the_claude_subscription(new_server, monkeypatch):
-    # no such provider (asked again), Anthropic, its model, language, interface, LAN, its address, write
-    answering(monkeypatch, "3", "2", "", "", "", "", "", "")
-    assert cli.main(["init"]) == 0
-    s = settings.load(new_server)
-    assert (s.model_provider, s.model) == ("claude-subscription-directsdk-experimental", "claude-opus-5-5")
 
 
 @pytest.mark.parametrize("typed, pack", [("", "hermes-lang-cs"), ("-", "")])
 def test_init_asks_for_the_language_pack_when_it_could_not_check_the_catalog(new_server, monkeypatch, capsys,
                                                                               typed, pack):
     monkeypatch.setattr(system, "http_status", lambda url, timeout: "000")
-    # OpenAI, its model, language, its pack, interface, local only, write
-    answering(monkeypatch, "", "gpt-5.5", "cs", typed, "", "3", "")
+    # language, its pack, interface, local only, write
+    answering(monkeypatch, "cs", typed, "", "3", "")
     assert cli.main(["init"]) == 0
     assert settings.load(new_server).language_pack == pack
     assert "Could not check Hermes's plugin catalog for hermes-lang-cs (HTTP status 000)" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("answers, message", [
-    (("", "gpt-5.5", "", "", "", "", "n"), "nothing written"),
-    (("", "gpt-5.5", "", "", "2", "9150"), "tunnel_port"),   # in the Webapp port range
-    (("", "gpt-5.5", "", "", "2", "lots"), "'lots' is not a port"),
+    (("", "", "", "", "n"), "nothing written"),
+    (("", "", "2", "9150"), "tunnel_port"),   # in the Webapp port range
+    (("", "", "2", "lots"), "'lots' is not a port"),
     (("",), "nothing written"),                                # the terminal ends (Ctrl-D)
 ])
 def test_init_writes_nothing_without_a_valid_confirmed_answer(new_server, monkeypatch, capsys, answers, message):
@@ -214,29 +204,30 @@ def terminal(monkeypatch):
 
 @pytest.fixture
 def added(monkeypatch):
-    """The provider and model of each instance `instance add` adds."""
+    """The provider of each instance `instance add` adds."""
     added = []
     monkeypatch.setattr(instances, "add",
-                        lambda s, reg, name, access, url, **kw: added.append((s.model_provider, s.model)))
+                        lambda s, reg, name, access, url, **kw: added.append(s.model_provider))
     return added
 
 
-@pytest.mark.parametrize("answers, model", [
-    (["", "", "", ""], ("openai-codex", "m1")),   # the site's
-    (["", "2", "", ""], ("claude-subscription-directsdk-experimental", "claude-opus-5-5")),
+@pytest.mark.parametrize("answers, provider", [
+    (["", "", ""], "openai-codex"),   # the site's frontend, the site's provider, no phone line
+    (["", "2", ""], "claude-subscription-directsdk-experimental"),
 ])
-def test_instance_add_asks_for_the_instances_provider_and_model(server, terminal, added, monkeypatch, answers, model):
+def test_instance_add_asks_for_the_instances_provider_but_no_model(server, terminal, added, monkeypatch, answers,
+                                                                    provider):
     answering(monkeypatch, *answers)
     assert cli.main(["instance", "add", "alice", "--access", "local"]) == 0
-    assert added == [model]
+    assert added == [provider]
 
 
-def test_instance_add_leaves_the_model_to_the_lock(server, terminal, added, monkeypatch):
+def test_instance_add_leaves_the_provider_to_the_lock(server, terminal, added, monkeypatch):
     site, _ = server
     site.write_text(VALID.replace('model = "m1"', 'model = "m1"\nmodel_lock = true'))
     answering(monkeypatch, "", "")   # the site's frontend, no phone line
     assert cli.main(["instance", "add", "alice", "--access", "local"]) == 0
-    assert added == [("openai-codex", "m1")]
+    assert added == ["openai-codex"]
 
 
 @pytest.fixture
@@ -254,17 +245,17 @@ def test_instance_add_asks_which_frontend_a_new_instance_gets(server, terminal, 
                                                               site_frontend, answer, frontend):
     site, _ = server
     site.write_text(VALID + f'\n[webapp]\nfrontend = "{site_frontend}"\n')
-    answering(monkeypatch, answer, "", "", "")   # the frontend, the site's model, no phone line
+    answering(monkeypatch, answer, "", "")   # the frontend, the site's provider, no phone line
     assert cli.main(["instance", "add", "alice", "--access", "local"]) == 0
     assert frontends == [frontend]
 
 
 def test_instance_add_asks_no_frontend_when_given_one_or_when_resuming(server, terminal, frontends, monkeypatch):
-    answering(monkeypatch, "", "", "")   # the site's model, no phone line
+    answering(monkeypatch, "", "")   # the site's provider, no phone line
     assert cli.main(["instance", "add", "alice", "--access", "local", "--frontend", "webui"]) == 0
     monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: Registry(
         {"bob": Instance("bob", 9120, "local", frontend="webui")})))   # its add stopped halfway
-    answering(monkeypatch, "", "", "")
+    answering(monkeypatch, "", "")
     assert cli.main(["instance", "add", "bob", "--access", "local"]) == 0
     assert frontends == ["webui", None]
     with pytest.raises(SystemExit):
@@ -311,9 +302,9 @@ def phones(monkeypatch):
 
 
 def test_instance_add_can_connect_a_phone_line_with_odoriks_defaults(server, terminal, phones, monkeypatch):
-    # the site's model; a line at Odorik, a password as typed, PINs too short and in other digits than the
-    # plugin's, callers, the number Hermes calls
-    hidden = answering(monkeypatch, "", "", "", "y", "", "794000", " secret", "12", "１２３４", "1234",
+    # the site's frontend and provider; a line at Odorik, a password as typed, PINs too short and in other digits
+    # than the plugin's, callers, the number Hermes calls
+    hidden = answering(monkeypatch, "", "", "y", "", "794000", " secret", "12", "１２３４", "1234",
                        "420777000111,420777000222", "", "sk-key")
     assert cli.main(["instance", "add", "alice", "--access", "local"]) == 0
     assert phones == [{"SIP_SERVER": "sip.odorik.cz", "SIP_USER": "794000", "SIP_PASSWORD": " secret",
@@ -323,7 +314,7 @@ def test_instance_add_can_connect_a_phone_line_with_odoriks_defaults(server, ter
 
 
 def test_instance_add_connects_no_phone_line_unless_asked_to(server, terminal, phones, monkeypatch):
-    answering(monkeypatch, "", "", "", "")
+    answering(monkeypatch, "", "", "")
     assert cli.main(["instance", "add", "alice", "--access", "local"]) == 0
     assert phones == [None]
 

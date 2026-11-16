@@ -19,11 +19,9 @@ from .registry import Registry, RegistryError, validate_name
 from .settings import SettingsError, load
 from .system import CommandError, lock, write_file
 
-# The providers thinny offers by name: name -> (Hermes provider id, suggested model, text). Users set up
-# others in Hermes itself.
-PROVIDERS = {"openai": ("openai-codex", "gpt-5.5", "OpenAI      a ChatGPT subscription"),
-             "anthropic": (instances.CLAUDE_PROVIDER, "claude-opus-5-5",
-                           "Anthropic   a Claude Pro or Max subscription")}
+# The providers thinny offers by name: name -> (Hermes provider id, text). Users set up others in Hermes itself.
+PROVIDERS = {"openai": ("openai-codex", "OpenAI      a ChatGPT subscription"),
+             "anthropic": (instances.CLAUDE_PROVIDER, "Anthropic   a Claude Pro or Max subscription")}
 
 
 def parse_access(value: str) -> tuple[str, str]:
@@ -269,8 +267,8 @@ def main(argv: list[str] | None = None) -> int:
                 moved = a.name in reg.instances and reg.get(a.name).moved
                 asking = not moved and sys.stdin.isatty()  # a moved instance keeps its model and line
                 if asking and not s.model_lock:  # else the lock decides
-                    provider, model = ask_model(f"Which model provider will {a.name} use?", s.model_provider, s.model)
-                    s = dataclasses.replace(s, model_provider=provider, model=model)
+                    provider = ask_provider(f"Which model provider will {a.name} use?", s.model_provider)
+                    s = dataclasses.replace(s, model_provider=provider)
                 phone = ask_phone(a.name) if asking else None
                 instances.add(s, reg, a.name, access, url, frontend=frontend, phone=phone, group=a.group, cpu=a.cpu,
                               memory_mb=a.memory_mb, disk_gb=a.disk_gb)
@@ -403,7 +401,6 @@ def init_config() -> None:
     print(f"thinny needs a few settings for {path}. Enter takes the [suggestion].\n"
           "Everything else keeps its default; change any of it later with: thinny config edit\n")
     try:
-        provider, model = ask_model("Model provider", "openai-codex", "gpt-5.5")
         language = ask("Webapp language (en, cs, de, ...)", "en").lower()  # Hermes's codes, e.g. pt-br
         # A language Hermes lacks comes as a catalog plugin.
         pack = f"hermes-lang-{language}"
@@ -422,15 +419,15 @@ def init_config() -> None:
         if not port.isdigit():
             raise CommandError(f"{port!r} is not a port; nothing written")
         text = settings.fill((host.LIB / "config.example.toml").read_text(encoding="utf-8"), {
-            ("policy", "model_provider"): provider, ("policy", "model"): model, ("policy", "language"): language,
-            ("policy", "language_pack"): pack, ("network", "interface"): interface, ("access", "default"): access,
+            ("policy", "language"): language, ("policy", "language_pack"): pack,
+            ("network", "interface"): interface, ("access", "default"): access,
             ("access", "lan_address"): lan_address, ("access", "tunnel_port"): int(port)})
         settings.parse(text, source=str(path))
         where = {"lan": f"office network, https://{lan_address}:<port>/", "tailscale": "Tailscale",
                  "url": "own addresses" + (f", one tunnel at http://127.0.0.1:{port}" if int(port) else ""),
                  "local": "local only, through an SSH tunnel"}[access]
         pack_note = f", with the language pack {pack}" if pack else ""
-        print(f"\n  model      {provider} / {model}\n  language   {language}{pack_note}\n"
+        print(f"\n  language   {language}{pack_note}\n"
               f"  interface  {interface}\n  access     {where}\n")
         if input(f"Write {path}? [Y/n] ").strip().lower().startswith("n"):
             raise CommandError("nothing written")
@@ -478,14 +475,7 @@ def ask_provider(question: str, default: str) -> str:
     """The Hermes provider id of OpenAI or Anthropic (`default` when not on a terminal)."""
     if not sys.stdin.isatty():
         return default
-    return choose(question, [(p, text) for p, _, text in PROVIDERS.values()], default)
-
-
-def ask_model(question: str, provider: str, model: str) -> tuple[str, str]:
-    """A provider and model id; Enter keeps `provider` and `model`, or takes the suggestion for another provider."""
-    picked = ask_provider(question, provider)
-    suggested = model if picked == provider else next(m for p, m, _ in PROVIDERS.values() if p == picked)
-    return picked, ask("Model id", suggested)
+    return choose(question, list(PROVIDERS.values()), default)
 
 
 def ask_access(question: str, lan_address: str, default: str) -> str:

@@ -27,12 +27,12 @@ def test_minimal_settings_use_defaults():
 
 
 def test_example_needs_real_values_before_use():
-    with pytest.raises(SettingsError, match="real model ids"):
+    with pytest.raises(SettingsError, match="lan_address must be an IP address"):
         parse(EXAMPLE.read_text())
 
 
 def test_example_parses_once_filled_in():
-    text = EXAMPLE.read_text().replace("<model id>", "m1").replace("<server LAN IP>", "10.0.0.5")
+    text = EXAMPLE.read_text().replace("<server LAN IP>", "10.0.0.5")
     s = parse(text)
     assert s.model_lock is False
     assert s.port_range == (9120, 9199)
@@ -51,9 +51,10 @@ def test_filling_the_example_keeps_its_comments():
         [line.partition("#")[2] for line in template.splitlines()]
 
 
-def test_model_lock_is_off_by_default_and_then_needs_no_allowed_models():
-    s = parse(site(policy__allowed_models=None, policy__model="m3"))
-    assert (s.model_lock, s.model, s.allowed_models) == (False, "m3", ())
+def test_model_lock_is_off_by_default_and_then_needs_no_model():
+    s = parse(site(policy__allowed_models=None, policy__model=None))
+    assert (s.model_lock, s.model, s.allowed_models) == (False, "", ())
+    assert parse(site(policy__allowed_models=None, policy__model="<model id>")).model_lock is False   # ignored
     assert parse(site(policy__model_lock=True)).model_lock is True
 
 
@@ -71,7 +72,8 @@ def test_model_lock_is_off_by_default_and_then_needs_no_allowed_models():
     ({"policy__model": "m3", "policy__model_lock": True}, "one of policy.allowed_models"),
     ({"policy__allowed_models": None, "policy__model_lock": True}, "one of policy.allowed_models"),
     ({"policy__model_lock": "yes"}, "model_lock must be bool"),
-    ({"policy__model": None}, "policy.model is required"),
+    ({"policy__model": None, "policy__model_lock": True}, "with policy.model_lock, set policy.model to one of"),
+    ({"policy__allowed_models": ["m1", "<model id>"]}, "set policy.allowed_models to real model ids"),
     ({"access__lan_address": None}, "lan_address is required"),
     ({"access__lan_address": "server.lan"}, "must be an IP address"),
     ({"access__proxy_users": ["www-data"]}, "unknown setting access.proxy_users"),
