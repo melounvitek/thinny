@@ -195,7 +195,7 @@ thinny instance telegram alice          # a Telegram bot its user creates with a
 thinny instance list                    # with each one's CPU, RAM and disk use
 thinny instance access alice tailscale  # lan | tailscale | url=<URL> | local
 thinny instance frontend alice webui    # webapp | webui
-thinny instance limits alice --cpu 4 --memory-mb 8192 --disk-gb 50
+thinny instance resize alice --cpu 4 --memory-mb 8192 --disk-gb 50
 thinny instance lock alice [model ...]  # only these models (default: the one it uses)
 thinny instance unlock alice            # its users choose, even with the server's lock
 thinny instance reset-password alice
@@ -204,7 +204,7 @@ thinny instance remove alice            # then delete its container and data; as
 thinny instance remove alice --purge    # also free its name and port, even once removed
 thinny instance restart [alice ...]
 thinny instance move alice bob --to admin@new-server   # or --all; experimental
-thinny instance restart --group sales   # instead of names: limits, lock, unlock, login and move too (see Groups)
+thinny instance restart --group sales   # instead of names: resize, lock, unlock, login and move too (see Groups)
 ```
 
 - `add` prints the address, the username (Webapp only) and the password. **The password is shown
@@ -239,7 +239,7 @@ thinny instance restart --group sales   # instead of names: limits, lock, unlock
   Hermes 3310), then with `~/.hermes/plugins/hermes-3310/install-asterisk.sh` and a gateway
   restart. See its README.
 - `add` takes the same `--cpu`, `--memory-mb` and `--disk-gb`. Limits an instance was not given
-  follow `[container]` in `config.toml`, also when it changes. `limits` applies at once, even to a
+  follow `[container]` in `config.toml`, also when it changes. `resize` applies at once, even to a
   running instance. The storage is compressed, and disk use and its limit count the compressed
   size (about half of what the files take).
 - `lock` keeps the provider `alice` uses and allows the models given, the first by default; it
@@ -281,7 +281,7 @@ thinny instance add alice --group sales
 thinny instance group set bob sales     # join or switch; none: leave
 thinny instance group list              # groups and their instances
 thinny instance list --group sales
-thinny instance restart --group sales   # also limits, lock, unlock, login and move
+thinny instance restart --group sales   # also resize, lock, unlock, login and move
 ```
 
 - A group's file holds Hermes settings, keys of Hermes's `config.yaml` in TOML (see

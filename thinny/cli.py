@@ -107,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
     gset = grp.add_parser("set", help="put an instance in a group, or in none (it loses the group's settings)")
     gset.add_argument("name")
     gset.add_argument("group", metavar="GROUP|none")
-    lim = inst.add_parser("limits", help="change an instance's CPU, memory or disk limits",
+    lim = inst.add_parser("resize", help="change an instance's CPU, memory or disk limits",
                           description="Limits not given stay as they are.")
     lim.add_argument("name", nargs="?")
     for parser in (add, lim):
@@ -244,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
                 if a.group != "none":
                     check_group(s, a.group)
                 instances.set_group(s, reg, a.name, "" if a.group == "none" else a.group)
-            elif command == "instance limits":
+            elif command == "instance resize":
                 for name in chosen(reg, [a.name] if a.name else [], a.group):
                     instances.limits(reg, name, a.cpu, a.memory_mb, a.disk_gb)
             elif command == "instance access":

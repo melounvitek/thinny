@@ -642,7 +642,7 @@ instance list | restart           instances with their CPU, RAM and disk use; on
 instance group set <name> <group|none> | group list
                                   its group: the group's keys are unset in its own config, then
                                   pinned in its policy under thinny's own; groups and members
---group <group>                   instead of names on list, limits, login, lock, unlock, restart
+--group <group>                   instead of names on list, resize, login, lock, unlock, restart
                                   and move: the group's active instances, one after another
 instance move <name>... | --all --to [user@]host
                                   experimental: whole containers to another thinny server, one

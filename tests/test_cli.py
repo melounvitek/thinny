@@ -383,13 +383,13 @@ def test_instance_lock_takes_the_models_and_unlock_the_name(server, monkeypatch)
     assert calls == [("lock", "alice", ["m2", "m3"]), ("lock", "bob", []), ("unlock", "alice")]
 
 
-def test_instance_limits_changes_only_the_given_limits(server, monkeypatch):
+def test_instance_resize_changes_only_the_given_limits(server, monkeypatch):
     changed = []
     monkeypatch.setattr(instances, "limits", lambda reg, *args: changed.append(args))
-    assert cli.main(["instance", "limits", "alice", "--disk-gb", "60"]) == 0
+    assert cli.main(["instance", "resize", "alice", "--disk-gb", "60"]) == 0
     assert changed == [("alice", None, None, 60)]
     with pytest.raises(SystemExit):
-        cli.main(["instance", "limits", "alice", "--memory-mb", "lots"])
+        cli.main(["instance", "resize", "alice", "--memory-mb", "lots"])
 
 
 def test_instance_telegram_waits_without_thinnys_lock(server, monkeypatch):
@@ -587,7 +587,7 @@ def sales(server, monkeypatch):
 
 
 def test_commands_take_the_active_instances_of_a_group(sales):
-    for args in (["restart"], ["lock", "m2", "m3"], ["lock"], ["unlock"], ["limits", "--cpu", "4"],
+    for args in (["restart"], ["lock", "m2", "m3"], ["lock"], ["unlock"], ["resize", "--cpu", "4"],
                  ["login", "--provider", "openai"], ["move", "--to", "new"]):
         assert cli.main(["instance", *args, "--group", "sales"]) == 0
     assert sales == [("restart", ["alice", "dave"]),
@@ -603,7 +603,7 @@ def test_commands_take_the_active_instances_of_a_group(sales):
     (["restart", "carol", "--group", "sales"], "name the instances, or give --group"),   # not both
     (["restart", "--group", ""], "name the instances, or give --group"),   # not every instance
     (["unlock"], "name the instances, or give --group"),
-    (["limits", "--cpu", "4"], "name the instances, or give --group"),
+    (["resize", "--cpu", "4"], "name the instances, or give --group"),
     (["move", "carol", "--group", "sales", "--to", "new"], "name the instances to move, or give --all or --group"),
     (["move", "--all", "--group", "sales", "--to", "new"], "name the instances to move, or give --all or --group"),
 ])
@@ -628,7 +628,7 @@ def tab(capsys, *words):
 
 @pytest.mark.parametrize("words, offered", [
     ([""], ["init", "setup", "status", "doctor", "update", "config", "instance", "uninstall"]),   # not trace
-    (["instance", "re"], ["reset-password", "remove", "restart"]),                                # not receive
+    (["instance", "re"], ["resize", "reset-password", "remove", "restart"]),                      # not receive
     (["instance", "group", ""], ["list", "set"]),
     (["update", "--d"], ["--dry-run"]),
     (["instance", "restart", "--"], ["--help", "--group"]),
@@ -651,7 +651,7 @@ def test_tab_completes_the_names_of_instances_for_root(monkeypatch, capsys):
                     "carol": Instance("carol", 9122, "local", state="removed")})
     monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
     assert tab(capsys, "instance", "login", "") == ["alice", "bob"]
-    assert tab(capsys, "instance", "limits", "--cpu", "4", "") == ["alice", "bob"]
+    assert tab(capsys, "instance", "resize", "--cpu", "4", "") == ["alice", "bob"]
     assert tab(capsys, "instance", "login", "--provider", "=", "openai", "") == ["alice", "bob"]
     assert tab(capsys, "instance", "restart", "alice", "") == ["alice", "bob"]
     assert tab(capsys, "instance", "group", "set", "a") == ["alice"]
