@@ -7,7 +7,7 @@ import subprocess
 
 import pytest
 
-from thinny import checks, dashboard, host, instances, render, system, trace
+from thinny import checks, dashboard, host, instances, render, settings, system, trace
 from thinny.registry import Instance, Registry
 from thinny.settings import Settings
 
@@ -231,6 +231,17 @@ def test_doctor_warns_while_rows_wait_for_a_sheet(monkeypatch, tmp_path):
     assert results[1:] == [("WARN", "alice: 2 rows of its access trace wait for its Google Sheet",
                             "check that the server reaches script.google.com: the trace tries again every 5 "
                             "minutes, and its journal (journalctl -u thinny-trace) says why they wait")]
+
+
+def test_doctor_warns_when_others_can_read_the_tokens():
+    assert list(checks.tokens(S, Registry())) == []   # none yet
+    path = settings.SECRETS_ENV
+    path.write_text("THINNY_PURELYMAIL_API_TOKEN=pm-live-x\n")
+    path.chmod(0o640)
+    assert list(checks.tokens(S, Registry())) == [
+        ("WARN", f"others than root can read {path}, with thinny's tokens", f"chmod 600 {path}")]
+    path.chmod(0o600)
+    assert list(checks.tokens(S, Registry())) == [("OK", f"only root can read {path}", "")]
 
 
 def test_a_crashing_check_fails_without_stopping_the_others(monkeypatch, capsys):

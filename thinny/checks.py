@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 from . import dashboard as dash
-from . import host, instances, purelymail, render, system, trace
+from . import host, instances, purelymail, render, settings, system, trace
 from .registry import Instance, Registry
 from .settings import MONITORING_PORTS, Settings
 
@@ -73,6 +73,13 @@ def install(s: Settings, reg: Registry):
            else warn(f"thinny-update.timer is {state or 'missing'}",
                      "systemctl enable --now thinny-update.timer"))
     yield update_status(UPDATE_STATUS, dt.datetime.now(dt.UTC))
+
+
+def tokens(s: Settings, reg: Registry):
+    path = settings.SECRETS_ENV
+    if path.exists():   # config edit --secrets keeps it so; another editor may not
+        yield (ok(f"only root can read {path}") if not path.stat().st_mode & 0o077 else
+               warn(f"others than root can read {path}, with thinny's tokens", f"chmod 600 {path}"))
 
 
 def access_trace(s: Settings, reg: Registry):
@@ -397,7 +404,7 @@ def running(s: Settings, inst: Instance):
 
 # ---------- runner ----------
 
-CHECKS = [install, access_trace, mailboxes, prerequisites, firewall, caddy, dashboard]
+CHECKS = [install, tokens, access_trace, mailboxes, prerequisites, firewall, caddy, dashboard]
 INSTANCE_CHECKS = [container, webapp, version, built_ins, bypass]
 
 
