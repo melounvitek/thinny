@@ -3,6 +3,8 @@ config.toml)."""
 
 from __future__ import annotations
 
+import os
+
 from . import host, instances
 from .registry import Registry
 from .settings import Settings
@@ -14,6 +16,10 @@ def setup(s: Settings) -> None:
     apply(s)
     if s.tunnel_port:
         print(f"Point your tunnel at http://127.0.0.1:{s.tunnel_port} (see README, Access).")
+    if host.ufw_lacks_forward():
+        sudo = "sudo " if os.environ.get("SUDO_USER") else ""
+        print("ufw blocks the containers' traffic, so instances cannot reach the internet (see README, "
+              f"Prerequisites). Run: {sudo}{host.UFW_FORWARD}")
     print("Ready. Add instances with: thinny instance add <name>")
 
 
