@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import dataclasses
+import datetime as dt
 import hashlib
 import json
 import math
@@ -14,6 +15,7 @@ import secrets
 import shutil
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
@@ -35,6 +37,10 @@ FRONTEND_NAMES = {"webapp": "Webapp", "webui": "WebUI"}
 CGROUPS = Path("/sys/fs/cgroup")   # each container's as lxc.payload.<name>
 # The Claude subscription plugin's provider; it signs in through Claude Code.
 CLAUDE_PROVIDER = "claude-subscription-directsdk-experimental"
+PROVIDER_NAMES = {"openai-codex": "ChatGPT", CLAUDE_PROVIDER: "Claude"}
+# The labels of the windows in `hermes usage --json`: Codex's, then the Claude subscription plugin's.
+FIVE_HOURS, WEEK = ("Session", "Current session"), ("Weekly", "Current week")
+USAGE_TIMEOUT = 20   # per command; the plugin asks Claude Code, which may take 10 s
 # Host folders in a container. Incus does not lock a disk added to a running container read-only, and with
 # shift its root could remount it and write into the folder as the host's root. Without shift, it is just
 # another account there. "shift=false", not left out, so older disks lose their shift too.
@@ -676,12 +682,12 @@ def limits(reg: Registry, name: str, cpu: int | None, memory_mb: int | None, dis
     set_limits(name, cpu, memory_mb, disk_gb)
 
 
-def model_of(s: Settings, reg: Registry, name: str) -> tuple[str, str]:
+def model_of(s: Settings, reg: Registry, name: str, timeout: float = 600) -> tuple[str, str]:
     """The provider and model the instance uses: its lock's, or those in its own config."""
     s = settings_for(s, _active(reg, name))
     if s.model_lock:
         return s.model_provider, s.model
-    provider, model = (hermes(name, ["config", "get", key], check=False).stdout.strip() or default
+    provider, model = (hermes(name, ["config", "get", key], check=False, timeout=timeout).stdout.strip() or default
                        for key, default in (("model.provider", s.model_provider), ("model.default", s.model)))
     return provider, model
 
@@ -856,6 +862,47 @@ def list_instances(reg: Registry, group: str | None = None) -> None:
     widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
     for r in rows:
         print("  ".join(c.ljust(w) for c, w in zip(r, widths)).rstrip())
+
+
+def usage(s: Settings, reg: Registry, name: str | None = None) -> None:
+    """How much of their subscription's limits the users of every active instance (or the named one) used, as
+    Hermes asks the provider now. All at once: one after another, they would add up to minutes."""
+    targets = [_active(reg, name)] if name else [inst for inst in reg.current() if inst.state == "active"]
+    with ThreadPoolExecutor() as pool:
+        rows = [("NAME", "PROVIDER", "5H", "WEEK"), *pool.map(lambda inst: _usage_row(s, reg, inst.name), targets)]
+    # A row's last text sets no column's width: a note (not signed in, ?) spans 5H and WEEK.
+    widths = [max(len(r[i]) for r in rows if len(r) > i + 1) for i in range(3)]
+    for r in rows:
+        print("  ".join(c.ljust(w) for c, w in zip(r, [*widths, 0])).rstrip())
+
+
+def _usage_row(s: Settings, reg: Registry, name: str) -> tuple[str, ...]:
+    shown = "?"
+    try:
+        provider, _ = model_of(s, reg, name, timeout=USAGE_TIMEOUT)
+        shown = PROVIDER_NAMES.get(provider, provider)
+        res = hermes(name, ["usage", "--json", "--provider", provider], check=False, timeout=USAGE_TIMEOUT)
+        if res.returncode:   # Hermes got nothing: without a credential, or the provider did not answer
+            status = hermes(name, ["auth", "status", provider], check=False, timeout=USAGE_TIMEOUT).stdout
+            return name, shown, "not signed in" if ": logged out" in status else "?"
+        doc = json.loads(res.stdout)
+        if reason := doc["unavailable_reason"]:   # the Claude plugin's way of saying it got nothing
+            return name, shown, "not signed in" if reason.startswith("no Claude subscription login") else \
+                "".join(c for c in reason if c.isprintable())   # its users' text, for the admin's terminal
+        windows = {w["label"]: w for w in doc["windows"]}
+        return name, shown, *(_window(windows, labels, form) for labels, form in ((FIVE_HOURS, "%H:%M"),
+                                                                                   (WEEK, "%a %H:%M")))
+    except (CommandError, ValueError, TypeError, KeyError, AttributeError):   # or what its users made Hermes say
+        return name, shown, "?"
+
+
+def _window(windows: dict[str, dict], labels: tuple[str, ...], form: str) -> str:
+    """The share of a limit used, and when it resets in the server's time (`form`), as `37% → 21:00`."""
+    window = next((windows[label] for label in labels if label in windows), None)
+    if not window or window["used_percent"] is None:
+        return "-"
+    reset = window["resets_at"] and dt.datetime.fromisoformat(window["resets_at"]).astimezone()
+    return f"{window['used_percent']:.0f}%" + (f" → {reset:{form}}" if reset else "")
 
 
 def _containers() -> dict[str, dict]:

@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import types
 from pathlib import Path
 
@@ -196,6 +197,12 @@ class Incus:
                                 "version": "1.0", "source": "bundled"}]), 0
         elif cmd[:2] == ["systemctl", "--user"]:
             return "active\n", 0
+        elif cmd[:2] == ["hermes", "usage"]:   # its JSON; none: Hermes got nothing; an error: it did not finish
+            if isinstance(c.get("usage"), CommandError):
+                raise c["usage"]
+            return c.get("usage", ""), 0 if c.get("usage") else 1
+        elif cmd[:3] == ["hermes", "auth", "status"]:
+            return f"{cmd[3]}: {'logged in' if c.get('signed_in', True) else 'logged out'}\n", 0
         return "", 0
 
     def index(self, prefix):
@@ -434,6 +441,64 @@ def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_
     del incus.containers["dave"]   # started again during the next list
     instances.list_instances(reg, "sales")
     assert [line.split()[0] for line in capsys.readouterr().out.splitlines()] == ["NAME", "bob", "dave"]
+
+
+@pytest.fixture
+def prague():
+    """The server's local time is Prague's: UTC+1 in winter."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("TZ", "Europe/Prague")
+        time.tzset()
+        yield
+    time.tzset()
+
+
+def usage_json(*windows, reason=None):
+    """`hermes usage --json` with these (label, used percent, reset in UTC) windows."""
+    return json.dumps({"provider": "p", "source": "s", "title": "t", "plan": None, "fetched_at": "2026-11-19T15:00:00+00:00",
+                       "windows": [{"label": label, "used_percent": used, "resets_at": at, "detail": None}
+                                   for label, used, at in windows],
+                       "details": [], "unavailable_reason": reason})
+
+
+def test_usage_shows_each_active_instances_subscription_limits_in_the_servers_time(incus, capsys, prague):
+    names = ["alice", "bob", "carol", "dave", "erin", "frank", "gina", "hank"]
+    reg = Registry({n: Instance(n, 9120 + i, "lan", state="active") for i, n in enumerate(names)})
+    reg.get("hank").state = "disabled"
+    reg.get("bob").lock, reg.get("bob").lock_provider = ["claude-opus-5-5"], instances.CLAUDE_PROVIDER
+    claude = {"model.provider": instances.CLAUDE_PROVIDER}   # chosen in its own config
+    incus.containers = {name: {"state": "RUNNING"} for name in names}
+    incus.containers["alice"]["usage"] = usage_json(("Session", 37.0, "2026-11-19T20:00:00+00:00"),
+                                                   ("Weekly", 12.4, "2026-11-26T08:00:00+00:00"))
+    incus.containers["bob"]["usage"] = usage_json(("Current session", 81, "2026-11-19T17:40:00Z"),
+                                                 ("Opus week", 90, "2026-11-20T06:00:00Z"),
+                                                 ("Current week", 64, "2026-11-23T06:00:00Z"))
+    incus.containers["carol"] |= {"hermes_config": claude, "usage": usage_json(
+        reason="no Claude subscription login found (run `claude` and log in)")}
+    incus.containers["dave"]["signed_in"] = False   # Hermes got nothing: no credential
+    # erin: Hermes got nothing, but she is signed in
+    incus.containers["frank"] |= {"hermes_config": claude,
+                                  "usage": usage_json(reason="Claude Code did not answer in time\x1b[2J")}
+    incus.containers["gina"]["usage"] = CommandError("hermes usage: timed out after 20 s")
+    instances.usage(S, reg)
+    assert capsys.readouterr().out.splitlines() == [
+        "NAME   PROVIDER  5H           WEEK",
+        "alice  ChatGPT   37% → 21:00  12% → Thu 09:00",
+        "bob    Claude    81% → 18:40  64% → Mon 07:00",
+        "carol  Claude    not signed in",
+        "dave   ChatGPT   not signed in",
+        "erin   ChatGPT   ?",
+        "frank  Claude    Claude Code did not answer in time[2J",   # its users' text, without control characters
+        "gina   ChatGPT   ?",
+    ]
+    assert incus.ran(f"hermes usage --json --provider {instances.CLAUDE_PROVIDER}")
+    assert not incus.ran("exec hank")
+
+    instances.usage(S, reg, "alice")
+    assert capsys.readouterr().out.splitlines()[1:] == ["alice  ChatGPT   37% → 21:00  12% → Thu 09:00"]
+    for name in ("hank", "nobody"):
+        with pytest.raises(RegistryError):
+            instances.usage(S, reg, name)
 
 
 def test_with_the_model_lock_the_policy_sets_the_model_and_the_guard_must_be_on(incus):

@@ -112,6 +112,8 @@ def main(argv: list[str] | None = None) -> int:
     inst = inst.add_subparsers(dest="action", required=True, metavar="action")
     inst.add_parser("list", help="instances, ports, URLs, gateway state, CPU, RAM and disk use") \
         .add_argument("--group", help="its instances only")
+    inst.add_parser("usage", help="how much of their 5-hour and weekly subscription limits instances used, and the resets") \
+        .add_argument("name", nargs="?", help="(default: every active instance)")
     add = inst.add_parser("add", help="add an instance (or finish an interrupted add)",
                           description="Limits not given follow [container] in config.toml.")
     add.add_argument("name")
@@ -224,6 +226,9 @@ def main(argv: list[str] | None = None) -> int:
             return checks.status(s, Registry.load())
         if command == "instance list":
             instances.list_instances(Registry.load(), a.group)
+            return 0
+        if command == "instance usage":
+            instances.usage(s, Registry.load(), a.name)
             return 0
         if command == "instance group" and a.group_action == "list":
             instances.list_groups(s, Registry.load())

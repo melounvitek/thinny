@@ -193,6 +193,7 @@ thinny instance login alice             # sign in to a model provider; asks whic
 thinny instance login alice --provider anthropic   # or name it: openai | anthropic
 thinny instance telegram alice          # a Telegram bot its user creates with a link (see Telegram)
 thinny instance list                    # with each one's CPU, RAM and disk use
+thinny instance usage [alice]           # its users' share of their 5-hour and weekly subscription limits
 thinny instance access alice tailscale  # lan | tailscale | url=<URL> | local
 thinny instance frontend alice webui    # webapp | webui
 thinny instance resize alice --cpu 4 --memory-mb 8192 --disk-gb 50
@@ -227,6 +228,11 @@ thinny instance restart --group sales   # instead of names: resize, lock, unlock
   signs in with their own account within about 15 minutes. Signed in to another provider, they
   choose its models in the Webapp's model picker (Anthropic: *Claude Subscription DirectSDK
   (Experimental)*). thinny offers OpenAI and Anthropic only; users set up others in Hermes.
+- `usage` shows admins how much of their ChatGPT or Claude subscription the users of each active
+  instance (or of `alice`) used: the share of the 5-hour and the weekly limit, and when each
+  resets, in the server's time. Hermes asks the provider afresh (`hermes usage`; for Claude,
+  Claude Code answers without using any of the limits), for every instance at once, up to about
+  20 s each. `?` means no answer.
 - `add` can connect a phone line to the phone plugin. Answer `y` and it asks for the SIP account
   (Odorik's server by default), the PIN, the numbers that may call, the number Hermes calls back
   and an OpenAI API key for speech recognition, then starts Asterisk in the container. With
