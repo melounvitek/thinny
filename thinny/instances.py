@@ -99,6 +99,12 @@ def container_state(name: str) -> str | None:
     return out or None
 
 
+def container_states() -> dict[str, str]:
+    """Every container's state (RUNNING, STOPPED, ...) by its name, in one incus list."""
+    out = run(["incus", "list", "--format", "csv", "--columns", "ns"]).stdout
+    return dict(line.split(",", 1) for line in out.splitlines() if line)
+
+
 def devices(name: str) -> dict[str, dict[str, str]]:
     """The container's own devices (not its profile's): name -> properties."""
     return json.loads(run(["incus", "query", f"/1.0/instances/{name}"]).stdout)["devices"]
@@ -545,7 +551,7 @@ def check_gateway(s: Settings, inst: Instance, timeout: float = 180) -> None:
             break
         if time.time() > deadline:
             raise CommandError(f"{inst.name}: gateway {'active' if active else 'not active'}, Webapp HTTP {code}")
-        time.sleep(5)
+        time.sleep(1)
     if not settings_for(s, inst).model_lock:
         return
     if plugin_states(inst.name).get("model-guard") != "enabled":
@@ -801,15 +807,23 @@ def limits(reg: Registry, name: str, cpu: int | None, memory_mb: int | None, dis
     set_limits(name, cpu, memory_mb, disk_gb)
 
 
-def model_of(s: Settings, reg: Registry, name: str, timeout: float = 600) -> tuple[str, str]:
-    """The provider and model the instance uses: its lock's, or those in its own config (model: "" without one),
-    printable, as its users set its config."""
+def provider_of(s: Settings, reg: Registry, name: str, timeout: float = 600) -> str:
+    """The provider the instance uses: its lock's, or the one in its own config, printable, as its users set it."""
     s = settings_for(s, _active(reg, name))
     if s.model_lock:
-        return s.model_provider, s.model
-    provider, model = (printable(hermes(name, ["config", "get", key], check=False, timeout=timeout).stdout.strip())
-                       or default for key, default in (("model.provider", s.model_provider), ("model.default", "")))
-    return provider, model
+        return s.model_provider
+    return printable(hermes(name, ["config", "get", "model.provider"], check=False, timeout=timeout).stdout.strip()) \
+        or s.model_provider
+
+
+def model_of(s: Settings, reg: Registry, name: str) -> tuple[str, str]:
+    """The provider and model the instance uses: its lock's, or those in its own config (model: "" without one),
+    printable, as its users set its config."""
+    policy = settings_for(s, _active(reg, name))
+    if policy.model_lock:
+        return policy.model_provider, policy.model
+    provider = provider_of(s, reg, name)
+    return provider, printable(hermes(name, ["config", "get", "model.default"], check=False).stdout.strip())
 
 
 def lock(s: Settings, reg: Registry, name: str, models: list[str]) -> None:
@@ -1004,23 +1018,33 @@ def list_groups(s: Settings, reg: Registry) -> None:
 
 
 def list_instances(reg: Registry, group: str | None = None) -> None:
-    """CPU is the use over a second, as a share of the instance's own CPU limit. `group`: its members only."""
+    """CPU is the use over a second, as a share of the instance's own CPU limit; each instance's gateway and disk use
+    are read meanwhile. `group`: its members only."""
+    shown = [inst for inst in sorted(reg.instances.values(), key=lambda inst: inst.port)
+             if group is None or inst.group == group]
+
+    def probe(inst: Instance) -> tuple[bool | None, int]:
+        """Whether its gateway is active (None: a disabled or removed instance shows none), and its disk use."""
+        return None if inst.state in ("disabled", "removed") else gateway_active(inst.name), disk_used(inst.name)
+
     before = _containers()
     start = time.monotonic()
-    time.sleep(1)
-    containers = _containers()
-    seconds = time.monotonic() - start
+    with ThreadPoolExecutor() as pool:
+        probes = {inst.name: pool.submit(probe, inst) for inst in shown if inst.name in before}
+        time.sleep(1)
+        containers = _containers()
+        seconds = time.monotonic() - start
     rows = [("NAME", "STATE", "GROUP", "ACCESS", "FRONTEND", "PORT", "GATEWAY", "CPU", "RAM", "DISK", "URL")]
-    for inst in sorted(reg.instances.values(), key=lambda inst: inst.port):
-        if group is not None and inst.group != group:
-            continue
+    for inst in shown:
         c = containers.get(inst.name)
-        gateway = "-" if inst.state in ("disabled", "removed") or c is None else \
-            ("active" if gateway_active(inst.name) else "INACTIVE")
-        cpu = ram = disk = "-"
+        gateway = cpu = ram = disk = "-"
         if c:
+            # A container started during the second is read now.
+            active, used = probes[inst.name].result() if inst.name in probes else probe(inst)
+            if active is not None:
+                gateway = "active" if active else "INACTIVE"
             state = c["state"]
-            disk = _gib(disk_used(inst.name), state["disk"]["root"]["total"])
+            disk = _gib(used, state["disk"]["root"]["total"])
             if c["status"] == "Running":
                 ram = _gib(_memory_used(inst.name, state["memory"]["usage"]), state["memory"]["total"])
                 if before.get(inst.name, {}).get("status") == "Running":   # not started in between
@@ -1050,7 +1074,7 @@ def usage(s: Settings, reg: Registry, name: str | None = None) -> None:
 def _usage_row(s: Settings, reg: Registry, name: str) -> tuple[str, ...]:
     shown = "?"
     try:
-        provider, _ = model_of(s, reg, name, timeout=USAGE_TIMEOUT)
+        provider = provider_of(s, reg, name, timeout=USAGE_TIMEOUT)
         shown = _provider_name(provider)
         res = hermes(name, ["usage", "--json", "--provider", provider], check=False, timeout=USAGE_TIMEOUT)
         if res.returncode:   # Hermes got nothing: without a credential, or the provider did not answer

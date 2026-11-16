@@ -4,6 +4,7 @@ import datetime as dt
 import json
 import os
 import subprocess
+import threading
 
 import pytest
 
@@ -263,6 +264,70 @@ def test_a_crashing_check_fails_without_stopping_the_others(monkeypatch, capsys)
     assert checks.run(S, Registry()) == 0
 
 
+def test_the_host_and_each_instance_are_checked_alongside_each_other_and_shown_in_order(monkeypatch, capsys):
+    started = threading.Barrier(3, timeout=5)   # the host's check, alice's and bob's at once
+    bob_done = threading.Event()
+    firsts_done = set()
+
+    def host_check(s, reg):
+        started.wait()
+        yield checks.ok("the host")
+
+    def first(s, inst):
+        started.wait()
+        if inst.name == "alice":   # alice's checks end after bob's
+            assert bob_done.wait(5)
+        yield checks.ok(f"{inst.name}: first")
+        firsts_done.add(inst.name)
+
+    def broken(s, inst):
+        assert inst.name in firsts_done   # an instance's checks run one after another
+        yield checks.ok(f"{inst.name}: before the crash")
+        raise RuntimeError("boom")
+
+    def last(s, inst):
+        yield checks.ok(f"{inst.name}: last")
+        if inst.name == "bob":
+            bob_done.set()
+
+    monkeypatch.setattr(checks, "CHECKS", [host_check])
+    monkeypatch.setattr(checks, "INSTANCE_CHECKS", [first, broken, last])
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="active"),
+                    "bob": Instance("bob", 9121, "local", state="active")})
+    assert checks.run(S, reg) == 1
+    assert capsys.readouterr().out == ("OK   the host\n"
+                                       "OK   alice: first\n"
+                                       "OK   alice: before the crash\n"
+                                       "FAIL broken alice crashed: RuntimeError: boom\n"
+                                       "OK   alice: last\n"
+                                       "OK   bob: first\n"
+                                       "OK   bob: before the crash\n"
+                                       "FAIL broken bob crashed: RuntimeError: boom\n"
+                                       "OK   bob: last\n")
+
+
+def test_at_most_workers_checks_run_at_once(monkeypatch, capsys):
+    both = threading.Barrier(2, timeout=5)
+    carol_started = threading.Event()
+
+    def check(s, inst):
+        if inst.name == "carol":
+            carol_started.set()
+        else:
+            both.wait()   # alice's and bob's at once
+            assert not carol_started.wait(0.2)   # so carol's waits for one of them
+            both.wait()   # until both have looked
+        yield checks.ok(inst.name)
+
+    monkeypatch.setattr(checks, "WORKERS", 2)
+    monkeypatch.setattr(checks, "CHECKS", [])
+    monkeypatch.setattr(checks, "INSTANCE_CHECKS", [check])
+    reg = Registry({name: Instance(name, 9120 + i, "local", state="active")
+                    for i, name in enumerate(["alice", "bob", "carol"])})
+    assert checks.run(S, reg) == 0
+    assert capsys.readouterr().out == "OK   alice\nOK   bob\nOK   carol\n"
+
+
 def test_doctor_shows_what_a_container_said_without_control_characters(monkeypatch, capsys):
     # Its users are root in it: its curl and its Webapp's settings can say anything.
     monkeypatch.setattr(checks, "CHECKS", [])
@@ -291,15 +356,33 @@ def test_status_is_the_quick_look(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(host, "RELEASE_FILE", tmp_path / "release")
     monkeypatch.setattr(host, "WEBUI_RELEASE_FILE", tmp_path / "webui-release")
     monkeypatch.setattr(checks, "UPDATE_STATUS", tmp_path / "update-status.json")
-    monkeypatch.setattr(instances, "container_state", lambda name: {"alice": "RUNNING", "bob": "STOPPED"}[name])
-    monkeypatch.setattr(system, "gateway_active", lambda name: True)
+    listed, ran = "alice,RUNNING\nbob,STOPPED\ncarol,STOPPED\nvm,RUNNING\n", []
+
+    def run(cmd, **kw):
+        ran.append(cmd)
+        if cmd[:2] == ["incus", "list"]:   # every container at once
+            if not listed:
+                raise system.CommandError("incus list -> exit 1\nError: connection refused")
+            return subprocess.CompletedProcess(cmd, 0, listed, "")
+        return subprocess.CompletedProcess(cmd, 0, "active\n", "")   # alice's gateway
+    monkeypatch.setattr(system, "run", run)
+    monkeypatch.setattr(instances, "run", run)
+    overview = ("OK   Hermes release of all instances: v0.23.1\n"
+                "OK   WebUI release of the instances that use it: v0.52.678\n"
+                "WARN no nightly update status yet (the update timer has not run)\n")
     assert checks.status(S, reg) == 1
-    assert capsys.readouterr().out == ("OK   Hermes release of all instances: v0.23.1\n"
-                                       "OK   WebUI release of the instances that use it: v0.52.678\n"
-                                       "WARN no nightly update status yet (the update timer has not run)\n"
-                                       "OK   alice: running, gateway active\n"
-                                       "FAIL bob: container is STOPPED\n"
-                                       "     fix: incus start bob\n")
+    assert capsys.readouterr().out == overview + ("OK   alice: running, gateway active\n"
+                                                  "FAIL bob: container is STOPPED\n"
+                                                  "     fix: incus start bob\n")
+    assert [cmd[:2] for cmd in ran].count(["incus", "list"]) == 1
+
+    listed = ""   # Incus does not answer
+    assert checks.status(S, reg) == 1
+    assert capsys.readouterr().out == overview + (
+        "FAIL alice: container state unknown: CommandError: incus list -> exit 1\n"
+        "     Error: connection refused\n"
+        "FAIL bob: container state unknown: CommandError: incus list -> exit 1\n"
+        "     Error: connection refused\n")
 
 
 def test_doctor_points_office_pcs_at_the_copy_of_caddys_root_certificate(tmp_path, monkeypatch):

@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import types
 from pathlib import Path
@@ -493,8 +494,22 @@ def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_
         "bob": {"state": "STOPPED", "used": 4 * 2**30, "incus_state": {"disk": disk}},
     }   # carol has no container
     clock = [0.0]
+    read, expected, sampling = set(), set(), threading.Condition()
+
+    def watched(reader):
+        def wrapper(name, *args):
+            result = reader(name, *args)
+            with sampling:
+                read.add((reader.__name__, name))
+                sampling.notify_all()
+            return result
+        return wrapper
+    monkeypatch.setattr(instances, "gateway_active", watched(instances.gateway_active))
+    monkeypatch.setattr(instances, "disk_used", watched(instances.disk_used))
 
     def sleep(seconds):
+        with sampling:   # the gateways and disks of the containers there are read during the CPU sample
+            assert sampling.wait_for(lambda: expected <= read, timeout=5)
         clock[0] += seconds
         incus.containers["alice"]["incus_state"]["cpu"]["usage"] += 10**9   # one of its two CPUs busy
         incus.containers["dave"] = {"state": "RUNNING", "used": 4 * 2**30,   # its container started meanwhile
@@ -507,6 +522,7 @@ def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_
     (alice / "memory.current").write_text(f"{3 * 2**30}\n")
     (alice / "memory.stat").write_text(f"anon {2**30 - 4096}\nactive_file {2**30}\ninactive_file {2**30}\nshmem 4096\n")
     reg.get("bob").group = reg.get("dave").group = "sales"
+    expected.update((reader, name) for reader in ("gateway_active", "disk_used") for name in ("alice", "bob"))
     instances.list_instances(reg)
     assert capsys.readouterr().out.splitlines() == [
         "NAME   STATE   GROUP  ACCESS  FRONTEND  PORT  GATEWAY   CPU  RAM          DISK          URL",
@@ -516,6 +532,8 @@ def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_
         "dave   active  sales  lan     webui     9123  active    -    0.5/4.0 GiB  1.0/30.0 GiB",
     ]
     del incus.containers["dave"]   # started again during the next list
+    read.clear()
+    expected -= {("gateway_active", "alice"), ("disk_used", "alice")}   # not in the group
     instances.list_instances(reg, "sales")
     assert [line.split()[0] for line in capsys.readouterr().out.splitlines()] == ["NAME", "bob", "dave"]
 
@@ -569,6 +587,7 @@ def test_usage_shows_each_active_instances_subscription_limits_in_the_servers_ti
     ]
     assert incus.ran(f"hermes usage --json --provider {instances.CLAUDE_PROVIDER}")
     assert not incus.ran("exec hank")
+    assert not incus.ran("hermes config get model.default")   # only the provider counts
 
     instances.usage(S, reg, "alice")
     assert capsys.readouterr().out.splitlines()[1:] == ["alice  ChatGPT   37% → 21:00  12% → Thu 09:00"]

@@ -12,6 +12,7 @@ import re
 import shutil
 import socket
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import dashboard as dash
@@ -392,20 +393,12 @@ def overview(s: Settings, reg: Registry):
     yield update_status(UPDATE_STATUS, dt.datetime.now(dt.UTC))
 
 
-def running(s: Settings, inst: Instance):
-    state = instances.container_state(inst.name)
-    if state != "RUNNING":
-        yield fail(f"{inst.name}: container is {state or 'missing'}", f"incus start {inst.name}")
-    elif system.gateway_active(inst.name):
-        yield ok(f"{inst.name}: running, gateway active")
-    else:
-        yield fail(f"{inst.name}: gateway not active", f"thinny instance restart {inst.name}")
-
-
 # ---------- runner ----------
 
 CHECKS = [install, tokens, access_trace, mailboxes, prerequisites, firewall, caddy, dashboard]
 INSTANCE_CHECKS = [container, webapp, version, built_ins, bypass]
+# Checks at once. An instance's start Hermes's command line in its container, which takes CPU and memory.
+WORKERS = 4
 
 
 def run(s: Settings, reg: Registry) -> int:
@@ -415,23 +408,52 @@ def run(s: Settings, reg: Registry) -> int:
 
 def status(s: Settings, reg: Registry) -> int:
     """The quick look: no internet, Webapp or policy probes; 1 when anything failed."""
+    states, error = {}, ""
+    try:
+        if active(reg):
+            states = instances.container_states()   # every container's in one incus list
+    except Exception as e:   # each instance's check fails with it
+        error = f"{type(e).__name__}: {e}"
+
+    def running(s: Settings, inst: Instance):
+        state = states.get(inst.name)
+        if error:
+            yield fail(f"{inst.name}: container state unknown: {error}")
+        elif state != "RUNNING":
+            yield fail(f"{inst.name}: container is {state or 'missing'}", f"incus start {inst.name}")
+        elif system.gateway_active(inst.name):
+            yield ok(f"{inst.name}: running, gateway active")
+        else:
+            yield fail(f"{inst.name}: gateway not active", f"thinny instance restart {inst.name}")
+
     return run_checks(s, reg, [overview], [running])
 
 
 def run_checks(s: Settings, reg: Registry, checks, instance_checks) -> int:
-    """Print every result; 1 when anything failed."""
-    jobs = [(check.__name__, check, (s, reg)) for check in checks]
-    jobs += [(f"{check.__name__} {inst.name}", check, (s, inst)) for inst in active(reg) for check in instance_checks]
+    """Print every result, in order; 1 when anything failed. Each host check, and each instance's checks one after
+    another, run alongside the others, WORKERS at a time; their results show once they and those before them are
+    done."""
+    groups = [[(check.__name__, check, (s, reg))] for check in checks]
+    groups += [[(f"{check.__name__} {inst.name}", check, (s, inst)) for check in instance_checks]
+               for inst in active(reg)]
     failed = False
-    for name, check, args in jobs:
-        try:
-            for level, message, fix in check(*args):
+    with ThreadPoolExecutor(WORKERS) as pool:
+        for results in pool.map(collect, groups):
+            for level, message, fix in results:
                 report(level, message, fix)
                 failed |= level == "FAIL"
-        except Exception as e:
-            report("FAIL", f"{name} crashed: {type(e).__name__}: {e}")
-            failed = True
     return 1 if failed else 0
+
+
+def collect(jobs) -> list:
+    """The results of these checks, one after another; a check that crashes is a failure, and the others still run."""
+    results = []
+    for name, check, args in jobs:
+        try:
+            results.extend(check(*args))
+        except Exception as e:
+            results.append(fail(f"{name} crashed: {type(e).__name__}: {e}"))
+    return results
 
 
 def report(level: str, message: str, fix: str = "") -> None:

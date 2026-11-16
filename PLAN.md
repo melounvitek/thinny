@@ -857,6 +857,8 @@ private ones and the tailnet are always blocked), `[email]` `domain`, `[dashboar
   its first reading after a start), the instances' disk use under 15 minutes old (WARN), Grafana
   answering (FAIL); on but not installed, or not as `config.toml` says (WARN).
 - A check that crashes is reported as FAIL; the others still run.
+- Each host check, and each instance's checks one after another, run alongside the others, four at a time
+  (an instance's start Hermes's command line in its container); the results print in the order above.
 
 ## 8. Rounds
 
