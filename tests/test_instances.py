@@ -203,6 +203,9 @@ class Incus:
             return c.get("usage", ""), 0 if c.get("usage") else 1
         elif cmd[:3] == ["hermes", "auth", "status"]:
             return f"{cmd[3]}: {'logged in' if c.get('signed_in', True) else 'logged out'}\n", 0
+        elif cmd[:2] == ["sh", "-c"] and instances.MODELS in cmd:   # provider -> model ids, its JSON or none
+            models = c.get("models")
+            return (models if isinstance(models, str) else json.dumps(models)), 0 if models is not None else 1
         return "", 0
 
     def index(self, prefix):
@@ -591,6 +594,94 @@ def test_an_instance_unlocked_on_its_own_starts_with_the_model_it_was_locked_to(
     assert reg.get("alice").lock == [] and host.policy_current(S, "alice") and restarted == ["alice"]
     assert incus.containers["alice"]["hermes_config"] == \
         {"model.provider": "openai-codex", "model.default": "m1", "agent.reasoning_effort": "high"}
+
+
+CODEX = ["gpt-6-sol", "gpt-6-sol-900k", "gpt-6-luna", "gpt-6-luna-900k", "gpt-5.6-sol", "gpt-5.6-sol-900k",
+         "gpt-5.6-terra", "gpt-5.6-terra-900k", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4-mini", "gpt-5.4"]
+CLAUDE = ["claude-sonnet-5-5[1m]", "claude-opus-5-5[1m]", "claude-haiku-4-5-20251001"]
+
+
+def unlocked_alice(incus, models):
+    """alice on ChatGPT's gpt-5.5, and Hermes offering her `models`."""
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {}, "models": models, "hermes_config": {
+        "model.provider": "openai-codex", "model.default": "gpt-5.5", "agent.reasoning_effort": "high"}}
+    return Registry({"alice": Instance("alice", 9120, "local", state="active")})
+
+
+def test_an_instance_shows_the_model_new_chats_start_on_and_the_models_it_can_use(incus, capsys):
+    reg = unlocked_alice(incus, {"openai-codex": CODEX, "nous": ["hermes-4\x1b[2J"]})   # set up in Hermes
+    instances.default_model(S, reg, "alice")
+    assert capsys.readouterr().out.splitlines() == [
+        "alice: new chats start on gpt-5.5 (ChatGPT)",
+        "ChatGPT  gpt-6-sol, gpt-6-sol-900k, gpt-6-luna, gpt-6-luna-900k, gpt-5.6-sol, gpt-5.6-sol-900k,",
+        "         gpt-5.6-terra, gpt-5.6-terra-900k, gpt-5.6-luna, gpt-5.5, gpt-5.4-mini, gpt-5.4",
+        "nous     hermes-4[2J",   # without control characters, for the admin's terminal
+        "Claude   not signed in (thinny instance login alice)",
+    ]
+    assert incus.containers["alice"]["hermes_config"]["model.default"] == "gpt-5.5"
+
+
+def test_an_instance_gets_a_new_default_model_at_once_without_a_restart(incus, gateways, capsys):
+    restarted, _ = gateways
+    reg = unlocked_alice(incus, {"openai-codex": CODEX, instances.CLAUDE_PROVIDER: CLAUDE})
+    config = incus.containers["alice"]["hermes_config"]
+    instances.default_model(S, reg, "alice", "gpt-6-sol")
+    assert config == {"model.provider": "openai-codex", "model.default": "gpt-6-sol", "agent.reasoning_effort": "high"}
+    # Hermes takes Claude's long-context models without [1m] too, as thinny suggests them
+    instances.default_model(S, reg, "alice", "claude-opus-5-5", instances.CLAUDE_PROVIDER)
+    assert config == {"model.provider": instances.CLAUDE_PROVIDER, "model.default": "claude-opus-5-5",
+                      "agent.reasoning_effort": "high"}
+    instances.default_model(S, reg, "alice", "claude-haiku-4-5-20251001")   # of the provider it uses now
+    assert config["model.provider"] == instances.CLAUDE_PROVIDER
+    assert config["model.default"] == "claude-haiku-4-5-20251001"
+    assert capsys.readouterr().out.splitlines() == ["alice: new chats start on gpt-6-sol (ChatGPT)",
+                                                    "alice: new chats start on claude-opus-5-5 (Claude)",
+                                                    "alice: new chats start on claude-haiku-4-5-20251001 (Claude)"]
+    assert restarted == []   # Hermes reads it for every new chat
+
+
+@pytest.mark.parametrize("model, provider, error", [
+    ("gpt-9", None, "ChatGPT offers alice no model gpt-9; it offers gpt-6-sol, gpt-6-sol-900k, "),
+    ("claude-opus-5-5", None, "ChatGPT offers alice no model claude-opus-5-5"),   # the provider it uses
+    ("claude-opus-5-5", instances.CLAUDE_PROVIDER, "alice is not signed in to Claude: thinny instance login alice"),
+])
+def test_a_new_default_model_must_be_one_hermes_offers_the_instance(incus, model, provider, error):
+    reg = unlocked_alice(incus, {"openai-codex": CODEX})
+    with pytest.raises(CommandError, match=re.escape(error)):
+        instances.default_model(S, reg, "alice", model, provider)
+    assert not incus.ran("hermes config set")
+
+
+@pytest.mark.parametrize("models", [None, "Traceback (most recent call last):", '["gpt-5.5"]', '{"openai-codex": 1}'])
+def test_without_the_list_of_models_nothing_is_set(incus, capsys, models):
+    reg = unlocked_alice(incus, models)   # Hermes failed, or its users made it say something else
+    for model in (None, "gpt-5.5"):
+        with pytest.raises(CommandError, match="could not get the models alice can use from Hermes"):
+            instances.default_model(S, reg, "alice", model)
+    assert not incus.ran("hermes config set") and capsys.readouterr().out == ""
+
+
+def test_a_locked_instance_starts_new_chats_on_its_locks_model(incus, capsys):
+    reg = unlocked_alice(incus, {"openai-codex": CODEX, instances.CLAUDE_PROVIDER: CLAUDE})
+    alice = reg.get("alice")
+    alice.lock, alice.lock_provider = ["claude-opus-5-5", "claude-sonnet-5-5"], instances.CLAUDE_PROVIDER
+    instances.default_model(S, reg, "alice")
+    alice.lock = None   # the server's lock
+    instances.default_model(LOCKED, reg, "alice")
+    assert capsys.readouterr().out.splitlines() == [
+        "alice: new chats start on claude-opus-5-5 (Claude); its lock allows claude-opus-5-5, claude-sonnet-5-5",
+        "alice: new chats start on m1 (ChatGPT); its lock allows m1",
+    ]
+    for s, lock in ((S, ["claude-opus-5-5"]), (LOCKED, None)):
+        alice.lock = lock
+        with pytest.raises(CommandError, match=re.escape("alice is locked, and its lock decides its default: "
+                                                         "thinny instance lock alice gpt-5.5 ...")):
+            instances.default_model(s, reg, "alice", "gpt-5.5")
+    assert not incus.ran("hermes config set")
+
+    alice.lock = []   # unlocked on its own, whatever the server's lock
+    instances.default_model(LOCKED, reg, "alice", "gpt-5.4")
+    assert incus.containers["alice"]["hermes_config"]["model.default"] == "gpt-5.4"
 
 
 

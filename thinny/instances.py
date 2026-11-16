@@ -14,6 +14,7 @@ import re
 import secrets
 import shutil
 import sys
+import textwrap
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
@@ -419,11 +420,50 @@ write_preferences(json.load(sys.stdin), path=store_path(home))
 
 
 def seed_ui(s: Settings, name: str) -> None:
-    """Webapp look from the settings, through Hermes's own store (same lock and revision bump),
-    with the newest Python environment of the instance's Hermes."""
-    as_user(name, ["sh", "-c", 'py=$(ls -t "$2"/installs/*/environments/*/venv/bin/python3 | head -n 1) && '
-                   'exec "$py" -I -c "$1" "$2"', "sh", SEED_UI, str(home(name))],
-            input=json.dumps(render.ui_preferences(s)))
+    """Webapp look from the settings, through Hermes's own store (same lock and revision bump)."""
+    hermes_python(name, SEED_UI, input=json.dumps(render.ui_preferences(s)))
+
+
+def hermes_python(name: str, script: str, **kw):
+    """`script` run by the newest Python environment of the instance's Hermes, with its Hermes home as argv[1]."""
+    return as_user(name, ["sh", "-c", 'py=$(ls -t "$2"/installs/*/environments/*/venv/bin/python3 | head -n 1) && '
+                          'exec "$py" -I -c "$1" "$2"', "sh", script, str(home(name))], **kw)
+
+
+# The models the instance can use, by provider, as the Webapp's model picker offers them (hermes_cli/inventory.py):
+# Hermes's cache or built-in lists, without asking the providers. Only signed-in providers: Hermes also lists the
+# one in use after its sign-in is gone, and a provider run by another program (the Claude plugin's) whenever the
+# program is there, so that program's own sign-in check decides, as in `hermes model`.
+MODELS = r'''
+import json, sys
+from pathlib import Path
+home = Path(sys.argv[1])
+sys.path.insert(0, str(home / "hermes-agent"))
+from hermes_cli.inventory import build_models_payload, load_picker_context
+from providers import get_provider_profile
+
+
+def signed_in(row):
+    profile = get_provider_profile(row["slug"])
+    status = profile.setup_status() if profile else None
+    return row.get("authenticated") is not False and (status is None or status["logged_in"])
+
+
+rows = build_models_payload(load_picker_context(), explicit_only=True, for_picker=True, non_blocking_catalogs=True,
+                            probe_custom_providers=False)["providers"]
+json.dump({row["slug"]: row["models"] for row in rows if signed_in(row)}, sys.stdout)
+'''
+
+
+def available_models(name: str) -> dict[str, list[str]]:
+    """Provider -> the models the instance can use (MODELS), without control characters."""
+    res = hermes_python(name, MODELS, check=False, timeout=120)
+    try:
+        return {_printable(provider): [_printable(m) for m in models]
+                for provider, models in json.loads(res.stdout).items()}
+    except (ValueError, TypeError, AttributeError):   # it failed, or its users made Hermes say something else
+        error = (res.stderr.strip().splitlines() or [f"exit {res.returncode}"])[-1]
+        raise CommandError(f"could not get the models {name} can use from Hermes ({_printable(error)})") from None
 
 
 def check_gateway(s: Settings, inst: Instance, timeout: float = 180) -> None:
@@ -717,6 +757,41 @@ def unlock(s: Settings, reg: Registry, name: str) -> None:
     print(f"{name} is unlocked: its users choose their models")
 
 
+def default_model(s: Settings, reg: Registry, name: str, model: str | None = None, provider: str | None = None) -> None:
+    """Show the model the instance's new chats start on and the models it can use, or make it `model` of `provider`
+    (default: the one it uses), one Hermes offers it, in its own config. Its users can still choose others; with a
+    lock, the lock decides. No restart: Hermes reads it for each new chat."""
+    locked = settings_for(s, _active(reg, name))
+    if locked.model_lock:
+        if model:
+            raise CommandError(f"{name} is locked, and its lock decides its default: "
+                               f"thinny instance lock {name} {model} ...")
+        print(f"{name}: new chats start on {locked.model} ({_provider_name(locked.model_provider)}); "
+              f"its lock allows {', '.join(locked.allowed_models)}")
+        return
+    uses, default = map(_printable, model_of(s, reg, name))   # its users' text, for the admin's terminal
+    available = available_models(name)
+    if not model:
+        print(f"{name}: new chats start on {default} ({_provider_name(uses)})")
+        providers = dict.fromkeys([*available, uses, *PROVIDER_NAMES])   # and thinny's, signed in or not
+        width = max(len(_provider_name(p)) for p in providers)
+        for p in providers:
+            text = ", ".join(available[p]) if p in available else f"not signed in (thinny instance login {name})"
+            print(textwrap.fill(f"{_provider_name(p):<{width}}  {text}", 100, subsequent_indent=" " * (width + 2),
+                                break_long_words=False, break_on_hyphens=False))
+        return
+    provider = provider or uses
+    if provider not in available:
+        raise CommandError(f"{name} is not signed in to {_provider_name(provider)}: thinny instance login {name}")
+    # Hermes lists Claude's long-context models with [1m], and takes them without it too, as thinny suggests them.
+    if model not in available[provider] and f"{model}[1m]" not in available[provider]:
+        raise CommandError(f"{_provider_name(provider)} offers {name} no model {model}; "
+                           f"it offers {', '.join(available[provider])}")
+    for key, value in (("model.provider", provider), ("model.default", model)):
+        hermes(name, ["config", "set", key, value])
+    print(f"{name}: new chats start on {model} ({_provider_name(provider)})")
+
+
 def login(reg: Registry, name: str, provider: str) -> None:
     _active(reg, name)
     if provider == CLAUDE_PROVIDER:
@@ -871,7 +946,7 @@ def usage(s: Settings, reg: Registry, name: str | None = None) -> None:
     with ThreadPoolExecutor() as pool:
         rows = [("NAME", "PROVIDER", "5H", "WEEK"), *pool.map(lambda inst: _usage_row(s, reg, inst.name), targets)]
     # With its users' texts (a provider, a reason): without control characters, for the admin's terminal.
-    rows = [["".join(ch for ch in c if ch.isprintable()) for c in r] for r in rows]
+    rows = [[_printable(c) for c in r] for r in rows]
     # A row's last text sets no column's width: a note (not signed in, ?) spans 5H and WEEK.
     widths = [max(len(r[i]) for r in rows if len(r) > i + 1) for i in range(3)]
     for r in rows:
@@ -882,7 +957,7 @@ def _usage_row(s: Settings, reg: Registry, name: str) -> tuple[str, ...]:
     shown = "?"
     try:
         provider, _ = model_of(s, reg, name, timeout=USAGE_TIMEOUT)
-        shown = PROVIDER_NAMES.get(provider, provider)
+        shown = _provider_name(provider)
         res = hermes(name, ["usage", "--json", "--provider", provider], check=False, timeout=USAGE_TIMEOUT)
         if res.returncode:   # Hermes got nothing: without a credential, or the provider did not answer
             status = hermes(name, ["auth", "status", provider], check=False, timeout=USAGE_TIMEOUT).stdout
@@ -904,6 +979,14 @@ def _window(windows: dict[str, dict], labels: tuple[str, ...], form: str) -> str
         return "-"
     reset = window["resets_at"] and dt.datetime.fromisoformat(window["resets_at"]).astimezone()
     return f"{window['used_percent']:.0f}%" + (f" → {reset:{form}}" if reset else "")
+
+
+def _provider_name(provider: str) -> str:
+    return PROVIDER_NAMES.get(provider, provider)
+
+
+def _printable(text: str) -> str:
+    return "".join(ch for ch in str(text) if ch.isprintable())
 
 
 def _containers() -> dict[str, dict]:

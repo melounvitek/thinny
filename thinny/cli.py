@@ -142,6 +142,12 @@ def main(argv: list[str] | None = None) -> int:
     lgn = inst.add_parser("login", help="sign an instance in to a model provider (device code)")
     lgn.add_argument("name", nargs="?")
     lgn.add_argument("--provider", choices=PROVIDERS, help="(default: asked)")
+    mdl = inst.add_parser("model", help="show or set the model an instance's new chats start on",
+                          description="Without a model id, shows the current one and the models the instance can "
+                                      "use. Its users can still choose others. A locked instance's lock decides.")
+    mdl.add_argument("name", nargs="?", help="(none with --group)")
+    mdl.add_argument("model", nargs="?", help="a model id it can use (default: show them)")
+    mdl.add_argument("--provider", choices=PROVIDERS, help="the model's provider (default: the one it uses)")
     lck = inst.add_parser("lock", help="lock an instance to models of the provider it uses, whatever the server's lock")
     lck.add_argument("name", nargs="?", help="(none with --group)")
     lck.add_argument("models", nargs="*", help="model ids it allows, the first by default (default: the one it uses)")
@@ -164,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     mov = inst.add_parser("move", help="move instances to another thinny server over SSH (experimental)")
     mov.add_argument("names", nargs="*")
     mov.add_argument("--all", action="store_true", help="every active instance")
-    for parser in (lim, lgn, lck, unl, rst, mov):
+    for parser in (lim, lgn, mdl, lck, unl, rst, mov):
         parser.add_argument("--group", help="its active instances instead of named ones")
     mov.add_argument("--to", required=True, metavar="[USER@]HOST")
     rcv = inst.add_parser("receive")  # without help, so not listed: `move` runs it on the other server
@@ -185,7 +191,8 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     command = " ".join(filter(None, (a.command, getattr(a, "action", None))))
     # Before sudo, which would ask for a password first. chosen() and instance move below check the rest.
-    if command in ("instance resize", "instance login", "instance lock", "instance unlock") and not (a.name or a.group):
+    if command in ("instance resize", "instance login", "instance model", "instance lock", "instance unlock") \
+            and not (a.name or a.group):
         inst.choices[a.action].error("name the instances, or give --group")
     if command == "instance move" and not (a.names or a.all or a.group):
         mov.error("name the instances to move, or give --all or --group")
@@ -287,6 +294,11 @@ def main(argv: list[str] | None = None) -> int:
                         if not instances.settings_for(s, reg.get(name)).model_lock:
                             provider = ask_provider(f"Which provider should {name} sign in to?", provider)
                     instances.login(reg, name, provider)
+            elif command == "instance model":
+                if a.group and not a.model:   # with --group, its one word is the model
+                    a.name, a.model = None, a.name
+                for name in chosen(reg, [a.name] if a.name else [], a.group):
+                    instances.default_model(s, reg, name, a.model, PROVIDERS[a.provider][0] if a.provider else None)
             elif command == "instance lock":
                 if a.group and a.name:   # with --group, each is a model
                     a.name, a.models = None, [a.name, *a.models]
