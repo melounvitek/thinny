@@ -477,8 +477,7 @@ def test_usage_shows_each_active_instances_subscription_limits_in_the_servers_ti
         reason="no Claude subscription login found (run `claude` and log in)")}
     incus.containers["dave"]["signed_in"] = False   # Hermes got nothing: no credential
     # erin: Hermes got nothing, but she is signed in
-    incus.containers["frank"] |= {"hermes_config": claude,
-                                  "usage": usage_json(reason="Claude Code did not answer in time\x1b[2J")}
+    incus.containers["frank"] |= {"hermes_config": claude, "usage": usage_json(reason="Claude Code did not answer in time")}
     incus.containers["gina"]["usage"] = CommandError("hermes usage: timed out after 20 s")
     instances.usage(S, reg)
     assert capsys.readouterr().out.splitlines() == [
@@ -488,7 +487,7 @@ def test_usage_shows_each_active_instances_subscription_limits_in_the_servers_ti
         "carol  Claude    not signed in",
         "dave   ChatGPT   not signed in",
         "erin   ChatGPT   ?",
-        "frank  Claude    Claude Code did not answer in time[2J",   # its users' text, without control characters
+        "frank  Claude    Claude Code did not answer in time",
         "gina   ChatGPT   ?",
     ]
     assert incus.ran(f"hermes usage --json --provider {instances.CLAUDE_PROVIDER}")
@@ -499,6 +498,22 @@ def test_usage_shows_each_active_instances_subscription_limits_in_the_servers_ti
     for name in ("hank", "nobody"):
         with pytest.raises(RegistryError):
             instances.usage(S, reg, name)
+
+
+def test_usage_takes_what_an_instances_users_make_hermes_say_as_text_or_a_failure(incus, capsys, prague):
+    reg = Registry({n: Instance(n, 9120 + i, "lan", state="active") for i, n in enumerate(["alice", "bob", "carol"])})
+    incus.containers = {
+        "alice": {"state": "RUNNING", "hermes_config": {"model.provider": "own\x1b[2J\nINJECTED"},
+                  "usage": usage_json(reason="Claude Code did not answer in time\x1b[2J")},
+        "bob": {"state": "RUNNING", "usage": usage_json(("Session", 37, "9999-12-31T23:59:59+00:00"))},   # 10000 here
+        "carol": {"state": "RUNNING", "usage": usage_json(("Session", 37, "2026-11-19T20:00:00+00:00"))},
+    }
+    instances.usage(S, reg)
+    assert capsys.readouterr().out.splitlines()[1:] == [
+        "alice  own[2JINJECTED  Claude Code did not answer in time[2J",   # without control characters
+        "bob    ChatGPT         ?",
+        "carol  ChatGPT         37% → 21:00  -",
+    ]
 
 
 def test_with_the_model_lock_the_policy_sets_the_model_and_the_guard_must_be_on(incus):

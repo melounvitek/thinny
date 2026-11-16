@@ -870,6 +870,8 @@ def usage(s: Settings, reg: Registry, name: str | None = None) -> None:
     targets = [_active(reg, name)] if name else [inst for inst in reg.current() if inst.state == "active"]
     with ThreadPoolExecutor() as pool:
         rows = [("NAME", "PROVIDER", "5H", "WEEK"), *pool.map(lambda inst: _usage_row(s, reg, inst.name), targets)]
+    # With its users' texts (a provider, a reason): without control characters, for the admin's terminal.
+    rows = [["".join(ch for ch in c if ch.isprintable()) for c in r] for r in rows]
     # A row's last text sets no column's width: a note (not signed in, ?) spans 5H and WEEK.
     widths = [max(len(r[i]) for r in rows if len(r) > i + 1) for i in range(3)]
     for r in rows:
@@ -887,12 +889,11 @@ def _usage_row(s: Settings, reg: Registry, name: str) -> tuple[str, ...]:
             return name, shown, "not signed in" if ": logged out" in status else "?"
         doc = json.loads(res.stdout)
         if reason := doc["unavailable_reason"]:   # the Claude plugin's way of saying it got nothing
-            return name, shown, "not signed in" if reason.startswith("no Claude subscription login") else \
-                "".join(c for c in reason if c.isprintable())   # its users' text, for the admin's terminal
+            return name, shown, "not signed in" if reason.startswith("no Claude subscription login") else reason
         windows = {w["label"]: w for w in doc["windows"]}
         return name, shown, *(_window(windows, labels, form) for labels, form in ((FIVE_HOURS, "%H:%M"),
                                                                                    (WEEK, "%a %H:%M")))
-    except (CommandError, ValueError, TypeError, KeyError, AttributeError):   # or what its users made Hermes say
+    except (CommandError, ValueError, TypeError, KeyError, AttributeError, OverflowError):   # or what its users made Hermes say
         return name, shown, "?"
 
 
