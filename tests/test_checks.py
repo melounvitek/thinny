@@ -384,3 +384,13 @@ def test_doctor_finds_what_of_the_dashboard_is_amiss(monitoring):
         ("FAIL", "Prometheus does not read the host's and thinny's: connection refused"),
         ("WARN", "the instances' disk use is missing or older than 15 minutes"),
         ("OK", "Grafana answers (HTTP 200)")]
+
+
+def test_doctor_waits_for_prometheus_s_first_reading_after_a_restart(monitoring):
+    targets = [{"labels": {"job": job}, "health": "unknown", "lastError": ""} for job in ("incus", "node")]
+    monitoring["curl -s -m 5 http://127.0.0.1:9090/api/v1/targets"] = json.dumps({"data": {"activeTargets": targets}})
+    results = [(level, message) for level, message, _ in checks.dashboard(ON, Registry())]
+    assert ("WARN", "Prometheus has not read Incus's metrics yet") in results
+    monitoring["curl -s -m 5 http://127.0.0.1:9090/api/v1/targets"] = ""   # it does not answer
+    results = [(level, message) for level, message, _ in checks.dashboard(ON, Registry())]
+    assert ("FAIL", "Prometheus does not read Incus's metrics: Prometheus does not answer") in results

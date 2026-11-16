@@ -565,6 +565,7 @@ extras/, tests/     netcup snapshot and nightly watch (run off the server); pyte
                                 thinny-trace.service (also to the journal)
 /var/lib/thinny/trace-unsent/<name>/  each row for its Google Sheet as a file, until sent
 /var/lib/thinny/dashboard       "<port> <access>" while thinny runs the dashboard (and publishes it)
+/var/lib/thinny/dashboard-unfinished  while apply writes the dashboard's settings, until the services run on them
 /etc/thinny/prometheus.yml, metrics.crt, metrics.key (Prometheus's), dashboard.env (Grafana's first
                                 admin password, root only); /etc/systemd/system/{prometheus,
                                 prometheus-node-exporter,grafana-server}.service.d/thinny.conf,
@@ -800,9 +801,9 @@ private ones and the tailnet are always blocked), `[telegram]` `manager_token` (
   `hermes`.
 - Dashboard, while on: its services and timer active (FAIL), nothing of it listening beyond
   127.0.0.1 but Caddy's and Tailscale's sites (FAIL), Incus's metrics at 127.0.0.1:8444 for
-  Prometheus's certificate (FAIL), Prometheus reading Incus and the node exporter (FAIL), the
-  instances' disk use under 15 minutes old (WARN), Grafana answering (FAIL); on but not installed,
-  or not as `config.toml` says (WARN).
+  Prometheus's certificate (FAIL), Prometheus reading Incus and the node exporter (FAIL; WARN until
+  its first reading after a start), the instances' disk use under 15 minutes old (WARN), Grafana
+  answering (FAIL); on but not installed, or not as `config.toml` says (WARN).
 - A check that crashes is reported as FAIL; the others still run.
 
 ## 8. Rounds
@@ -931,7 +932,16 @@ only once the admin agrees on a terminal; 3 each instance's disk use every 5 min
 renewed nightly; 4 Caddy and Tailscale, `doctor`, `uninstall`; 5 the dashboard, README and this file.
 Sandbox test **[tested]**: the rendered node exporter and Prometheus flags and config (`promtool`),
 Grafana 13.3.1 with the drop-in's settings and the provisioning: no outbound connection, the home page
-at the dashboard, every panel with data from this workstation's Incus metrics.
+at the dashboard, every panel with data from this workstation's Incus metrics. Server test on the same
+workstation (Ubuntu 26.04, Incus 6.0.5) **[tested]**: without a terminal nothing installed; the
+question, then the install in 52 s; Incus's metrics over HTTPS with the metrics certificate; everything
+on 127.0.0.1 but Caddy's site on the LAN address, no connection beyond the host; the dashboard in a
+browser; Tailscale's site added, and removed for local access; off: masked, Incus's metrics address and
+certificate and Grafana's repository gone, `doctor` clean; on again without a question, its history
+kept. Memory with one instance: Grafana 233 MiB, Prometheus 28 MiB, the node exporter 6 MiB. Grafana
+answers about 10 s after it starts (database migrations, provisioning): restarting all three at every
+apply left `doctor` failing and the printed address unanswered, so apply restarts only what changed
+(everything after a run that stopped halfway) and waits until Prometheus and Grafana answer.
 
 ## 9. Open questions
 
@@ -954,8 +964,6 @@ at the dashboard, every panel with data from this workstation's Incus metrics.
   anti-spoofing rules come back without restarting the containers?).
 - The storage pool is sized once at install; growing it is manual.
 - Alerting from the server itself (no mail sender today; the watchdog runs off-server).
-- The dashboard on a server: Incus's metrics over HTTPS with the metrics certificate, Grafana's
-  `IPAddressDeny`, a real install on Debian 13 and Ubuntu 24.04, a Grafana upgrade by unattended
-  upgrades.
+- The dashboard on Debian 13 and Ubuntu 24.04, and a Grafana upgrade by unattended upgrades.
 - Per-instance ChatGPT seats versus one API account per organisation (a local proxy such as
   CLIProxyAPI is parked).

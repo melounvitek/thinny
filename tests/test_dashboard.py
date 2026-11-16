@@ -36,6 +36,15 @@ class Server:
         self.answers = []
         self.prompts = []
         self.fails = set()   # commands that fail, by their start
+        self.starting = {}   # URL -> the HTTP status codes it answers with before 200, while its service starts
+        self.clock = 0.0
+
+    def http_status(self, url, timeout=5):
+        self.calls.append(f"GET {url}")
+        return self.starting[url].pop(0) if self.starting.get(url) else "200"
+
+    def sleep(self, seconds):
+        self.clock += seconds
 
     def run(self, cmd, *, check=True, **kw):
         self.calls.append(" ".join(cmd))
@@ -83,8 +92,9 @@ class Server:
         elif cmd[:2] == ["systemctl", "unmask"]:
             self.masked -= set(cmd[2:])
         elif cmd[:2] == ["systemctl", "enable"]:
-            assert not set(cmd[2:]) & self.masked
-            self.enabled |= set(cmd[2:])
+            units = {unit for unit in cmd[2:] if unit != "--now"}
+            assert not units & self.masked
+            self.enabled |= units
         elif cmd[:3] == ["systemctl", "disable", "--now"]:
             self.enabled -= set(cmd[3:])
         elif cmd[:2] == ["tailscale", "serve"] and cmd[-1] == "off":
@@ -116,7 +126,8 @@ def dashboard_files(tmp_path, monkeypatch):
                        ("GRAFANA_SOURCE", etc / "apt/sources.list.d/thinny-grafana.list"),
                        ("GRAFANA_UPGRADES", etc / "apt/apt.conf.d/52thinny-grafana"),
                        ("PROVISIONING", etc / "grafana/provisioning"),
-                       ("DISK_METRICS", tmp_path / "var/lib/prometheus/node-exporter/thinny.prom")):
+                       ("DISK_METRICS", tmp_path / "var/lib/prometheus/node-exporter/thinny.prom"),
+                       ("UNFINISHED", tmp_path / "var/lib/thinny/dashboard-unfinished")):
         monkeypatch.setattr(dashboard, name, path)
 
 
@@ -139,6 +150,8 @@ def server(tmp_path, monkeypatch):
     monkeypatch.setattr(dashboard.shutil, "disk_usage", lambda path: types.SimpleNamespace(free=513_000_000_000))
     monkeypatch.setattr(dashboard.sys, "stdin", Terminal())
     monkeypatch.setattr("builtins.input", srv.input)
+    monkeypatch.setattr(dashboard, "http_status", srv.http_status)
+    monkeypatch.setattr(dashboard, "time", types.SimpleNamespace(monotonic=lambda: srv.clock, sleep=srv.sleep))
     reg = Registry({"alice": Instance("alice", 9120, "lan", state="active")})
     monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
     srv.tmp = tmp_path
@@ -159,7 +172,7 @@ def test_turning_it_on_tells_what_it_takes_and_a_no_changes_nothing(server, caps
         "    unattended upgrades update Grafana from it, new major versions included\n"
         "  - installs prometheus, prometheus-node-exporter, grafana (from Grafana's repository)\n"
         "  - downloads about 445 MB and takes about 2.2 GB of disk, and up to about 0.3 GB more for 30 days of history\n"
-        "  - uses about 0.5 GB of RAM (estimate)\n"
+        "  - uses about 0.3 GB of RAM\n"
         "  - turns on Incus's metrics at 127.0.0.1:8444, for a certificate that can only read them\n"
         "  Free disk space: 513.0 GB\n"
         "Nothing installed or changed. To install it later: thinny config apply. Not to be asked again, set "
@@ -201,8 +214,9 @@ def test_once_confirmed_it_installs_and_starts_everything_on_127_0_0_1(server, c
     assert dashboard.dropin("grafana-server.service").read_text() == render.grafana_dropin(ON, str(dashboard.PASSWORD))
     assert dashboard.dropin("prometheus.service").read_text() == \
         render.prometheus_dropin(ON, str(dashboard.PROMETHEUS_CONFIG))
-    assert srv.index("promtool check config") < srv.index("systemctl unmask") < srv.index("systemctl enable") \
-        < srv.index(f"systemctl restart {SERVICES} thinny-metrics.timer")
+    assert srv.index("promtool check config") < srv.index("systemctl unmask") \
+        < srv.index(f"systemctl restart {SERVICES} thinny-metrics.timer") \
+        < srv.index(f"systemctl enable --now {SERVICES} thinny-metrics.timer")
     assert not srv.masked and srv.enabled == {*SERVICES.split(), "thinny-metrics.timer"}
     assert 'thinny_instance_disk_used_bytes{name="alice"} 1073741824' in dashboard.DISK_METRICS.read_text()
     assert host.dashboard_access() == (9200, "local")
@@ -212,13 +226,44 @@ def test_once_confirmed_it_installs_and_starts_everything_on_127_0_0_1(server, c
 
     srv.calls.clear()
     password = dashboard.PASSWORD.read_text()
-    dashboard.apply(ON, Registry.load())   # nothing new
+    dashboard.apply(ON, Registry.load())   # nothing new, so nothing restarted: Grafana takes 10 s to start
     assert not [call for call in srv.calls if call.startswith(
-        ("apt-get", "systemctl mask", "openssl", "incus config set", "incus config trust add"))]
-    # restarted all the same: a run that failed before restarting them left them on their old settings
-    assert f"systemctl restart {SERVICES} thinny-metrics.timer" in srv.calls
+        ("apt-get", "systemctl mask", "systemctl restart", "openssl", "incus config set", "incus config trust add"))]
     assert dashboard.PASSWORD.read_text() == password and srv.prompts == ["Install the dashboard? [y/N] "]
     assert capsys.readouterr().out == ""
+
+
+def test_the_address_comes_once_prometheus_and_grafana_answer(server, capsys):
+    srv = server
+    srv.answers = ["y"]
+    srv.starting = {"http://127.0.0.1:9090/-/ready": ["000", "503"], "http://127.0.0.1:9200/api/health": ["000"] * 5}
+    dashboard.apply(ON, Registry.load())
+    assert [call for call in srv.calls if call.startswith("GET")] == \
+        ["GET http://127.0.0.1:9090/-/ready"] * 3 + ["GET http://127.0.0.1:9200/api/health"] * 6
+    assert srv.index(f"systemctl enable --now {SERVICES}") < srv.index("GET")
+    assert srv.clock == 14   # seconds waited, before the address
+    assert "Dashboard: http://localhost:9200/" in capsys.readouterr().out
+
+    srv.starting = {"http://127.0.0.1:9300/api/health": ["000"] * 100}   # Grafana does not start
+    with pytest.raises(CommandError, match=r"grafana-server does not answer at http://127.0.0.1:9300/api/health \(HTTP 000\) "
+                                           r"after 120 s: journalctl -u grafana-server"):
+        dashboard.apply(dataclasses.replace(ON, dashboard_port=9300), Registry.load())
+
+
+def test_a_run_that_stopped_before_restarting_the_services_has_the_next_restart_them(server):
+    srv = server
+    srv.answers = ["y"]
+    dashboard.apply(ON, Registry.load())
+    srv.fails = {"promtool"}   # e.g. a bad Prometheus config, since fixed
+    with pytest.raises(CommandError):
+        dashboard.apply(dataclasses.replace(ON, dashboard_retention_days=60), Registry.load())
+    srv.fails = set()
+    srv.calls.clear()
+    dashboard.apply(dataclasses.replace(ON, dashboard_retention_days=60), Registry.load())   # its files are written
+    assert f"systemctl restart {SERVICES} thinny-metrics.timer" in srv.calls
+    srv.calls.clear()
+    dashboard.apply(dataclasses.replace(ON, dashboard_retention_days=60), Registry.load())
+    assert not [call for call in srv.calls if call.startswith("systemctl restart")]
 
 
 def test_a_new_port_or_access_moves_its_address(server, capsys):

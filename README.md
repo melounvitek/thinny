@@ -54,7 +54,7 @@ private networks or the tailnet, and cannot change the shared policy.
 - Internet access for GitHub, the Hermes and Claude Code installers, `images.linuxcontainers.org`,
   Debian mirrors and the model provider.
 - About 0.4 GB RAM and 3 GB disk per idle instance, plus what its agent, Docker and Claude Code
-  use. WebUI takes about 0.3 GB RAM more, the optional dashboard about 0.5 GB RAM and 2.5 GB disk.
+  use. WebUI takes about 0.3 GB RAM more, the optional dashboard about 0.3 GB RAM and 2.5 GB disk.
 
 With a sudo account, thinny runs itself with sudo, which asks for your password. On Debian, whose
 `PATH` has `/usr/local/sbin` only for root, type `sudo thinny`. Prefix other commands with `sudo`
@@ -480,7 +480,7 @@ retention_days = 30
 Then run `thinny config apply` on a terminal (`thinny config edit` does it too). The first time, it
 lists what it installs and asks: Prometheus and its node exporter from the distribution, Grafana from
 Grafana's apt repository, about 450 MB to download, 2.2 GB of disk plus the history (about 10 MB a
-day), and 0.5 GB of RAM. Without a terminal (`install.sh`, the nightly update) it installs nothing
+day), and 0.3 GB of RAM. Without a terminal (`install.sh`, the nightly update) it installs nothing
 and says so.
 
 | `access`    | Address users open                           | Your part |

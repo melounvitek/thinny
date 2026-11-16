@@ -232,9 +232,13 @@ def dashboard(s: Settings, reg: Registry):
     except (ValueError, KeyError, TypeError):
         targets = {}
     for job, what in (("incus", "Incus's metrics"), ("node", "the host's and thinny's")):
-        target = targets.get(job) or {"health": "unknown", "lastError": "Prometheus does not answer"}
-        yield (ok(f"Prometheus reads {what}") if target["health"] == "up"
-               else fail(f"Prometheus does not read {what}: {target['lastError']}", "journalctl -u prometheus"))
+        target = targets.get(job) or {"health": "down", "lastError": "Prometheus does not answer"}
+        if target["health"] == "up":
+            yield ok(f"Prometheus reads {what}")
+        elif target["health"] == "unknown":   # it reads every 30 s, the first time after it started
+            yield warn(f"Prometheus has not read {what} yet", "wait half a minute")
+        else:
+            yield fail(f"Prometheus does not read {what}: {target['lastError']}", "journalctl -u prometheus")
     fresh = dash.DISK_METRICS.exists() and time.time() - dash.DISK_METRICS.stat().st_mtime < 15 * 60
     yield (ok("the instances' disk use is fresh") if fresh
            else warn("the instances' disk use is missing or older than 15 minutes", "journalctl -u thinny-metrics"))

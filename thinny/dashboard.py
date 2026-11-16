@@ -11,19 +11,20 @@ import secrets
 import shutil
 import ssl
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
 from . import host, instances, render
 from .registry import Registry
 from .settings import CONFIG_TOML, MONITORING_PORTS, Settings
-from .system import CommandError, log, run, step, tailscale_name, write_file
+from .system import STATE_DIR, CommandError, http_status, log, run, step, tailscale_name, write_file
 
 PACKAGES = ("prometheus", "prometheus-node-exporter", "grafana", "openssl")
 # What each package downloads and takes on disk, in MB, with what it needs (Grafana 13.3, Prometheus 2.53).
 SIZES = {"prometheus": (40, 190), "prometheus-node-exporter": (5, 16), "grafana": (400, 2000), "openssl": (2, 3)}
 HISTORY_MB_PER_DAY = 10   # Prometheus's history of a server with about 20 instances (estimate)
-RAM = "about 0.5 GB"      # Grafana 0.4 GB, Prometheus and its node exporter 0.1 GB (measured)
+RAM = "about 0.3 GB"      # measured with one instance: Grafana 233 MiB, Prometheus 28, the node exporter 6
 SERVICES = ("prometheus.service", "prometheus-node-exporter.service", "grafana-server.service")
 METRICS_ADDRESS = "127.0.0.1:8444"
 PROMETHEUS_CONFIG = CONFIG_TOML.parent / "prometheus.yml"
@@ -36,6 +37,7 @@ GRAFANA_SOURCE = Path("/etc/apt/sources.list.d/thinny-grafana.list")
 GRAFANA_UPGRADES = Path("/etc/apt/apt.conf.d/52thinny-grafana")
 PROVISIONING = Path("/etc/grafana/provisioning")
 DISK_METRICS = Path("/var/lib/prometheus/node-exporter/thinny.prom")   # read by the node exporter
+UNFINISHED = STATE_DIR / "dashboard-unfinished"   # from writing the services' settings until they run on them
 APT_ENV = {"DEBIAN_FRONTEND": "noninteractive", "NEEDRESTART_SUSPEND": "1", "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
 
 
@@ -105,7 +107,7 @@ def confirmed(s: Settings, missing: list[str]) -> bool:
           + f"  - installs {packages}\n"
           f"  - downloads about {download} MB and takes about {disk / 1000:.1f} GB of disk, and up to about "
           f"{history / 1000:.1f} GB more for {s.dashboard_retention_days} days of history\n"
-          f"  - uses {RAM} of RAM (estimate)\n"
+          f"  - uses {RAM} of RAM\n"
           f"  - turns on Incus's metrics at {METRICS_ADDRESS}, for a certificate that can only read them\n"
           f"  Free disk space: {shutil.disk_usage('/var/lib').free / 1e9:.1f} GB")
     try:
@@ -156,7 +158,8 @@ def renew_key() -> None:
 
 def configure(s: Settings) -> None:
     """Incus's metrics for Prometheus's certificate, the services' settings, then the services started (those whose
-    settings changed restarted) and the first file of each instance's disk use."""
+    settings changed restarted, all of them after a run that stopped halfway) and answering, and the first file of
+    each instance's disk use."""
     if not CERT.exists():   # made under other names, so it is there only once complete, with its key
         key, cert = KEY.with_name(f".{KEY.name}.tmp"), CERT.with_name(f".{CERT.name}.tmp")
         run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
@@ -171,21 +174,37 @@ def configure(s: Settings) -> None:
         run(["incus", "config", "set", "core.metrics_address", METRICS_ADDRESS])
     if fingerprint() not in trusted():
         run(["incus", "config", "trust", "add-certificate", str(CERT), "--type=metrics", "--name=thinny-metrics"])
-    for path, text in ((PROMETHEUS_CONFIG, render.prometheus_config(str(CERT), str(KEY))),
-                       (dropin("prometheus.service"), render.prometheus_dropin(s, str(PROMETHEUS_CONFIG))),
-                       (dropin("prometheus-node-exporter.service"), render.NODE_EXPORTER_DROPIN),
-                       (dropin("grafana-server.service"), render.grafana_dropin(s, str(PASSWORD))),
-                       (PROVISIONING / "datasources/thinny.yaml", render.GRAFANA_DATASOURCE),
-                       (PROVISIONING / "dashboards/thinny.yaml", render.grafana_dashboards(str(host.FILES / "grafana"))),
-                       (host.SYSTEMD / "thinny-metrics.service", render.METRICS_SERVICE),
-                       (host.SYSTEMD / "thinny-metrics.timer", render.METRICS_TIMER)):
-        write_file(path, text)
+    units = (*SERVICES, "thinny-metrics.timer")
+    interrupted = UNFINISHED.exists()
+    write_file(UNFINISHED, "")
+    changed = {unit for unit, path, text in (
+        ("prometheus.service", PROMETHEUS_CONFIG, render.prometheus_config(str(CERT), str(KEY))),
+        ("prometheus.service", dropin("prometheus.service"), render.prometheus_dropin(s, str(PROMETHEUS_CONFIG))),
+        ("prometheus-node-exporter.service", dropin("prometheus-node-exporter.service"), render.NODE_EXPORTER_DROPIN),
+        ("grafana-server.service", dropin("grafana-server.service"), render.grafana_dropin(s, str(PASSWORD))),
+        ("grafana-server.service", PROVISIONING / "datasources/thinny.yaml", render.GRAFANA_DATASOURCE),
+        ("grafana-server.service", PROVISIONING / "dashboards/thinny.yaml",
+         render.grafana_dashboards(str(host.FILES / "grafana"))),
+        ("thinny-metrics.timer", host.SYSTEMD / "thinny-metrics.service", render.METRICS_SERVICE),
+        ("thinny-metrics.timer", host.SYSTEMD / "thinny-metrics.timer", render.METRICS_TIMER),
+    ) if write_file(path, text)}
     run(["systemctl", "daemon-reload"])
     run(["promtool", "check", "config", str(PROMETHEUS_CONFIG)])   # Prometheus would stop on a bad one
     run(["systemctl", "unmask", *SERVICES])
-    run(["systemctl", "enable", *SERVICES, "thinny-metrics.timer"])
-    # Every time: a run that failed after writing their settings left them running on the old ones.
-    run(["systemctl", "restart", *SERVICES, "thinny-metrics.timer"])
+    # Only when needed: Grafana takes about 10 s to start.
+    if restart := [unit for unit in units if interrupted or unit in changed]:
+        run(["systemctl", "restart", *restart])
+    run(["systemctl", "enable", "--now", *units])
+    UNFINISHED.unlink()
+    timeout = 120
+    deadline = time.monotonic() + timeout
+    for unit, url in (("prometheus", "http://127.0.0.1:9090/-/ready"),
+                      ("grafana-server", f"http://127.0.0.1:{s.dashboard_port}/api/health")):
+        while (code := http_status(url)) != "200":
+            if time.monotonic() > deadline:
+                raise CommandError(f"{unit} does not answer at {url} (HTTP {code}) after {timeout} s: "
+                                   f"journalctl -u {unit}")
+            time.sleep(2)
     write_disk_metrics()
 
 
@@ -207,7 +226,8 @@ def turn_off() -> None:
         run(["incus", "config", "unset", "core.metrics_address"])
     for path in (*(dropin(service) for service in SERVICES), host.SYSTEMD / "thinny-metrics.service",
                  host.SYSTEMD / "thinny-metrics.timer", PROVISIONING / "datasources/thinny.yaml",
-                 PROVISIONING / "dashboards/thinny.yaml", DISK_METRICS, GRAFANA_SOURCE, GRAFANA_UPGRADES, GRAFANA_KEY):
+                 PROVISIONING / "dashboards/thinny.yaml", DISK_METRICS, GRAFANA_SOURCE, GRAFANA_UPGRADES, GRAFANA_KEY,
+                 UNFINISHED):
         path.unlink(missing_ok=True)
     for service in SERVICES:
         with contextlib.suppress(OSError):   # gone, or with the admin's own drop-ins
