@@ -136,7 +136,9 @@ def update_policy(s: Settings, inst: Instance) -> None:
             hermes(inst.name, ["config", "unset", key], check=False)  # 1 when not set
     ensure_policy(s, inst)
     if kept.exists():   # also after a failure here: apply finishes it
-        if not hermes(inst.name, ["config", "get", "model.default"], check=False).stdout.strip():
+        # Unless it has a model of its own; Hermes shows a group's too, which leaves it the lock's provider and effort.
+        if "model.default" in pinned_keys(s) or \
+                not hermes(inst.name, ["config", "get", "model.default"], check=False).stdout.strip():
             set_config(s, inst.name, json.loads(kept.read_text(encoding="utf-8")))
         kept.unlink()
 

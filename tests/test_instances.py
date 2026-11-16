@@ -189,7 +189,7 @@ class Incus:
         elif cmd[:3] == ["hermes", "config", "unset"]:
             c.get("hermes_config", {}).pop(cmd[3], None)
         elif cmd[:3] == ["hermes", "config", "get"]:   # a key, or a section's keys as YAML
-            config = c.get("hermes_config", {})
+            config = c.get("hermes_config", {}) | c.get("pinned", {})   # with what its policy pins
             return config.get(cmd[3]) or "".join(f"{k.removeprefix(cmd[3] + '.')}: {v}\n" for k, v in config.items()
                                                  if k.startswith(cmd[3] + ".")), 0
         elif cmd[:2] == ["rm", "-f"]:
@@ -676,6 +676,17 @@ def test_an_instance_unlocked_on_its_own_starts_with_the_model_it_was_locked_to(
     assert alice.lock == [] and host.policy_current(S, "alice") and restarted == ["alice"]
     assert incus.containers["alice"]["hermes_config"] == \
         {"model.provider": provider, "model.default": model, "agent.reasoning_effort": "high"}
+
+
+def test_an_instance_unlocked_in_a_group_that_sets_the_model_gets_the_locks_provider_and_effort(incus, gateways):
+    s = dataclasses.replace(LOCKED, groups={"sales": {"model": {"default": "m9"}}})
+    alice = Instance("alice", 9120, "local", state="active", group="sales")
+    reg = Registry({"alice": alice})
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {}, "pinned": {"model.default": "m9"}}
+    instances.update_policy(s, alice)
+    instances.unlock(s, reg, "alice")
+    assert incus.containers["alice"]["hermes_config"] == \
+        {"model.provider": "openai-codex", "agent.reasoning_effort": "high"}   # Hermes refuses the pinned model
 
 
 CODEX = ["gpt-6-sol", "gpt-6-sol-900k", "gpt-6-luna", "gpt-6-luna-900k", "gpt-5.6-sol", "gpt-5.6-sol-900k",
