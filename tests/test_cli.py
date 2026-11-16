@@ -1,4 +1,5 @@
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -317,6 +318,20 @@ def test_instance_add_connects_no_phone_line_unless_asked_to(server, terminal, p
     answering(monkeypatch, "", "", "")
     assert cli.main(["instance", "add", "alice", "--access", "local"]) == 0
     assert phones == [None]
+
+
+def test_what_a_failing_command_in_a_container_said_reaches_the_admin_without_control_characters(
+        server, monkeypatch, capsys):
+    # Its users are root in it: every command there sets the terminal's title, clears it and turns the text around.
+    said = ("import sys; print('\\x1b]0;owned\\x07\\x1b[2Jcannot write\\u202e'); "
+            "print('no\\tspace\\r', file=sys.stderr); sys.exit(1)")
+    monkeypatch.setattr(system, "as_user_cmd", lambda name, cmd: [sys.executable, "-c", said])
+    alice = Instance("alice", 9120, "local", state="active")
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: Registry({"alice": alice})))
+    assert cli.main(["instance", "reset-password", "alice"]) == 1
+    out, err = capsys.readouterr()
+    assert err.endswith(" -> exit 1\n]0;owned[2Jcannot write\nno\tspace\n")
+    assert all(c.isprintable() or c in "\n\t" for c in out + err)
 
 
 @pytest.fixture
