@@ -292,7 +292,8 @@ def test_the_host_and_each_instance_are_checked_alongside_each_other_and_shown_i
 
     monkeypatch.setattr(checks, "CHECKS", [host_check])
     monkeypatch.setattr(checks, "INSTANCE_CHECKS", [first, broken, last])
-    reg = Registry({name: Instance(name, port, "local", state="active") for name, port in (("alice", 9120), ("bob", 9121))})
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="active"),
+                    "bob": Instance("bob", 9121, "local", state="active")})
     assert checks.run(S, reg) == 1
     assert capsys.readouterr().out == ("OK   the host\n"
                                        "OK   alice: first\n"

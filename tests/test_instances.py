@@ -569,6 +569,7 @@ def test_usage_shows_each_active_instances_subscription_limits_in_the_servers_ti
     ]
     assert incus.ran(f"hermes usage --json --provider {instances.CLAUDE_PROVIDER}")
     assert not incus.ran("exec hank")
+    assert not incus.ran("hermes config get model.default")   # only the provider counts
 
     instances.usage(S, reg, "alice")
     assert capsys.readouterr().out.splitlines()[1:] == ["alice  ChatGPT   37% → 21:00  12% → Thu 09:00"]

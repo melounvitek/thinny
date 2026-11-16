@@ -807,15 +807,23 @@ def limits(reg: Registry, name: str, cpu: int | None, memory_mb: int | None, dis
     set_limits(name, cpu, memory_mb, disk_gb)
 
 
-def model_of(s: Settings, reg: Registry, name: str, timeout: float = 600) -> tuple[str, str]:
-    """The provider and model the instance uses: its lock's, or those in its own config (model: "" without one),
-    printable, as its users set its config."""
+def provider_of(s: Settings, reg: Registry, name: str, timeout: float = 600) -> str:
+    """The provider the instance uses: its lock's, or the one in its own config, printable, as its users set it."""
     s = settings_for(s, _active(reg, name))
     if s.model_lock:
-        return s.model_provider, s.model
-    provider, model = (printable(hermes(name, ["config", "get", key], check=False, timeout=timeout).stdout.strip())
-                       or default for key, default in (("model.provider", s.model_provider), ("model.default", "")))
-    return provider, model
+        return s.model_provider
+    return printable(hermes(name, ["config", "get", "model.provider"], check=False, timeout=timeout).stdout.strip()) \
+        or s.model_provider
+
+
+def model_of(s: Settings, reg: Registry, name: str) -> tuple[str, str]:
+    """The provider and model the instance uses: its lock's, or those in its own config (model: "" without one),
+    printable, as its users set its config."""
+    policy = settings_for(s, _active(reg, name))
+    if policy.model_lock:
+        return policy.model_provider, policy.model
+    provider = provider_of(s, reg, name)
+    return provider, printable(hermes(name, ["config", "get", "model.default"], check=False).stdout.strip())
 
 
 def lock(s: Settings, reg: Registry, name: str, models: list[str]) -> None:
@@ -1056,7 +1064,7 @@ def usage(s: Settings, reg: Registry, name: str | None = None) -> None:
 def _usage_row(s: Settings, reg: Registry, name: str) -> tuple[str, ...]:
     shown = "?"
     try:
-        provider, _ = model_of(s, reg, name, timeout=USAGE_TIMEOUT)
+        provider = provider_of(s, reg, name, timeout=USAGE_TIMEOUT)
         shown = _provider_name(provider)
         res = hermes(name, ["usage", "--json", "--provider", provider], check=False, timeout=USAGE_TIMEOUT)
         if res.returncode:   # Hermes got nothing: without a credential, or the provider did not answer
