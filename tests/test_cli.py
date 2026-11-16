@@ -392,6 +392,13 @@ def test_instance_resize_changes_only_the_given_limits(server, monkeypatch):
         cli.main(["instance", "resize", "alice", "--memory-mb", "lots"])
 
 
+def test_instance_usage_takes_every_active_instance_or_one_named(server, capsys):
+    assert cli.main(["instance", "usage"]) == 0
+    assert capsys.readouterr().out == "NAME  PROVIDER  5H  WEEK\n"   # none yet
+    assert cli.main(["instance", "usage", "nobody"]) == 1
+    assert "no instance named 'nobody'" in capsys.readouterr().err
+
+
 def test_instance_telegram_waits_without_thinnys_lock(server, monkeypatch):
     connected = []
 
@@ -676,6 +683,7 @@ def test_tab_completes_the_names_of_instances_for_root(monkeypatch, capsys):
     monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
     assert tab(capsys, "instance", "login", "") == ["alice", "bob"]
     assert tab(capsys, "instance", "resize", "--cpu", "4", "") == ["alice", "bob"]
+    assert tab(capsys, "instance", "usage", "") == ["alice", "bob"]
     assert tab(capsys, "instance", "login", "--provider", "=", "openai", "") == ["alice", "bob"]
     assert tab(capsys, "instance", "restart", "alice", "") == ["alice", "bob"]
     assert tab(capsys, "instance", "group", "set", "a") == ["alice"]
