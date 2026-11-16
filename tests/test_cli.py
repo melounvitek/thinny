@@ -133,10 +133,10 @@ def test_without_root_thinny_runs_itself_with_sudo_and_config_edit_keeps_the_edi
         started.append(args)
         raise SystemExit(0)
     monkeypatch.setattr(cli.os, "execvp", execvp)
-    for args in ("update", "--dry-run"), ("config", "edit"):
+    for args in ("update", "--all", "--dry-run"), ("config", "edit"):
         with pytest.raises(SystemExit):
             cli.main(list(args))
-    assert started == [["sudo", "/usr/local/sbin/thinny", "update", "--dry-run"],
+    assert started == [["sudo", "/usr/local/sbin/thinny", "update", "--all", "--dry-run"],
                        ["sudo", "VISUAL=code --wait", "/usr/local/sbin/thinny", "config", "edit"]]
 
 
@@ -149,20 +149,30 @@ def test_init_leaves_an_existing_site_toml_alone(server, capsys):
 
 # Grafana's key first, whatever auto_update says: install.sh's apt-get update would fail on an expired one.
 @pytest.mark.parametrize("args, auto_update, kw, thinny", [
-    ([], "false", {"dry_run": False, "manual": True, "now": True}, True),
-    (["--dry-run"], "true", {"dry_run": True, "manual": True, "now": True}, False),
+    ([], "false", None, True),
+    (["--all"], "false", {"dry_run": False, "manual": True, "now": False}, True),
+    (["--all", "--now"], "true", {"dry_run": False, "manual": True, "now": True}, True),
+    (["--all", "--dry-run"], "true", {"dry_run": True, "manual": True, "now": False}, False),
     (["--scheduled"], "true", {"dry_run": False, "manual": False, "now": False}, True),
     (["--scheduled"], "false", {"dry_run": False, "manual": False, "now": False}, False),
 ])
-def test_a_manual_update_runs_now_and_only_the_timer_waits(server, args, auto_update, kw, thinny):
+def test_an_update_takes_only_thinny_unless_given_all_or_run_by_the_timer(server, args, auto_update, kw, thinny):
     site, calls = server
     site.write_text(VALID + f"\n[hermes]\nauto_update = {auto_update}\n")
     assert cli.main(["update", *args]) == 0
-    assert calls == ["Grafana's key"] * (not kw["dry_run"]) + ["thinny"] * thinny + [("update", kw)]
+    assert calls == ["Grafana's key"] * ("--dry-run" not in args) + ["thinny"] * thinny + [("update", kw)] * bool(kw)
     assert "thinny update --scheduled\n" in render.UPDATE_SERVICE
 
 
-@pytest.mark.parametrize("args", [[], ["--scheduled"]])
+def test_an_update_of_thinny_alone_ends_with_the_new_thinny_installed(server, monkeypatch):
+    _, calls = server
+    monkeypatch.setattr(update, "update_thinny", lambda: True)
+    monkeypatch.setattr(cli.os, "execv", lambda path, argv: pytest.fail("went on"))
+    assert cli.main(["update"]) == 0
+    assert calls == ["Grafana's key"]
+
+
+@pytest.mark.parametrize("args", [["--all"], ["--all", "--now"], ["--scheduled"]])
 def test_after_installing_a_new_thinny_the_update_goes_on_with_it(server, monkeypatch, args):
     _, calls = server
     monkeypatch.setattr(update, "update_thinny", lambda: True)
@@ -182,7 +192,7 @@ def test_a_failed_thinny_update_stops_the_update(server, monkeypatch, capsys):
     def broken():
         raise system.CommandError("git pull -> exit 1")
     monkeypatch.setattr(update, "update_thinny", broken)
-    assert cli.main(["update"]) == 1
+    assert cli.main(["update", "--all"]) == 1
     assert calls == ["Grafana's key"]
     assert "git pull -> exit 1" in capsys.readouterr().err
 
@@ -717,6 +727,9 @@ def test_a_group_without_active_instances_selects_nothing(sales, capsys):
     (["instance", "unlock"], ["--group", ""], "name the instances, or give --group"),
     (["instance", "model"], [], "name the instances, or give --group"),
     (["instance", "move"], ["--to", "new"], "name the instances to move, or give --all or --group"),
+    (["update"], ["--now"], "--now and --dry-run go with --all"),
+    (["update"], ["--dry-run"], "--now and --dry-run go with --all"),
+    (["update"], ["--scheduled", "--now"], "--now and --dry-run go with --all"),
 ])
 def test_a_usage_error_shows_the_whole_help_of_its_command(monkeypatch, capsys, command, args, error):
     # without root, and before sudo would ask for a password

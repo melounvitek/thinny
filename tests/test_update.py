@@ -355,12 +355,14 @@ def head(repo):
     return subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
 
 
-def test_thinny_installs_each_new_commit_of_its_clone_once(clone, tmp_path):
+def test_thinny_installs_each_new_commit_of_its_clone_once(clone, tmp_path, capsys):
     assert update.update_thinny() is False
     git("commit", "-qm", "v2", "--allow-empty", cwd=clone)
     assert update.update_thinny() is True
     assert (tmp_path / "commit").read_text().strip() == head(clone)
+    capsys.readouterr()
     assert update.update_thinny() is False
+    assert capsys.readouterr().err == f"thinny {head(clone)[:12]} is up to date\n"
     assert runs(tmp_path) == 2   # the first install, then v2
 
 

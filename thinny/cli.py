@@ -98,10 +98,13 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("setup", help="set up the server, then apply config.toml")
     sub.add_parser("status", help="quick look: release, last update, containers, gateways")
     sub.add_parser("doctor", help="every isolation and health check, with fixes")
-    upd = sub.add_parser("update", help="update thinny, then every instance's Hermes, now")
-    upd.add_argument("--dry-run", action="store_true", help="only report what would happen")
-    upd.add_argument("--scheduled", action="store_true",
-                     help="as the nightly timer: respect auto_update, wait for min_release_age_hours")
+    upd = sub.add_parser("update", help="update thinny itself")
+    upd.add_argument("--all", action="store_true",
+                     help="then every instance's Hermes and WebUI once min_release_age_hours old, even with "
+                          "auto_update off")
+    upd.add_argument("--now", action="store_true", help="with --all: do not wait for min_release_age_hours")
+    upd.add_argument("--dry-run", action="store_true", help="with --all: only report what would happen")
+    upd.add_argument("--scheduled", action="store_true", help="as the nightly timer: --all, but respect auto_update")
     cfg = sub.add_parser("config", help="the server settings, /etc/thinny/config.toml")
     cfg = cfg.add_subparsers(dest="action", required=True, metavar="action")
     edt = cfg.add_parser("edit", help="edit config.toml (or a group's file, or the tokens) in $VISUAL or $EDITOR, "
@@ -209,6 +212,8 @@ def main(argv: list[str] | None = None) -> int:
         inst.choices[a.action].error("name the instances, or give --group")
     if command == "instance move" and not (a.names or a.all or a.group):
         mov.error("name the instances to move, or give --all or --group")
+    if command == "update" and (a.now or a.dry_run) and not a.all:
+        upd.error("--now and --dry-run go with --all")
 
     if os.geteuid() != 0:
         # sudo drops the admin's editor, so config edit passes it on. Only there: sudo refuses variables for
@@ -263,9 +268,12 @@ def main(argv: list[str] | None = None) -> int:
         if command == "update" and not a.dry_run:   # before install.sh's apt-get update, whatever auto_update says
             dashboard.renew_key()
         # Before the lock: the install.sh of a new thinny runs `thinny setup`.
-        if command == "update" and not a.dry_run and (s.auto_update or not a.scheduled) and update.update_thinny():
-            # on with the new code
-            os.execv(host.THINNY, [host.THINNY, "update", *(["--scheduled"] if a.scheduled else [])])
+        if command == "update" and not a.dry_run and (s.auto_update or not a.scheduled):
+            new = update.update_thinny()
+            if not (a.all or a.scheduled):
+                return 0
+            if new:
+                os.execv(host.THINNY, [host.THINNY, *argv])   # on with the new code
         with lock():
             reg = Registry.load()
             if command == "setup":
@@ -273,7 +281,7 @@ def main(argv: list[str] | None = None) -> int:
             elif command == "config apply":
                 apply.apply(s)
             elif command == "update":
-                return update.run(s, reg, dry_run=a.dry_run, manual=not a.scheduled, now=not a.scheduled)
+                return update.run(s, reg, dry_run=a.dry_run, manual=not a.scheduled, now=a.now)
             elif command == "instance add":
                 instances.check_name(reg, a.name)   # before the questions, not after them
                 if a.group:

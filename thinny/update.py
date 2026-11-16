@@ -1,5 +1,5 @@
-"""thinny update (nightly with --scheduled): thinny itself from its clone, then every instance's Hermes,
-one container at a time, to exactly the same release, then the same for WebUI."""
+"""thinny update: thinny itself from its clone. With --all (nightly with --scheduled), then every instance's
+Hermes, one container at a time, to exactly the same release, then the same for WebUI."""
 
 from __future__ import annotations
 
@@ -89,6 +89,7 @@ def update_thinny() -> bool:
             system.run(["git", "-C", src, "pull", "--ff-only", "-q"], env=env, timeout=300)
             head = system.run(["git", "-C", src, "rev-parse", "HEAD"]).stdout.strip()
             if installed() == head:
+                log(f"thinny {head[:12]} is up to date")
                 return False
             log(f"installing thinny {head[:12]}")
             system.run(["sh", f"{src}/install.sh"], timeout=3600)
@@ -133,7 +134,7 @@ def rollout(s: Settings, reg: Registry, tag: str, commit: str, current: str = ""
         log(f"{inst.name}: Hermes {tag}")
         write_file(UNFINISHED, f"{tag} {commit} {inst.name}\n", 0o600)
         instances.mark_restart([inst.name])
-        instances.ensure_packages(inst.name, "thinny update")  # a new Hermes may need packages the list gained since
+        instances.ensure_packages(inst.name, "thinny update --all")  # a new Hermes may need packages the list gained since
         instances.ensure_account(inst.name)   # and the groups new built-ins need
         # Plugins are turned on only when the built-ins change, so a Hermes update keeps what users turned off.
         instances.install_hermes(s, inst.name, commit, enable=inst.built_ins != render.BUILT_INS)
