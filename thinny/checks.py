@@ -10,11 +10,12 @@ import datetime as dt
 import json
 import re
 import shutil
+import socket
 import time
 from pathlib import Path
 
 from . import dashboard as dash
-from . import host, instances, render, system, trace
+from . import host, instances, purelymail, render, system, trace
 from .registry import Instance, Registry
 from .settings import MONITORING_PORTS, Settings
 
@@ -86,6 +87,28 @@ def access_trace(s: Settings, reg: Registry):
             yield warn(f"{folder.name}: {rows} rows of its access trace wait for its Google Sheet",
                        "check that the server reaches script.google.com: the trace tries again every 5 minutes, "
                        "and its journal (journalctl -u thinny-trace) says why they wait")
+
+
+def mailboxes(s: Settings, reg: Registry):
+    if not s.email_domain:
+        return
+    for host_name, port in ((purelymail.IMAP_HOST, 993), (purelymail.SMTP_HOST, 587)):   # Hermes's ports
+        try:
+            socket.create_connection((host_name, port), timeout=10).close()
+        except OSError:   # Hermes then takes no mail either
+            yield warn(f"this server cannot reach {host_name}:{port}: its instances' mail neither goes nor comes",
+                       f"let outgoing TCP to port {port} through, also at your hosting provider (see README, Email)")
+    try:
+        purelymail.check_domain(s)
+        found = purelymail.api(s.email_api_token, "listUser")["users"]
+    except system.CommandError as e:
+        yield warn(f"mailboxes: {e}")
+        return
+    yield ok(f"Purelymail takes mail for {s.email_domain}")
+    for inst in active(reg):
+        if inst.mailbox and inst.mailbox not in found:
+            yield warn(f"{inst.name}'s mailbox {inst.mailbox} is gone from Purelymail",
+                       f"thinny instance email {inst.name}")
 
 
 def update_status(path: Path, now: dt.datetime):
@@ -374,7 +397,7 @@ def running(s: Settings, inst: Instance):
 
 # ---------- runner ----------
 
-CHECKS = [install, access_trace, prerequisites, firewall, caddy, dashboard]
+CHECKS = [install, access_trace, mailboxes, prerequisites, firewall, caddy, dashboard]
 INSTANCE_CHECKS = [container, webapp, version, built_ins, bypass]
 
 

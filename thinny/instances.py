@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
-from . import host, render, trace
+from . import host, purelymail, render, trace
 from .registry import Instance, Registry, RegistryError, validate_name
 from .settings import ACCESS_METHODS, Settings, group_file
 from .system import (INSTANCE_UID, STATE_DIR, CommandError, as_user, as_user_interactive, gateway_active, http_status,
@@ -402,6 +402,17 @@ def _env_lines(name: str) -> list[str]:
     return read_user_file(name, str(home(name) / ".env")).splitlines()
 
 
+def env_values(name: str) -> dict[str, str]:
+    """The instance's .env, the values set_env wrote unquoted, others as they are."""
+    values = {}
+    for key, _, value in (line.partition("=") for line in _env_lines(name)):
+        try:
+            values[key] = json.loads(value) if value.startswith('"') else value
+        except ValueError:
+            values[key] = value
+    return values
+
+
 def set_env(name: str, values: dict[str, str]) -> None:
     """`values` in the instance's .env, in place of what it had for their keys."""
     lines = [line for line in _env_lines(name) if line.partition("=")[0] not in values]
@@ -676,6 +687,9 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
                   f". To pick another once it is signed in: thinny instance model {name} <model>"))
         if s.telegram_manager_token:
             print(f"Then send its user a Telegram bot: thinny instance telegram {name}")
+        if s.email_domain:
+            print(f"Then give it a mailbox, {name}@{s.email_domain}: thinny instance email {name} "
+                  "<its user's address>")
 
 
 def connect_phone(s: Settings, name: str, phone: dict[str, str]) -> bool:
@@ -904,10 +918,11 @@ def disable(s: Settings, reg: Registry, name: str) -> None:
     print(f"{name} disabled: container stopped, Webapp and agent with it. Its data stays in the container {name}.")
 
 
-def remove(s: Settings, reg: Registry, name: str, purge: bool = False) -> None:
-    """Once the admin types its name, delete a disabled or pending instance's container, with all its data. Its
-    registry entry stays, so its name, port and address are not reused, and so does its access trace. Purged, a
-    removed one too leaves the registry, freeing them, and its access trace stays under another name."""
+def remove(s: Settings, reg: Registry, name: str, purge: bool = False, keep_mailbox: bool = False) -> None:
+    """Once the admin types its name, delete a disabled or pending instance's container, with all its data, and its
+    mailbox unless `keep_mailbox` (e.g. another server's after a move). Its registry entry stays, so its name, port
+    and address are not reused, and so does its access trace. Purged, a removed one too leaves the registry,
+    freeing them, and its access trace stays under another name."""
     inst = reg.get(name)
     if inst.state == "active":
         raise CommandError(f"{name} is active; disable it first: thinny instance disable {name}")
@@ -918,6 +933,9 @@ def remove(s: Settings, reg: Registry, name: str, purge: bool = False) -> None:
         raise CommandError("no terminal to confirm on; nothing removed")
     if inst.state != "removed":
         print(f"This deletes {name}'s container, with all its data.")
+    if inst.mailbox:
+        print(f"Its mailbox {inst.mailbox} stays in Purelymail." if keep_mailbox else
+              f"This deletes its mailbox {inst.mailbox} too, with all its mail.")
     if purge:
         print(f"This frees {name}'s name and port for a new instance.")
     try:
@@ -928,6 +946,11 @@ def remove(s: Settings, reg: Registry, name: str, purge: bool = False) -> None:
     if answer.strip() != name:
         raise CommandError("nothing removed")
 
+    if inst.mailbox:   # first: when Purelymail fails, the instance stays as it is
+        if not keep_mailbox:
+            purelymail.delete(s, inst.mailbox)
+        inst.mailbox = ""
+        reg.save()   # at once: a mailbox created at its address later is not thinny's to delete
     if container_state(name) is not None:
         run(["incus", "delete", "--force", name])
     if (host.POLICIES / name).exists():

@@ -297,6 +297,50 @@ def test_an_instance_that_may_have_reached_the_other_server_stays_stopped_with_w
     assert not incus.ran("incus start") and not incus.ran("incus stop bob")
 
 
+def test_a_mailbox_goes_with_its_instance_after_a_note_to_check_it(source, incus, monkeypatch, capsys):
+    reg, other = source
+    reg.get("alice").mailbox = "alice@example.org"
+    printed, stop = [], instances.stop
+    monkeypatch.setattr(instances, "stop", lambda name: printed.append(capsys.readouterr().out) or stop(name))
+    move.move(S, reg, ["alice", "bob"], "admin@new")
+    assert "alice has the mailbox alice@example.org. It goes with alice, and admin@new deletes it with alice. " \
+           "After the move, check there that alice still gets and sends mail." in printed[0]   # before it stops
+    assert "bob has the mailbox" not in printed[0]
+    for _, args in other.calls:   # the check too: a thinny without mailboxes refuses it
+        assert (args[args.index("--mailbox") + 1] == "alice@example.org") if args[2] == "alice" \
+            else "--mailbox" not in args
+    assert reg.get("alice").mailbox == ""   # a remove here must not delete it
+
+
+def test_a_moved_mailbox_is_the_other_servers_also_when_disabling_the_instance_here_fails(source, monkeypatch):
+    reg, other = source
+    reg.get("alice").mailbox = "alice@example.org"
+    saved = []
+    monkeypatch.setattr(Registry, "save", lambda self, path=None: saved.append(self.get("alice").mailbox))
+    monkeypatch.setattr(instances, "disable", lambda s, reg, name: (_ for _ in ()).throw(CommandError("stuck")))
+    with pytest.raises(CommandError, match="stuck"):
+        move.move(S, reg, ["alice"], "admin@new")
+    assert saved == [""]
+
+
+@pytest.mark.parametrize("failure", ["fails", "lost"])
+def test_a_failed_move_keeps_the_mailbox_here(source, incus, failure):
+    reg, other = source
+    reg.get("alice").mailbox = "alice@example.org"
+    getattr(other, failure).add("alice")
+    with pytest.raises(CommandError, match="moving alice failed") as e:
+        move.move(S, reg, ["alice"], "admin@new")
+    assert reg.get("alice").mailbox == "alice@example.org"
+    # when it may be there, the mailbox may be that server's
+    assert ("if alice is there, its mailbox alice@example.org is that server's: remove alice here with "
+            "thinny instance remove alice --keep-mailbox" in str(e.value)) == (failure == "lost")
+
+
+def test_a_moved_instance_brings_its_mailbox(target):
+    move.receive(S, target, "alice", "local", "", RELEASE, render.BUILT_INS, archive(), mailbox="alice@example.org")
+    assert target.get("alice").mailbox == "alice@example.org"
+
+
 def test_only_active_instances_move_and_not_during_an_unfinished_update(source, incus, tmp_path):
     reg, other = source
     with pytest.raises(RegistryError, match="carol is disabled"):

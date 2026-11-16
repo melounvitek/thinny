@@ -501,6 +501,35 @@ Incus 6.0.0, 6.0.4 and 6.0.5, Prometheus 2.45 and 2.53, node exporter 1.7 to 1.1
   only when it creates its database. CSRF and its live websocket compare `Origin` with `Host`, which
   Caddy, `tailscale serve` and an SSH tunnel keep. Its sign-in cookie is the host's, for every port.
 
+### Email (2026-11-16)
+Hermes v0.23.1 **[src]**; Purelymail from its API spec (`news.purelymail.com/api/`), docs and public
+issues **[docs]**, not tried.
+
+- Hermes's email gateway is a bundled platform plugin: `EMAIL_ADDRESS`, `EMAIL_PASSWORD`,
+  `EMAIL_IMAP_HOST` and `EMAIL_SMTP_HOST` in `.env` turn it on, also with a managed `plugins.enabled`
+  (bundled platforms load unless disabled). Ports 993 (TLS) and 587 (STARTTLS) by default **[src]**.
+- It trusts a sender only through the topmost `Authentication-Results` header with the authserv-id
+  `EMAIL_AUTHSERV_ID`: DMARC pass, or SPF or DKIM pass aligned with From. Without the id it drops all
+  mail **[src]**. Purelymail's id is `purelymail.com`; mail between two Purelymail mailboxes carries only
+  `auth=pass`, which Hermes would drop **[docs: raw headers in public issues]**.
+- `EMAIL_ALLOWED_USERS` takes whole addresses (or `*`); other senders are ignored without an answer and
+  marked read. `EMAIL_HOME_ADDRESS` gets scheduled jobs' mail. One conversation per sender **[src]**.
+- It polls INBOX for unread mail and, at every start, takes what is already there as old (in memory):
+  mail that arrives while the gateway is down is never answered **[src]**.
+- Purelymail's API: `POST https://purelymail.com/api/v0/<method>` with a `Purelymail-Api-Token` header;
+  errors come with HTTP 200 as `{"type": "error", ...}`. `createUser` (password reset and a welcome mail
+  unless turned off), `modifyUser` (`newPassword`), `deleteUser`, `listUser`, `listDomains`
+  (`dnsSummary`, `symbolicSubaddressing`); `addDomain` only once the DNS records are there **[docs]**.
+  Symbolic subaddressing is on for new domains: dots ignored, addresses cut at symbols **[docs]**.
+  About 3000 sends outside Purelymail a day per account **[docs]**.
+- On the test server (2026-11-16) **[tested]**: a Gmail message's topmost `Authentication-Results` starts
+  with `purelymail.com;` (DMARC, SPF and DKIM pass); `listUser` gives whole addresses; `modifyUser` takes
+  the unchanged password; `addDomain` passed at once once the records were on Cloudflare. netcup's default
+  firewall policy "netcup Mail block" drops outgoing 25, 465 and 587: Hermes then fails SMTP, takes no mail
+  either and retries (1 to 4 min). On its first connect it mailed the home address a startup note; the
+  reply to it got an answer in the thread. A reconnect within one gateway process takes the mail that came
+  meanwhile; only a new process skips it.
+
 ## 5. Rejected options (and why)
 
 - Docker: docker group = root.
@@ -530,6 +559,10 @@ Incus 6.0.0, 6.0.4 and 6.0.5, Prometheus 2.45 and 2.53, node exporter 1.7 to 1.1
   passes its token on; users found it confusing. A bot from BotFather with Hermes's pairing:
   the pairing message tells users to run a command in a terminal. One bot for all instances:
   one gateway per token (section 4).
+- Mail: a mail server on the host (inbound port 25, and mail from a VPS address lands in spam), Migadu
+  (daily sending caps per account), Cloudflare's Email Routing and agent inbox (no mailboxes or IMAP,
+  which Hermes needs). DNS records through Cloudflare's API in thinny: a one-time step, and sites use
+  other DNS providers.
 
 ## 6. Approach
 
@@ -555,7 +588,8 @@ extras/, tests/     netcup snapshot and nightly watch (run off the server); pyte
                                 the built-ins (render.BUILT_INS) its container last got,
                                 whether it moved here from another server, its own model lock
                                 (models and provider; [] unlocked; null: the site's), the URL of
-                                its users' Google Sheet for the access trace, its group
+                                its users' Google Sheet for the access trace, its group, its mailbox
+                                (the address thinny created and deletes with it)
 /var/lib/thinny/release         "<tag> <commit>": the Hermes release all instances run
 /var/lib/thinny/policies/<name>/        its Hermes managed scope, rendered from config.toml; a
                                         folder per instance (before, all shared /etc/hermes/)
@@ -677,16 +711,20 @@ instance telegram <name>          prints the link to a bot of its own through th
                                   bot, waits (without the lock) for a bot whose creator the admin
                                   confirms, then its token and the creator in .env, gateway
                                   restart, a greeting; Telegram's update is done only after that
+instance email <name> [ADDRESS...] [--new-password]
+                                  its mailbox <name>@<email.domain> at Purelymail, created (never one
+                                  thinny did not create) or kept with its password, in its .env with
+                                  the addresses that may write to it; gateway restart
 instance trace-sheet <name> <URL|off>
                                   its users' Google Sheet gets its access trace too, once it took
                                   a test row; the sheet it had gets a last row
 instance disable <name>           autostart off, container stopped (forced after 60 s), access
                                   removed; container and data stay
 instance remove <name>            a disabled or pending instance, once the admin types its name:
-                                  container and policy folder deleted; registry entry and access
-                                  trace stay. --purge, also once removed: registry entry deleted,
-                                  access trace renamed <name>.purged-<time>, rows for its sheet
-                                  dropped
+                                  its mailbox (first; not with --keep-mailbox), container and policy
+                                  folder deleted; registry entry and access trace stay. --purge, also
+                                  once removed: registry entry deleted, access trace renamed
+                                  <name>.purged-<time>, rows for its sheet dropped
 instance list | restart           instances with their CPU, RAM and disk use; one-by-one gateway
                                   restarts
 instance group set <name> <group|none> | group list
@@ -698,7 +736,8 @@ instance move <name>... | --all --to [user@]host
                                   experimental: whole containers to another thinny server, one
                                   at a time. That server checks them all first (same Hermes
                                   release, no unfinished update on either side, a name it does
-                                  not have, the access method); then autostart off, stop, `incus
+                                  not have, the access method), a note on each mailbox, which the
+                                  other server takes over; then autostart off, stop, `incus
                                   export` streamed over SSH (as root or `sudo -n`) to its hidden
                                   `instance receive`: `incus import`, registered at once, then a
                                   resumed add with its own port, address and settings that keeps
@@ -706,8 +745,8 @@ instance move <name>... | --all --to [user@]host
                                   password; Hermes, which only new built-ins or a later
                                   `instance add` install again, like an update). Disabled here;
                                   started here again after a failure unless it may have arrived
-uninstall                         after the hostname is typed: every container, then everything
-                                  thinny set up, thinny itself last; packages stay
+uninstall                         after the hostname is typed: every mailbox it can, every container,
+                                  then everything thinny set up, thinny itself last; packages stay
 ```
 
 - Names: lowercase ASCII (Linux account and URL safe), not an account on the host (the
@@ -738,7 +777,8 @@ address is a host of its own, without a path (section 5).
 `[webapp]` port range, `frontend` and the look for new instances (`text_scale` 110), `[access]` `default`,
 `lan_address`, `tunnel_port`, `[network]` `interface` (`eth0`) and `blocked_networks` (public networks;
 private ones and the tailnet are always blocked), `[telegram]` `manager_token` (only root reads
-`config.toml`), `[dashboard]` `enabled`, `access` (`local`, `lan`, `tailscale`), `port`, `retention_days`.
+`config.toml`), `[email]` `domain` and `api_token` (Purelymail's), `[dashboard]` `enabled`, `access` (`local`,
+`lan`, `tailscale`), `port`, `retention_days`.
 `config.example.toml` lists every key.
 
 ### 6.8 Nightly update
@@ -785,7 +825,9 @@ private ones and the tailnet are always blocked), `[telegram]` `manager_token` (
 - Install: Incus pool `default` and profile `thinny-instance`, the incus.service drop-in, IPv4
   forwarding (FAIL); instance policies match `config.toml` (WARN); the recorded release; nightly
   timer enabled (WARN); last update status (FAIL when failed, WARN when missing or older than
-  48 h); thinny-trace.service enabled and active, no rows waiting for a Google Sheet (WARN).
+  48 h); thinny-trace.service enabled and active, no rows waiting for a Google Sheet (WARN); with
+  `[email]`, the server reaches Purelymail's IMAP (993) and SMTP (587), the domain passes Purelymail's checks
+  and every instance's mailbox is there (WARN).
 - Prerequisites (section 6.3), all WARN.
 - Firewall: the loaded table is exactly what `config.toml` renders, chain by chain (FAIL).
 - Caddy active when any instance uses LAN access, or own addresses with a tunnel port (FAIL);
@@ -943,6 +985,14 @@ answers about 10 s after it starts (database migrations, provisioning): restarti
 apply left `doctor` failing and the printed address unanswered, so apply restarts only what changed
 (everything after a run that stopped halfway) and waits until Prometheus and Grafana answer.
 
+Mailboxes (2026-11-16): 1 `[email]` and `instance email` against a stand-in for Purelymail's API; 2 the
+mailbox deleted with `remove` and `uninstall`, handed over by `move`; 3 `doctor`, README and this file.
+Server test (2026-11-16, netcup, Hermes v0.23.1) **[tested]**: a test domain set up in Purelymail through its
+API and its records through Cloudflare's; `doctor` OK; a new instance, `instance email` with a Gmail address,
+mail both ways in one thread once netcup's mail block was gone, a rerun keeping the password, `remove`
+deleting the mailbox. Back on `main`, the registry's empty `mailbox` fields had to go: an older thinny
+refuses fields it does not know.
+
 ## 9. Open questions
 
 - WebUI after a real Hermes update (its restart with the gateway is tested with fakes only), and
@@ -959,6 +1009,8 @@ apply left `doctor` failing and the printed address unanswered, so apply restart
   `instance add` and before each Hermes update.
 - Phone line: a whole `instance add` with one, and a call from Hermes, are untested on a server.
 - Telegram: `instance telegram` against a real instance is untested on a server.
+- Mailboxes: not yet tried are a scheduled job's mail, mail from another Purelymail mailbox (dropped?),
+  `move` and `uninstall` with a mailbox.
 - Per-instance SSH and Tailscale are left to the users; SSH needs the host as jump host.
 - Not tested: `systemctl restart nftables` with containers running (do Incus's per-NIC
   anti-spoofing rules come back without restarting the containers?).

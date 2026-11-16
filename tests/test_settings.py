@@ -85,6 +85,10 @@ def test_model_lock_is_off_by_default_and_then_needs_no_model():
     ({"container__disk_gb": 1.5}, "container_disk_gb must be int"),
     ({"network__interface": "eth0; drop"}, "network.interface must be an interface name"),
     ({"telegram__manager_token": "@acme_hermes_bot"}, "telegram.manager_token must be"),
+    ({"email__domain": "<domain>", "email__api_token": "pm-live-x"}, "email.domain must be a domain"),
+    ({"email__domain": "Example.org", "email__api_token": "pm-live-x"}, "email.domain must be a domain"),
+    ({"email__domain": "example.org"}, "set both email.domain and email.api_token, or neither"),
+    ({"email__api_token": "pm-live-x"}, "set both email.domain and email.api_token, or neither"),
     ({"dashboard__access": "url"}, "dashboard.access must be one of lan, tailscale, local"),
     ({"dashboard__enabled": True, "dashboard__access": "lan", "access__default": "local", "access__lan_address": None},
      "lan_address is required when dashboard.access is lan"),
@@ -120,6 +124,12 @@ def test_telegram_is_off_without_a_manager_bot():
     assert parse(site()).telegram_manager_token == ""
     token = "8721778198:AAH" + "x" * 32
     assert parse(site(telegram__manager_token=token)).telegram_manager_token == token
+
+
+def test_mailboxes_are_off_without_a_purelymail_account():
+    assert (parse(site()).email_domain, parse(site()).email_api_token) == ("", "")
+    s = parse(site(email__domain="agents.example.org", email__api_token="pm-live-x"))
+    assert (s.email_domain, s.email_api_token) == ("agents.example.org", "pm-live-x")
 
 
 def test_the_dashboard_is_off_by_default_and_then_only_through_an_ssh_tunnel():

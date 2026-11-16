@@ -49,6 +49,10 @@ blocked_networks = []           # public networks instance containers may not re
 manager_token = ""              # the token of the bot that creates each instance's own bot, "" = off
                                 # (see README, Telegram; only root can read this file)
 
+[email]                         # a mailbox <instance>@<domain> at Purelymail per instance (see README, Email)
+domain = ""                     # e.g. "example.org", set up in Purelymail; "" = off
+api_token = ""                  # the Purelymail account's API token (only root can read this file)
+
 [dashboard]                     # history of the server's and each instance's CPU, memory, disk and network
 enabled = false                 # true: thinny config apply asks, then installs Prometheus and Grafana (about 2.2 GB)
 access = "local"                # local (SSH tunnel) | lan | tailscale; with lan or tailscale, open it in a browser
