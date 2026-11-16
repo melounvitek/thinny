@@ -697,7 +697,8 @@ def get_provider_profile(slug):
     assert json.loads(out) == {"openai-codex": ["gpt-5.5"], "claude-in": ["sonnet"], "openrouter": ["x"]}
 
 
-@pytest.mark.parametrize("models", [None, "Traceback (most recent call last):", '["gpt-5.5"]', '{"openai-codex": 1}'])
+@pytest.mark.parametrize("models", [None, "Traceback (most recent call last):", '["gpt-5.5"]', '{"openai-codex": 1}',
+                                    '{"openai-codex": "gpt-5.5"}', '{"openai-codex": {"gpt-9": true}}'])
 def test_without_the_list_of_models_nothing_is_set(incus, capsys, models):
     reg = unlocked_alice(incus, models)   # Hermes failed, or its users made it say something else
     for model in (None, "gpt-5.5"):

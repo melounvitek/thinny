@@ -461,11 +461,15 @@ def available_models(name: str) -> dict[str, list[str]]:
     """Provider -> the models the instance can use (MODELS), without control characters."""
     res = hermes_python(name, MODELS, check=False, timeout=120)
     try:
-        return {_printable(provider): [_printable(m) for m in models]
-                for provider, models in json.loads(res.stdout).items()}
-    except (ValueError, TypeError, AttributeError):   # it failed, or its users made Hermes say something else
-        error = (res.stderr.strip().splitlines() or [f"exit {res.returncode}"])[-1]
-        raise CommandError(f"could not get the models {name} can use from Hermes ({_printable(error)})") from None
+        models = json.loads(res.stdout) if res.returncode == 0 else None
+    except ValueError:
+        models = None
+    if isinstance(models, dict) and all(isinstance(ids, list) and all(isinstance(m, str) for m in ids)
+                                        for ids in models.values()):
+        return {_printable(provider): [_printable(m) for m in ids] for provider, ids in models.items()}
+    # It failed, or its users made Hermes say something else.
+    error = (res.stderr.strip().splitlines() or [f"exit {res.returncode}"])[-1]
+    raise CommandError(f"could not get the models {name} can use from Hermes ({_printable(error)})")
 
 
 def check_gateway(s: Settings, inst: Instance, timeout: float = 180) -> None:
@@ -993,7 +997,7 @@ def _provider_name(provider: str) -> str:
 
 
 def _printable(text: str) -> str:
-    return "".join(ch for ch in str(text) if ch.isprintable())
+    return "".join(ch for ch in text if ch.isprintable())
 
 
 def _containers() -> dict[str, dict]:
