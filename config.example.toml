@@ -8,8 +8,9 @@ update_time = "03:00"           # nightly update (schedule the OS reboot window 
 min_release_age_hours = 48      # install a stable release only once it is this old
 
 [policy]
-model_provider = "openai-codex"
-model = "<model id>"            # default model (with model_lock = false, what instance add suggests)
+model_provider = "openai-codex" # with model_lock: the provider; without it, what instance add suggests
+model = ""                      # with model_lock: where new chats start (without it, each instance starts on
+                                # Hermes's default for its provider: thinny instance model changes it)
 reasoning_effort = "high"
 model_lock = false              # true: every instance uses model_provider, reasoning_effort and allowed_models
                                 # only, and the plugins the policy turns on (but instances with their own

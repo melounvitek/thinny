@@ -55,7 +55,7 @@ if [ ! -f "$CONFIG" ]; then
 		echo
 	else
 		install -m 600 "$SRC/config.example.toml" "$CONFIG"
-		echo "Edit $CONFIG (model, LAN address, ...), then run: ${SUDO_USER:+sudo }sh $SRC/install.sh"
+		echo "Edit $CONFIG (interface, LAN address, ...), then run: ${SUDO_USER:+sudo }sh $SRC/install.sh"
 		exit 0
 	fi
 fi

@@ -86,6 +86,8 @@ class Incus:
         self.containers = {}
         self.graceful_stop_fails = False
         self.imported_mode = self.exported_mode = None   # of the last archive imported, or the directory exported to
+        # provider -> its Hermes's default model (DEFAULT_MODEL)
+        self.default_models = {"openai-codex": "gpt-6-sol", instances.CLAUDE_PROVIDER: "claude-sonnet-5-5[1m]"}
 
     def run(self, cmd, *, check=True, input=None, timeout=600, env=None, cwd=None):
         self.calls.append(" ".join(cmd))
@@ -203,6 +205,9 @@ class Incus:
             return c.get("usage", ""), 0 if c.get("usage") else 1
         elif cmd[:3] == ["hermes", "auth", "status"]:
             return f"{cmd[3]}: {'logged in' if c.get('signed_in', True) else 'logged out'}\n", 0
+        elif cmd[:2] == ["sh", "-c"] and instances.DEFAULT_MODEL in cmd:
+            model = self.default_models.get(input)
+            return (f"{model}\n", 0) if model else ("\n", 1)
         elif cmd[:2] == ["sh", "-c"] and instances.MODELS in cmd:   # provider -> model ids, its JSON or none
             models = c.get("models")
             return (models if isinstance(models, str) else json.dumps(models)), 0 if models is not None else 1
@@ -277,9 +282,10 @@ def test_a_new_instance_gets_its_own_container_with_hermes(incus):
     assert incus.ran("hermes plugins install claude-subscription-directsdk --force --yes-deps --enable")
     assert incus.ran("hermes pm install --extra piper")   # the phone plugin's packages, whatever is turned on
     assert incus.ran("hermes plugins install https://github.com/melounvitek/hermes-3310 --ref ")
-    # without the model lock, the policy's model is only where the instance starts
-    for setting in ("model.provider openai-codex", "model.default m1", "agent.reasoning_effort high"):
+    # without the model lock, it starts on its Hermes's default for its provider, not the server's model
+    for setting in ("model.provider openai-codex", "model.default gpt-6-sol", "agent.reasoning_effort high"):
         assert incus.ran(f"hermes config set {setting}")
+    assert incus.where(instances.DEFAULT_MODEL) > next(i for i, c in enumerate(incus.calls) if "hermes-install.sh" in c)
     assert incus.ran("hermes config set tts.piper.length_scale 0.65")   # Piper's normal speed is slow
     # network before packages, packages before the account, model guard into the finished checkout
     assert incus.index(f"incus exec alice -- {MARK} sh -c cat > /etc/systemd/network/eth0.network") \
@@ -296,6 +302,65 @@ def test_a_new_instance_gets_its_own_container_with_hermes(incus):
     # git ignores the read-only mount before it appears (the installer stashes untracked files)
     assert next(i for i, c in enumerate(incus.calls) if "grep -qx /plugins/model-guard/" in c) \
         < incus.index("incus config device add alice model-guard")
+
+
+@pytest.mark.parametrize("provider, model", [("openai-codex", "gpt-6-sol"),
+                                             (instances.CLAUDE_PROVIDER, "claude-sonnet-5-5[1m]")])
+def test_a_new_instance_starts_on_hermess_default_model_for_its_provider(incus, capsys, provider, model):
+    instances.add(dataclasses.replace(S, model_provider=provider), Registry(), "alice", "local")
+    config = incus.containers["alice"]["hermes_config"]
+    assert (config["model.provider"], config["model.default"]) == (provider, model)
+    assert f"alice starts on {model}. To pick another once it is signed in: thinny instance model alice <model>" \
+        in capsys.readouterr().out.splitlines()
+
+
+def test_a_new_instance_in_a_group_that_sets_the_model_starts_on_the_groups(incus, capsys):
+    s = dataclasses.replace(S, groups={"sales": {"model": {"default": "gpt-5.5"}}})
+    instances.add(s, Registry(), "alice", "local", group="sales")
+    assert not incus.ran(instances.DEFAULT_MODEL) and not incus.ran("hermes config set model.default")
+    assert "alice starts on gpt-5.5, which its group sets: thinny config edit --group sales" \
+        in capsys.readouterr().out.splitlines()
+
+
+def test_an_add_without_a_default_model_stops_before_the_gateway_and_resumes(incus):
+    reg = Registry()
+    incus.default_models = {}   # e.g. a Hermes that moved its default models elsewhere
+    with pytest.raises(CommandError, match=re.escape("alice's Hermes gave no default model for openai-codex (exit 1). "
+                                                     "Fix the cause, then run thinny instance add alice again")):
+        instances.add(S, reg, "alice", "local")
+    assert reg.get("alice").state == "pending" and not incus.ran("hermes gateway install")
+    assert "model.default" not in incus.containers["alice"].get("hermes_config", {})
+
+    incus.default_models = {"openai-codex": "gpt-6-sol"}
+    instances.add(S, reg, "alice", "local")
+    assert reg.get("alice").state == "active"
+    assert incus.containers["alice"]["hermes_config"]["model.default"] == "gpt-6-sol"
+
+
+def test_the_default_model_comes_from_the_instances_hermes(tmp_path, monkeypatch):
+    """DEFAULT_MODEL with a stand-in for Hermes: its default for a provider, or the provider's first model."""
+    for path, text in {
+        "hermes_cli/__init__.py": "",
+        "hermes_cli/models.py": """
+def get_default_model_for_provider(provider):
+    print("a warning on the way")
+    return {"openai-codex": "gpt-6-sol"}.get(provider, "")
+""",
+        "providers/__init__.py": """
+class Profile:
+    fallback_models = ("claude-sonnet-5-5[1m]", "claude-opus-5-5[1m]")
+def get_provider_profile(slug):
+    return Profile() if slug == "claude-subscription-directsdk-experimental" else None
+""",
+    }.items():
+        (tmp_path / "hermes-agent" / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "hermes-agent" / path).write_text(text)
+    monkeypatch.setattr(instances, "hermes_python", lambda name, script, input, **kw: subprocess.run(
+        [sys.executable, "-I", "-c", script, str(tmp_path)], input=input, capture_output=True, text=True))
+    assert instances.hermes_default_model("alice", "openai-codex") == "gpt-6-sol"
+    assert instances.hermes_default_model("alice", instances.CLAUDE_PROVIDER) == "claude-sonnet-5-5[1m]"
+    with pytest.raises(CommandError, match="alice's Hermes gave no default model for nous"):
+        instances.hermes_default_model("alice", "nous")
 
 
 @pytest.mark.parametrize("token, step", [("", False), ("1000:" + "M" * 35, True)])
@@ -522,6 +587,7 @@ def test_usage_takes_what_an_instances_users_make_hermes_say_as_text_or_a_failur
 def test_with_the_model_lock_the_policy_sets_the_model_and_the_guard_must_be_on(incus):
     instances.add(LOCKED, Registry(), "alice", "local")
     assert not incus.ran("hermes config set model.")   # managed: Hermes refuses it
+    assert not incus.ran(instances.DEFAULT_MODEL)
 
     incus.containers["alice"]["guard"] = False
     alice = Instance("alice", 9120, "local", state="active")
@@ -558,7 +624,19 @@ def test_an_instance_uses_its_own_model_or_the_locked_one(incus):
     assert instances.model_of(S, reg, "alice") == ("openrouter", "m2")
     alice.lock = None
     incus.containers["alice"]["hermes_config"].clear()   # e.g. unset by a former lock
-    assert instances.model_of(S, reg, "alice") == ("openai-codex", "m1")
+    assert instances.model_of(S, reg, "alice") == ("openai-codex", "")   # not the server's model
+
+
+def test_an_instance_without_a_model_of_its_own_is_told_to_pick_one(incus, gateways, capsys):
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {}, "models": {"openai-codex": ["gpt-6-sol"]}}
+    instances.default_model(S, reg, "alice")
+    assert capsys.readouterr().out.splitlines()[0] == \
+        "alice: no model is set for new chats; pick one: thinny instance model alice <model>"
+    with pytest.raises(CommandError, match=re.escape("alice has no model of its own: name the models: "
+                                                     "thinny instance lock alice <model> ...")):
+        instances.lock(S, reg, "alice", [])
+    assert reg.get("alice").lock is None
 
 
 def test_an_instance_locked_on_its_own_allows_only_its_models(incus, gateways, monkeypatch):

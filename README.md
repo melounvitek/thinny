@@ -149,14 +149,14 @@ It does not add any instances.
 
 </details>
 
-On the first run, the installer asks for the model provider (OpenAI or Anthropic) and
-model, the Webapp language, the internet interface and how users will open the Webapps. It
+On the first run, the installer asks for the Webapp language, the internet interface and
+how users will open the Webapps. It
 suggests the interface and LAN address it detects and the language pack it finds in Hermes's
 catalog, shows a summary, and sets up the server once you confirm. Everything else keeps the
 example's defaults: change them with `thinny config edit`.
 
 Without a terminal, it stops after copying the example. Edit `/etc/thinny/config.toml` (at least
-`policy.model`, `network.interface` and `access.lan_address`, or `""` and another
+`network.interface` and `access.lan_address`, or `""` and another
 `access.default`), then run `sudo sh /usr/local/src/thinny/install.sh`.
 
 Rerunning `install.sh` is safe. `thinny update` updates thinny itself too (see [Updates](#updates)).
@@ -182,14 +182,15 @@ edit` drops them. Avoid `sudo -E`: it also keeps your `HOME`, where Incus then l
 Applying restarts gateways one by one where needed. `policy.language`, `port_range` and the
 `[webapp]` look apply only to instances added afterwards; `webapp.frontend` is what `instance add`
 suggests. A new `language_pack` reaches existing
-instances with their next Hermes update. Without the model lock, `model_provider` and `model`
-are only what `instance add` suggests, and `reasoning_effort` where new instances start; turning
-the lock on removes the models users chose.
+instances with their next Hermes update. `model_provider` and `model` count only with the model
+lock, which needs `model`. Without it, `model_provider` is only the provider `instance add`
+suggests, `model` is ignored, and `reasoning_effort` is where new instances start; turning the
+lock on removes the models users chose.
 
 ## Instances
 
 ```sh
-thinny instance add alice               # about 7 minutes; asks how users open it, Webapp or WebUI, the model and a phone line
+thinny instance add alice               # about 7 minutes; asks how users open it, Webapp or WebUI, the model provider and a phone line
 thinny instance login alice             # sign in to a model provider; asks which
 thinny instance login alice --provider anthropic   # or name it: openai | anthropic
 thinny instance telegram alice          # a Telegram bot its user creates with a link (see Telegram)
@@ -211,8 +212,8 @@ thinny instance move alice bob --to admin@new-server   # or --all; experimental
 thinny instance restart --group sales   # instead of names: resize, login, model, lock, unlock and move too (see Groups)
 ```
 
-- `add` prints the address, the username (Webapp only) and the password. **The password is shown
-  only once.** If `add` fails, fix the cause and run it again: it continues where it stopped.
+- `add` prints the address, the username (Webapp only), the password and the model it starts on.
+  **The password is shown only once.** If `add` fails, fix the cause and run it again: it continues where it stopped.
 - **WebUI** ([hermes-webui](https://github.com/nesquena/hermes-webui), `--frontend webui`) runs on
   the instance's port in place of the Webapp; the gateway keeps running for scheduled jobs and the
   phone. It starts in `policy.language` and `webapp.theme`, with Graphite colours, large text, only
@@ -261,9 +262,11 @@ thinny instance restart --group sales   # instead of names: resize, login, model
   Open chats keep their model, but Telegram and phone chats take the new one at their next message.
   A browser where a user picked a model in the Webapp keeps that pick for new chats, and an open
   WebUI tab keeps the old model until it is reloaded.
-- `policy.model` is only what `add` suggests; `model` changes an instance's later. On a locked
-  instance (the server's lock, or its own `lock`), the lock decides where new chats start, so
-  `model` refuses it: change its lock with `lock`, or `unlock` it first.
+- Without the model lock, a new instance starts on its Hermes's default model for its provider
+  (ChatGPT: the first of Hermes's list, such as `gpt-6-sol`; Claude, for which Hermes has none:
+  the Claude plugin's first model); `model` changes it. On a locked instance (the server's lock,
+  or its own `lock`), the lock decides where new chats start, so `model` refuses it: change its
+  lock with `lock`, or `unlock` it first.
 - Names are 2-32 lowercase letters, digits and `-`, starting with a letter. Names and ports are
   not reused, and a disabled instance cannot be re-enabled.
 - `remove` takes a disabled instance, or a pending one whose `add` you give up on. Its name

@@ -430,6 +430,31 @@ def hermes_python(name: str, script: str, **kw):
                           'exec "$py" -I -c "$1" "$2"', "sh", script, str(home(name))], **kw)
 
 
+# Hermes's default model for the provider on stdin (what its Telegram chats fall back on; its Webapp's need one set),
+# or, as it has none for the Claude plugin, the plugin's first model.
+DEFAULT_MODEL = r'''
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / "hermes-agent"))
+from hermes_cli.models import get_default_model_for_provider
+from providers import get_provider_profile
+provider = sys.stdin.read()
+profile = get_provider_profile(provider)
+model = get_default_model_for_provider(provider)
+print(model or (profile.fallback_models[0] if profile and profile.fallback_models else ""))
+'''
+
+
+def hermes_default_model(name: str, provider: str) -> str:
+    res = hermes_python(name, DEFAULT_MODEL, input=provider, check=False, timeout=120)
+    model = _printable((res.stdout.splitlines() or [""])[-1].strip())   # after anything Hermes says on the way
+    if res.returncode or not model:
+        error = (res.stderr.strip().splitlines() or [f"exit {res.returncode}"])[-1]
+        raise CommandError(f"{name}'s Hermes gave no default model for {provider} ({_printable(error)}). "
+                           f"Fix the cause, then run thinny instance add {name} again to resume.")
+    return model
+
+
 # The models the instance can use, by provider, as the Webapp's model picker offers them (hermes_cli/inventory.py):
 # Hermes's cache or built-in lists, without asking the providers. Only signed-in providers: Hermes also lists the
 # one in use after its sign-in is gone, and a provider run by another program (the Claude plugin's) whenever the
@@ -587,6 +612,9 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
         reg.save()
         configure_webapp(s, inst)
         if not inst.moved:  # a moved instance keeps its users' choices
+            if not s.model_lock:   # else the lock's: its group's, or its Hermes's default for its provider
+                s = dataclasses.replace(s, model=str(s.hermes["model"]["default"]) if "model.default" in pinned_keys(s)
+                                        else hermes_default_model(name, s.model_provider))
             # Piper (the phone's voice) speaks slowly at its own speed; lower is faster.
             set_config(s, name, {"display.language": s.language, "tts.piper.length_scale": "0.65",
                                  **starting_model(s)})
@@ -615,6 +643,10 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
               f"thinny instance login {name}")
     else:
         print(f"Next: sign {name} in to {s.model_provider} before handing over: thinny instance login {name}")
+        if not s.model_lock:
+            print(f"{name} starts on {s.model}" + (f", which its group sets: thinny config edit --group {inst.group}"
+                  if "model.default" in pinned_keys(s) else
+                  f". To pick another once it is signed in: thinny instance model {name} <model>"))
         if s.telegram_manager_token:
             print(f"Then send its user a Telegram bot: thinny instance telegram {name}")
 
@@ -668,7 +700,7 @@ def check_free_name(name: str) -> None:
 
 
 def starting_model(s: Settings) -> dict[str, str]:
-    """Where an instance added without the model lock starts, in its own config."""
+    """Where an instance starts, in its own config: its lock's model, or when added, Hermes's default."""
     return {"model.provider": s.model_provider, "model.default": s.model, "agent.reasoning_effort": s.reasoning_effort}
 
 
@@ -729,12 +761,12 @@ def limits(reg: Registry, name: str, cpu: int | None, memory_mb: int | None, dis
 
 
 def model_of(s: Settings, reg: Registry, name: str, timeout: float = 600) -> tuple[str, str]:
-    """The provider and model the instance uses: its lock's, or those in its own config."""
+    """The provider and model the instance uses: its lock's, or those in its own config (model: "" without one)."""
     s = settings_for(s, _active(reg, name))
     if s.model_lock:
         return s.model_provider, s.model
     provider, model = (hermes(name, ["config", "get", key], check=False, timeout=timeout).stdout.strip() or default
-                       for key, default in (("model.provider", s.model_provider), ("model.default", s.model)))
+                       for key, default in (("model.provider", s.model_provider), ("model.default", "")))
     return provider, model
 
 
@@ -742,6 +774,8 @@ def lock(s: Settings, reg: Registry, name: str, models: list[str]) -> None:
     """Lock the instance to these models (or the one it uses) of the provider it uses, whatever the server's lock."""
     inst = _active(reg, name)
     provider, model = model_of(s, reg, name)
+    if not (models or model):
+        raise CommandError(f"{name} has no model of its own: name the models: thinny instance lock {name} <model> ...")
     inst.lock, inst.lock_provider = models or [model], provider
     reg.save()  # first: its config loses its model on the way, so a failure leaves the lock for apply to finish
     update_policy(s, inst)
@@ -783,7 +817,8 @@ def default_model(s: Settings, reg: Registry, name: str, model: str | None = Non
     uses, default = map(_printable, model_of(s, reg, name))   # its users' text, for the admin's terminal
     available = available_models(name)
     if not model:
-        print(f"{name}: new chats start on {default} ({_provider_name(uses)})")
+        print(f"{name}: new chats start on {default} ({_provider_name(uses)})" if default else
+              f"{name}: no model is set for new chats; pick one: thinny instance model {name} <model>")
         providers = dict.fromkeys([*available, uses, *PROVIDER_NAMES])   # and thinny's, signed in or not
         width = max(len(_provider_name(p)) for p in providers)
         for p in providers:
