@@ -1,0 +1,794 @@
+{
+ "uid": "thinny",
+ "title": "thinny",
+ "tags": [
+  "thinny"
+ ],
+ "editable": false,
+ "schemaVersion": 39,
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "refresh": "1m",
+ "graphTooltip": 1,
+ "templating": {
+  "list": [
+   {
+    "name": "instance",
+    "label": "Instance",
+    "type": "query",
+    "datasource": {
+     "type": "prometheus",
+     "uid": "thinny-prometheus"
+    },
+    "query": "label_values(thinny_instance_disk_quota_bytes, name)",
+    "definition": "label_values(thinny_instance_disk_quota_bytes, name)",
+    "refresh": 2,
+    "sort": 1,
+    "includeAll": false,
+    "multi": false
+   }
+  ]
+ },
+ "panels": [
+  {
+   "type": "row",
+   "title": "Server",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 24,
+    "h": 1
+   },
+   "panels": [],
+   "id": 1
+  },
+  {
+   "type": "timeseries",
+   "title": "CPU",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "thinny-prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 1,
+    "w": 6,
+    "h": 7
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit",
+     "min": 0,
+     "max": 1
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[$__rate_interval]))",
+     "legendFormat": "used"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "id": 2
+  },
+  {
+   "type": "timeseries",
+   "title": "Memory",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "thinny-prometheus"
+   },
+   "gridPos": {
+    "x": 6,
+    "y": 1,
+    "w": 6,
+    "h": 7
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes",
+     "min": 0
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes",
+     "legendFormat": "used"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "node_memory_MemTotal_bytes",
+     "legendFormat": "total"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "id": 3
+  },
+  {
+   "type": "stat",
+   "title": "Disk used (/)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "thinny-prometheus"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 1,
+    "w": 6,
+    "h": 7
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit",
+     "min": 0,
+     "max": 1,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 0.8
+       },
+       {
+        "color": "red",
+        "value": 0.9
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "1 - node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"}",
+     "legendFormat": "",
+     "instant": true,
+     "range": false
+    }
+   ],
+   "options": {
+    "graphMode": "none",
+    "colorMode": "value",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "id": 4
+  },
+  {
+   "type": "stat",
+   "title": "Storage pool free",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "thinny-prometheus"
+   },
+   "gridPos": {
+    "x": 18,
+    "y": 1,
+    "w": 6,
+    "h": 7
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes",
+     "min": 0
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "node_filesystem_avail_bytes{mountpoint=\"/var/lib/incus/storage-pools/default\"}",
+     "legendFormat": "",
+     "instant": true,
+     "range": false
+    }
+   ],
+   "description": "The instances' storage pool, a file on the disk of /: it can also run out when / does.",
+   "options": {
+    "graphMode": "none",
+    "colorMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "id": 5
+  },
+  {
+   "type": "row",
+   "title": "Instances: the 10 with the most",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 8,
+    "w": 24,
+    "h": 1
+   },
+   "panels": [],
+   "id": 6
+  },
+  {
+   "type": "timeseries",
+   "title": "CPU, share of its limit",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "thinny-prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 9,
+    "w": 8,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit",
+     "min": 0
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "topk(10, sum by (name) (rate(incus_cpu_seconds_total{project=\"default\",type=\"container\"}[$__rate_interval])) / max by (name) (incus_cpu_effective_total{project=\"default\",type=\"container\"}))",
+     "legendFormat": "{{name}}"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "id": 7
+  },
+  {
+   "type": "timeseries",
+   "title": "Memory without file cache",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "thinny-prometheus"
+   },
+   "gridPos": {
+    "x": 8,
+    "y": 9,
+    "w": 8,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes",
+     "min": 0
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "topk(10, sum by (name) (incus_memory_MemTotal_bytes{project=\"default\",type=\"container\"} - incus_memory_MemFree_bytes{project=\"default\",type=\"container\"} - incus_memory_Active_file_bytes{project=\"default\",type=\"container\"} - incus_memory_Inactive_file_bytes{project=\"default\",type=\"container\"}))",
+     "legendFormat": "{{name}}"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "id": 8
+  },
+  {
+   "type": "bargauge",
+   "title": "Disk, share of its quota",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "thinny-prometheus"
+   },
+   "gridPos": {
+    "x": 16,
+    "y": 9,
+    "w": 8,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit",
+     "min": 0,
+     "max": 1,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 0.8
+       },
+       {
+        "color": "red",
+        "value": 0.9
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "topk(10, sum by (name) (thinny_instance_disk_used_bytes) / sum by (name) (thinny_instance_disk_quota_bytes))",
+     "legendFormat": "{{name}}",
+     "instant": true,
+     "range": false
+    }
+   ],
+   "description": "The compressed size, which the quota counts.",
+   "options": {
+    "orientation": "horizontal",
+    "displayMode": "gradient",
+    "showUnfilled": true,
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "id": 9
+  },
+  {
+   "type": "row",
+   "title": "Instance $instance",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 17,
+    "w": 24,
+    "h": 1
+   },
+   "panels": [],
+   "id": 10
+  },
+  {
+   "type": "timeseries",
+   "title": "CPU, share of its limit",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "thinny-prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 18,
+    "w": 8,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit",
+     "min": 0
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "sum(rate(incus_cpu_seconds_total{project=\"default\",name=\"$instance\"}[$__rate_interval])) / max(incus_cpu_effective_total{project=\"default\",name=\"$instance\"})",
+     "legendFormat": "used"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "id": 11
+  },
+  {
+   "type": "timeseries",
+   "title": "Memory",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "thinny-prometheus"
+   },
+   "gridPos": {
+    "x": 8,
+    "y": 18,
+    "w": 8,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes",
+     "min": 0
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "sum(incus_memory_MemTotal_bytes{project=\"default\",name=\"$instance\"} - incus_memory_MemFree_bytes{project=\"default\",name=\"$instance\"} - incus_memory_Active_file_bytes{project=\"default\",name=\"$instance\"} - incus_memory_Inactive_file_bytes{project=\"default\",name=\"$instance\"})",
+     "legendFormat": "used without file cache"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "max(incus_memory_MemTotal_bytes{project=\"default\",name=\"$instance\"})",
+     "legendFormat": "limit"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "id": 12
+  },
+  {
+   "type": "timeseries",
+   "title": "Disk",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "thinny-prometheus"
+   },
+   "gridPos": {
+    "x": 16,
+    "y": 18,
+    "w": 8,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes",
+     "min": 0
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "max(thinny_instance_disk_used_bytes{name=\"$instance\"})",
+     "legendFormat": "used"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "max(thinny_instance_disk_quota_bytes{name=\"$instance\"})",
+     "legendFormat": "quota"
+    }
+   ],
+   "description": "The compressed size, which the quota counts; every 5 minutes.",
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "id": 13
+  },
+  {
+   "type": "timeseries",
+   "title": "Network",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "thinny-prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 26,
+    "w": 8,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "Bps",
+     "min": 0
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "sum(rate(incus_network_receive_bytes_total{project=\"default\",name=\"$instance\",device=\"eth0\"}[$__rate_interval]))",
+     "legendFormat": "received"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "sum(rate(incus_network_transmit_bytes_total{project=\"default\",name=\"$instance\",device=\"eth0\"}[$__rate_interval]))",
+     "legendFormat": "sent"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "id": 14
+  },
+  {
+   "type": "timeseries",
+   "title": "Disk reads and writes",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "thinny-prometheus"
+   },
+   "gridPos": {
+    "x": 8,
+    "y": 26,
+    "w": 8,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "Bps",
+     "min": 0
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "max(rate(incus_disk_read_bytes_total{project=\"default\",name=\"$instance\"}[$__rate_interval]))",
+     "legendFormat": "read"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "max(rate(incus_disk_written_bytes_total{project=\"default\",name=\"$instance\"}[$__rate_interval]))",
+     "legendFormat": "written"
+    }
+   ],
+   "description": "Incus reports the same reads and writes on each device under the storage pool: the largest.",
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "id": 15
+  },
+  {
+   "type": "timeseries",
+   "title": "Processes",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "thinny-prometheus"
+   },
+   "gridPos": {
+    "x": 16,
+    "y": 26,
+    "w": 4,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "max(incus_procs_total{project=\"default\",name=\"$instance\"})",
+     "legendFormat": "processes and threads"
+    }
+   ],
+   "description": "Its processes and their threads; its limit is 2000.",
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "id": 16
+  },
+  {
+   "type": "stat",
+   "title": "OOM kills",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "thinny-prometheus"
+   },
+   "gridPos": {
+    "x": 20,
+    "y": 26,
+    "w": 4,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0,
+     "decimals": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "max(increase(incus_memory_OOM_kills_total{project=\"default\",name=\"$instance\"}[$__range]))",
+     "legendFormat": "",
+     "instant": true,
+     "range": false
+    }
+   ],
+   "description": "Processes the kernel killed in the time shown, as the instance ran out of memory.",
+   "options": {
+    "graphMode": "none",
+    "colorMode": "value",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "id": 17
+  }
+ ]
+}

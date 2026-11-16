@@ -320,3 +320,16 @@ def test_the_update_renews_grafanas_key_only_while_its_repository_is_in_use(serv
     err = capsys.readouterr().err
     assert "Grafana's apt key not renewed: <urlopen error Temporary failure in name resolution>" in err
     assert "is not an OpenPGP key" in err
+
+
+def test_the_dashboard_reads_the_provisioned_prometheus_and_thinnys_disk_file():
+    board = json.loads((host.FILES / "grafana/thinny.json").read_text())
+    assert render.GRAFANA_SETTINGS["USERS_HOME_PAGE"] == f"/d/{board['uid']}"
+    panels = [panel for panel in board["panels"] if panel["type"] != "row"]
+    assert {panel["datasource"]["uid"] for panel in panels} | \
+        {target["datasource"]["uid"] for panel in panels for target in panel["targets"]} == \
+        {render.GRAFANA_DATASOURCE_UID}
+    assert f"uid: {render.GRAFANA_DATASOURCE_UID}\n" in render.GRAFANA_DATASOURCE
+    instances = board["templating"]["list"][0]["query"]   # the instances to choose from: thinny's
+    assert instances == "label_values(thinny_instance_disk_quota_bytes, name)"
+    assert 'thinny_instance_disk_quota_bytes{name="alice"}' in render.disk_metrics([("alice", 1, 2)])

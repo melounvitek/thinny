@@ -393,6 +393,9 @@ GRAFANA_SETTINGS = {
     # Little to do with a stolen sign-in: no plugin installs, snapshots or public dashboards; no /metrics for all
     "PLUGINS_PLUGIN_ADMIN_ENABLED": "false", "SNAPSHOTS_ENABLED": "false", "PUBLIC_DASHBOARDS_ENABLED": "false",
     "METRICS_ENABLED": "false",
+    # Grafana's built-in data sources besides Prometheus, each a process of its own: they would double its memory
+    "PLUGINS_DISABLE_PLUGINS": "cloudwatch,elasticsearch,grafana-postgresql-datasource,grafana-pyroscope-datasource,"
+                               "influxdb,jaeger,loki,mssql,mysql,opentsdb,stackdriver,tempo,zipkin",
     "USERS_HOME_PAGE": "/d/thinny",
 }
 
@@ -422,6 +425,8 @@ datasources:
     url: http://127.0.0.1:9090
     isDefault: true
     editable: false
+    jsonData:
+      timeInterval: 30s
 """
 
 
