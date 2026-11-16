@@ -4,6 +4,7 @@ import datetime as dt
 import json
 import os
 import subprocess
+import threading
 
 import pytest
 
@@ -261,6 +262,69 @@ def test_a_crashing_check_fails_without_stopping_the_others(monkeypatch, capsys)
 
     monkeypatch.setattr(checks, "CHECKS", [healthy])
     assert checks.run(S, Registry()) == 0
+
+
+def test_the_host_and_each_instance_are_checked_alongside_each_other_and_shown_in_order(monkeypatch, capsys):
+    started = threading.Barrier(3, timeout=5)   # the host's check, alice's and bob's at once
+    bob_done = threading.Event()
+    firsts_done = set()
+
+    def host_check(s, reg):
+        started.wait()
+        yield checks.ok("the host")
+
+    def first(s, inst):
+        started.wait()
+        if inst.name == "alice":   # alice's checks end after bob's
+            assert bob_done.wait(5)
+        yield checks.ok(f"{inst.name}: first")
+        firsts_done.add(inst.name)
+
+    def broken(s, inst):
+        assert inst.name in firsts_done   # an instance's checks run one after another
+        yield checks.ok(f"{inst.name}: before the crash")
+        raise RuntimeError("boom")
+
+    def last(s, inst):
+        yield checks.ok(f"{inst.name}: last")
+        if inst.name == "bob":
+            bob_done.set()
+
+    monkeypatch.setattr(checks, "CHECKS", [host_check])
+    monkeypatch.setattr(checks, "INSTANCE_CHECKS", [first, broken, last])
+    reg = Registry({name: Instance(name, port, "local", state="active") for name, port in (("alice", 9120), ("bob", 9121))})
+    assert checks.run(S, reg) == 1
+    assert capsys.readouterr().out == ("OK   the host\n"
+                                       "OK   alice: first\n"
+                                       "OK   alice: before the crash\n"
+                                       "FAIL broken alice crashed: RuntimeError: boom\n"
+                                       "OK   alice: last\n"
+                                       "OK   bob: first\n"
+                                       "OK   bob: before the crash\n"
+                                       "FAIL broken bob crashed: RuntimeError: boom\n"
+                                       "OK   bob: last\n")
+
+
+def test_at_most_workers_checks_run_at_once(monkeypatch, capsys):
+    both = threading.Barrier(2, timeout=5)
+    carol_started = threading.Event()
+
+    def check(s, inst):
+        if inst.name == "carol":
+            carol_started.set()
+        else:
+            both.wait()   # alice's and bob's at once
+            assert not carol_started.wait(0.2)   # so carol's waits for one of them
+            both.wait()   # until both have looked
+        yield checks.ok(inst.name)
+
+    monkeypatch.setattr(checks, "WORKERS", 2)
+    monkeypatch.setattr(checks, "CHECKS", [])
+    monkeypatch.setattr(checks, "INSTANCE_CHECKS", [check])
+    reg = Registry({name: Instance(name, 9120 + i, "local", state="active")
+                    for i, name in enumerate(["alice", "bob", "carol"])})
+    assert checks.run(S, reg) == 0
+    assert capsys.readouterr().out == "OK   alice\nOK   bob\nOK   carol\n"
 
 
 def test_doctor_shows_what_a_container_said_without_control_characters(monkeypatch, capsys):
