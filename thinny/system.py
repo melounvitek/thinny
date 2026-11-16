@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 STATE_DIR = Path("/var/lib/thinny")
@@ -85,16 +86,31 @@ def step(message: str):
 
 
 def run_bytes(cmd: list[str], *, input: bytes | None = None, timeout: float = 600, env: dict | None = None,
-              cwd: str | Path | None = None, limit: int = OUTPUT_LIMIT) -> tuple[int, bytes, bytes]:
+              cwd: str | Path | None = None, limit: int = OUTPUT_LIMIT,
+              into: Callable[[bytes], object] | None = None) -> tuple[int, bytes, bytes]:
     """(exit code, stdout, stderr) of a command. An instance's users control every program in its
     container, so the output is bounded and the timeout covers it: past either, the command is
-    killed and CommandError raised."""
+    killed and CommandError raised. `into` takes stdout instead, piece by piece (stdout comes back empty), and
+    never after run_bytes ends; what it raises kills the command and is raised."""
     proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL if input is None else subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=cwd)
-    out, err, too_large = bytearray(), bytearray(), []
+    out, err, too_large, failed = bytearray(), bytearray(), [], []
+    # `into` is called under `gate` until `ended`: a process the command started may keep its stdout open.
+    gate, ended = threading.Lock(), False
 
-    def drain(pipe, buf):
+    def drain(pipe, buf, sink=None):
         while chunk := pipe.read1(65536):
+            if sink:
+                with gate:
+                    if ended:
+                        return
+                    try:
+                        sink(chunk)
+                    except BaseException as e:  # noqa: BLE001 - raised by run_bytes
+                        failed.append(e)
+                        proc.kill()
+                        return
+                continue
             buf += chunk
             if len(buf) > limit:
                 too_large.append(True)
@@ -106,7 +122,7 @@ def run_bytes(cmd: list[str], *, input: bytes | None = None, timeout: float = 60
             proc.stdin.write(input)
             proc.stdin.close()
 
-    threads = [threading.Thread(target=drain, args=(proc.stdout, out), daemon=True),
+    threads = [threading.Thread(target=drain, args=(proc.stdout, out, into), daemon=True),
                threading.Thread(target=drain, args=(proc.stderr, err), daemon=True)]
     if input is not None:
         threads.append(threading.Thread(target=feed, daemon=True))
@@ -114,18 +130,28 @@ def run_bytes(cmd: list[str], *, input: bytes | None = None, timeout: float = 60
         thread.start()
     deadline = time.monotonic() + timeout
     try:
-        for thread in threads:
-            thread.join(max(0, deadline - time.monotonic()))
-        code = proc.wait(max(0, deadline - time.monotonic()))
-    except subprocess.TimeoutExpired:
-        code = None
-    if code is None or any(thread.is_alive() for thread in threads):
+        try:
+            for thread in threads:   # not past a failure: a process the command started may keep a pipe open
+                while thread.is_alive() and not (failed or too_large) and time.monotonic() < deadline:
+                    thread.join(0.1)
+            code = proc.wait(max(0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            code = None
+        if failed:
+            raise failed[0]
+        if too_large:
+            raise OutputTooLarge(f"{' '.join(cmd)}: more than {limit} bytes of output")
+        if code is None or any(thread.is_alive() for thread in threads):
+            raise CommandError(f"{' '.join(cmd)}: timed out after {timeout:.0f} s")
+    except BaseException:  # Ctrl+C too: the command must not run on
         proc.kill()
-        raise CommandError(f"{' '.join(cmd)}: timed out after {timeout:.0f} s")
+        proc.wait()
+        raise
+    finally:
+        with gate:
+            ended = True
     proc.stdout.close()
     proc.stderr.close()
-    if too_large:
-        raise OutputTooLarge(f"{' '.join(cmd)}: more than {limit} bytes of output")
     return code, bytes(out), bytes(err)
 
 
