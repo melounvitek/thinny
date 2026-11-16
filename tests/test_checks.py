@@ -193,6 +193,15 @@ def test_caddy_must_answer_the_tunnel_of_url_instances(monkeypatch, answer, expe
     assert [(level, message) for level, message, _ in results] == [("OK", "caddy active"), expected]
 
 
+@pytest.mark.parametrize("ufw_blocks, fix", [(False, checks.FORWARD_FIX), (True, "ufw route allow in on thinny-+")])
+def test_a_container_without_internet_gets_the_ufw_rule_when_ufw_blocks_it(monkeypatch, ufw_blocks, fix):
+    monkeypatch.setattr(instances, "container_state", lambda name: "RUNNING")
+    monkeypatch.setattr(system, "in_container", lambda name, cmd, **kw: subprocess.CompletedProcess(cmd, 0, "000", ""))
+    monkeypatch.setattr(host, "ufw_lacks_forward", lambda: ufw_blocks)
+    results = list(checks.container(S, Instance("alice", 9120, "local", state="active")))
+    assert results[-1] == ("FAIL", "alice: container cannot reach the internet (HTTP 000)", fix)
+
+
 @pytest.mark.parametrize("enabled, running, level", [
     ("enabled", "active", "OK"),
     ("enabled", "activating", "WARN"),   # waiting to restart

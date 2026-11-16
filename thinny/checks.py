@@ -204,7 +204,8 @@ def container(s: Settings, inst: Instance):
     code = system.in_container(inst.name, ["curl", "-s", "-o", "/dev/null", "-m", "8", "-w", "%{http_code}",
                                            "https://deb.debian.org/"], check=False, timeout=30).stdout.strip()
     yield (ok(f"{inst.name}: container reaches the internet") if code[:1] in ("2", "3")
-           else fail(f"{inst.name}: container cannot reach the internet (HTTP {code or '000'})", FORWARD_FIX))
+           else fail(f"{inst.name}: container cannot reach the internet (HTTP {code or '000'})",
+                     host.UFW_FORWARD if host.ufw_lacks_forward() else FORWARD_FIX))
 
 
 def webapp(s: Settings, inst: Instance):

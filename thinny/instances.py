@@ -8,6 +8,7 @@ import dataclasses
 import hashlib
 import json
 import math
+import os
 import re
 import secrets
 import shutil
@@ -228,13 +229,19 @@ def ensure_trace(name: str) -> None:
     ensure_device(name, "trace", "disk", f"source={path}", f"path={trace.IN_CONTAINER}", *READ_ONLY, "required=false")
 
 
-def ensure_packages(name: str) -> None:
+def ensure_packages(name: str, resume: str) -> None:
+    """`resume`: the thinny command that goes on where this one stopped."""
     # Without a network apt does not fail, it retries for a very long time: find out first.
     for _ in range(3):
         if in_container(name, ["timeout", "10", "getent", "hosts", "deb.debian.org"], check=False).returncode == 0:
             break
         time.sleep(3)
     else:
+        if host.ufw_lacks_forward():
+            sudo = "sudo " if os.environ.get("SUDO_USER") else ""
+            raise CommandError(f"ufw blocks the containers' traffic, so {name}'s container cannot reach the internet "
+                               f"(see README, Prerequisites). Run: {sudo}{host.UFW_FORWARD}\n"
+                               f"Then run {resume} again to resume.")
         raise CommandError(f"{name}'s container cannot reach the internet. Does your firewall's forward chain "
                            "let it through? See README, Prerequisites.")
     in_container(name, ["sh", "-c", 'export DEBIAN_FRONTEND=noninteractive && apt-get update -q --error-on=any && '
@@ -510,7 +517,7 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
         ensure_container(s, inst)
         set_limits(name, cpu, memory_mb, disk_gb)
     with step(f"{name}: system packages"):
-        ensure_packages(name)
+        ensure_packages(name, f"thinny instance add {name}")
         ensure_account(name)
     tag, commit = host.release() or host.first_release()
     # A resumed add repeats it: it may have stopped halfway, or an update here changed the release. A moved
