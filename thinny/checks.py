@@ -351,6 +351,7 @@ def run_checks(s: Settings, reg: Registry, checks, instance_checks) -> int:
 
 
 def report(level: str, message: str, fix: str = "") -> None:
-    print(f"{level:<4} {message}".replace("\n", "\n" + " " * 5))
+    """A result, printable: a message may hold what an instance's container said."""
+    print(f"{level:<4} " + "\n     ".join(map(system.printable, message.splitlines())))
     if fix:
         print(f"     fix: {fix}".replace("\n", "\n" + " " * 10))

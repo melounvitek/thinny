@@ -33,6 +33,13 @@ class OutputTooLarge(CommandError):
     pass
 
 
+def printable(text: str) -> str:
+    """One line of `text` without what a terminal acts on but tabs: control characters (escape sequences start with
+    one) and bidi overrides. For the admin's terminal: an instance's users are root in its container, so what it
+    says could hold any."""
+    return "".join(ch for ch in text if ch.isprintable() or ch == "\t")
+
+
 def log(message: str, *, echo: bool = True) -> None:
     line = f"{dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} {message}"
     if echo:
@@ -124,11 +131,11 @@ def run_bytes(cmd: list[str], *, input: bytes | None = None, timeout: float = 60
 
 def run(cmd: list[str], *, check: bool = True, input: str | None = None, timeout: float = 600,
         env: dict | None = None, cwd: str | Path | None = None) -> subprocess.CompletedProcess:
-    """Run a command with captured text output; raise CommandError with its tail on failure."""
+    """Run a command with captured text output; raise CommandError with its printable tail on failure."""
     code, out, err = run_bytes(cmd, input=None if input is None else input.encode(), timeout=timeout, env=env, cwd=cwd)
     res = subprocess.CompletedProcess(cmd, code, out.decode(errors="replace"), err.decode(errors="replace"))
     if check and code != 0:
-        tail = "\n".join((res.stdout + res.stderr).strip().splitlines()[-15:])
+        tail = "\n".join(map(printable, (res.stdout + res.stderr).strip().splitlines()[-15:]))
         raise CommandError(f"{' '.join(cmd)} -> exit {code}\n{tail}")
     return res
 
@@ -157,7 +164,8 @@ def in_container(name: str, cmd: list[str], **kw) -> subprocess.CompletedProcess
 
 
 def as_user_interactive(name: str, cmd: list[str]) -> int:
-    """Run as the instance's account with the admin's terminal attached (device logins)."""
+    """Run as the instance's account with the admin's terminal attached (device logins). Its output reaches the
+    terminal unfiltered, as with `incus exec`: the login programs draw with escape sequences."""
     return subprocess.run(as_user_cmd(name, cmd)).returncode
 
 

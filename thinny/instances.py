@@ -24,7 +24,7 @@ from . import host, render, trace
 from .registry import Instance, Registry, RegistryError, validate_name
 from .settings import ACCESS_METHODS, Settings, group_file
 from .system import (INSTANCE_UID, STATE_DIR, CommandError, as_user, as_user_interactive, gateway_active, http_status,
-                     in_container, log, read_user_file, run, step, tailscale_name, uid_of, write_file,
+                     in_container, log, printable, read_user_file, run, step, tailscale_name, uid_of, write_file,
                      write_user_file)
 
 AUTH_PREFIX = "HERMES_DASHBOARD_BASIC_AUTH_"
@@ -474,10 +474,10 @@ print(model or (profile.fallback_models[0] if profile and profile.fallback_model
 
 def hermes_default_model(name: str, provider: str) -> str:
     res = hermes_python(name, DEFAULT_MODEL, input=provider, check=False, timeout=120)
-    model = _printable((res.stdout.splitlines() or [""])[-1].strip())   # after anything Hermes says on the way
+    model = printable((res.stdout.splitlines() or [""])[-1].strip())   # after anything Hermes says on the way
     if res.returncode or not model:
         error = (res.stderr.strip().splitlines() or [f"exit {res.returncode}"])[-1]
-        raise CommandError(f"{name}'s Hermes gave no default model for {provider} ({_printable(error)}). "
+        raise CommandError(f"{name}'s Hermes gave no default model for {provider} ({printable(error)}). "
                            f"Fix the cause, then run thinny instance add {name} again to resume.")
     return model
 
@@ -518,10 +518,10 @@ def available_models(name: str) -> dict[str, list[str]]:
         models = None
     if isinstance(models, dict) and all(isinstance(ids, list) and all(isinstance(m, str) for m in ids)
                                         for ids in models.values()):
-        return {_printable(provider): [_printable(m) for m in ids] for provider, ids in models.items()}
+        return {printable(provider): [printable(m) for m in ids] for provider, ids in models.items()}
     # It failed, or its users made Hermes say something else.
     error = (res.stderr.strip().splitlines() or [f"exit {res.returncode}"])[-1]
-    raise CommandError(f"could not get the models {name} can use from Hermes ({_printable(error)})")
+    raise CommandError(f"could not get the models {name} can use from Hermes ({printable(error)})")
 
 
 def check_gateway(s: Settings, inst: Instance, timeout: float = 180) -> None:
@@ -788,12 +788,13 @@ def limits(reg: Registry, name: str, cpu: int | None, memory_mb: int | None, dis
 
 
 def model_of(s: Settings, reg: Registry, name: str, timeout: float = 600) -> tuple[str, str]:
-    """The provider and model the instance uses: its lock's, or those in its own config (model: "" without one)."""
+    """The provider and model the instance uses: its lock's, or those in its own config (model: "" without one),
+    printable, as its users set its config."""
     s = settings_for(s, _active(reg, name))
     if s.model_lock:
         return s.model_provider, s.model
-    provider, model = (hermes(name, ["config", "get", key], check=False, timeout=timeout).stdout.strip() or default
-                       for key, default in (("model.provider", s.model_provider), ("model.default", "")))
+    provider, model = (printable(hermes(name, ["config", "get", key], check=False, timeout=timeout).stdout.strip())
+                       or default for key, default in (("model.provider", s.model_provider), ("model.default", "")))
     return provider, model
 
 
@@ -838,7 +839,7 @@ def default_model(s: Settings, reg: Registry, name: str, model: str | None = Non
     if model and (pinned := [key for key in ("model.provider", "model.default") if key in pinned_keys(policy)]):
         raise CommandError(f"{name}'s group {inst.group} decides its {' and '.join(pinned)}: "
                            f"thinny config edit --group {inst.group}")
-    uses, default = map(_printable, model_of(s, reg, name))   # its users' text, for the admin's terminal
+    uses, default = model_of(s, reg, name)
     available = available_models(name)
     if not model:
         print(f"{name}: new chats start on {default} ({_provider_name(uses)})" if default else
@@ -1016,7 +1017,7 @@ def usage(s: Settings, reg: Registry, name: str | None = None) -> None:
     with ThreadPoolExecutor() as pool:
         rows = [("NAME", "PROVIDER", "5H", "WEEK"), *pool.map(lambda inst: _usage_row(s, reg, inst.name), targets)]
     # With its users' texts (a provider, a reason): without control characters, for the admin's terminal.
-    rows = [[_printable(c) for c in r] for r in rows]
+    rows = [[printable(c) for c in r] for r in rows]
     # A row's last text sets no column's width: a note (not signed in, ?) spans 5H and WEEK.
     widths = [max(len(r[i]) for r in rows if len(r) > i + 1) for i in range(3)]
     for r in rows:
@@ -1053,10 +1054,6 @@ def _window(windows: dict[str, dict], labels: tuple[str, ...], form: str) -> str
 
 def _provider_name(provider: str) -> str:
     return PROVIDER_NAMES.get(provider, provider)
-
-
-def _printable(text: str) -> str:
-    return "".join(ch for ch in text if ch.isprintable())
 
 
 def _containers() -> dict[str, dict]:

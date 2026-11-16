@@ -627,6 +627,15 @@ def test_an_instance_uses_its_own_model_or_the_locked_one(incus):
     assert instances.model_of(S, reg, "alice") == ("openai-codex", "")   # not the server's model
 
 
+def test_an_instance_is_locked_to_the_model_its_users_set_without_control_characters(incus, gateways, capsys):
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {},
+                                 "hermes_config": {"model.provider": "nous\x1b[2J", "model.default": "hermes-4\u202e"}}
+    instances.lock(S, reg, "alice", [])
+    assert capsys.readouterr().out == "alice is locked to nous[2J: hermes-4\n"
+    assert (reg.get("alice").lock, reg.get("alice").lock_provider) == (["hermes-4"], "nous[2J")
+
+
 def test_an_instance_without_a_model_of_its_own_is_told_to_pick_one(incus, gateways, capsys):
     reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
     incus.containers["alice"] = {"state": "RUNNING", "devices": {}, "models": {"openai-codex": ["gpt-6-sol"]}}

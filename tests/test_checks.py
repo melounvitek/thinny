@@ -250,6 +250,25 @@ def test_a_crashing_check_fails_without_stopping_the_others(monkeypatch, capsys)
     assert checks.run(S, Registry()) == 0
 
 
+def test_doctor_shows_what_a_container_said_without_control_characters(monkeypatch, capsys):
+    # Its users are root in it: its curl and its Webapp's settings can say anything.
+    monkeypatch.setattr(checks, "CHECKS", [])
+    monkeypatch.setattr(checks, "INSTANCE_CHECKS", [checks.container, checks.webapp])
+    monkeypatch.setattr(instances, "container_state", lambda name: "RUNNING")
+    monkeypatch.setattr(system, "in_container",
+                        lambda name, cmd, **kw: subprocess.CompletedProcess(cmd, 0, "\x1b]0;owned\x07\x1b[2J", ""))
+    monkeypatch.setattr(host, "ufw_lacks_forward", lambda: False)
+    monkeypatch.setattr(system, "gateway_active", lambda name: True)
+    monkeypatch.setattr(system, "http_status", lambda url: "302")
+    monkeypatch.setattr(instances, "webapp_settings", lambda name: {"public_url": "https://\u202eevil.example/\x1b[1A"})
+    reg = Registry({"alice": Instance("alice", 9120, "local", url="http://127.0.0.1:9120/", state="active")})
+    assert checks.run(S, reg) == 1
+    out = capsys.readouterr().out
+    assert "FAIL alice: container cannot reach the internet (HTTP ]0;owned[2J)\n" in out
+    assert "WARN alice: Webapp public_url is https://evil.example/[1A, not http://127.0.0.1:9120/\n" in out
+    assert all(c.isprintable() or c == "\n" for c in out)
+
+
 def test_status_is_the_quick_look(tmp_path, monkeypatch, capsys):
     reg = Registry({"alice": Instance("alice", 9120, "local", state="active"),
                     "bob": Instance("bob", 9121, "local", state="active"),
