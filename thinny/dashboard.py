@@ -231,8 +231,8 @@ def turn_off() -> None:
         run(["incus", "config", "unset", "core.metrics_address"])
     for path in (*(dropin(service) for service in SERVICES), host.SYSTEMD / "thinny-metrics.service",
                  host.SYSTEMD / "thinny-metrics.timer", PROVISIONING / "datasources/thinny.yaml",
-                 PROVISIONING / "dashboards/thinny.yaml", DISK_METRICS, GRAFANA_SOURCE, GRAFANA_UPGRADES, GRAFANA_KEY,
-                 UNFINISHED):
+                 PROVISIONING / "dashboards/thinny.yaml", DISK_METRICS, USAGE_METRICS, GRAFANA_SOURCE, GRAFANA_UPGRADES,
+                 GRAFANA_KEY, UNFINISHED):
         path.unlink(missing_ok=True)
     for service in SERVICES:
         with contextlib.suppress(OSError):   # gone, or with the admin's own drop-ins

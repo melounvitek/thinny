@@ -321,6 +321,7 @@ def test_turning_it_off_takes_back_all_but_the_packages_password_and_history(ser
     srv.answers = ["y"]
     dashboard.apply(dataclasses.replace(ON, dashboard_access="tailscale"), Registry.load())
     srv.served.add(9200)
+    dashboard.USAGE_METRICS.write_text(render.usage_metrics([("alice", "ChatGPT", "week", 0.5)]))
     srv.calls.clear()
     dashboard.apply(S, Registry.load())
     assert not srv.served
