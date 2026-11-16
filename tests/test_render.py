@@ -21,13 +21,16 @@ def test_managed_config_pins_the_policy():
     assert config["terminal"] == {"backend": "local"}   # the instance's container is the sandbox
     assert config["bot_desktop"] == {"placement": "terminal"}
     assert config["approvals"] == {"mode": "smart"}
+    # Hermes does not borrow Claude Code's login, which could log the Claude plugin out.
+    assert config["auth"] == {"adopt_external_logins": False}
 
 
 def test_without_the_model_lock_users_choose_their_model_effort_and_plugins():
     yaml = pytest.importorskip("yaml")
     config = yaml.safe_load(render.managed_config(S))
     assert config == {"terminal": {"backend": "local"}, "bot_desktop": {"placement": "terminal"},
-                      "security": {"redact_secrets": True}, "approvals": {"mode": "smart"}}
+                      "security": {"redact_secrets": True}, "approvals": {"mode": "smart"},
+                      "auth": {"adopt_external_logins": False}}
 
 
 

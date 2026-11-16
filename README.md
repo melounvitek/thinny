@@ -12,7 +12,8 @@ Status: in development. Design notes: [`PLAN.md`](PLAN.md).
   process and disk limits. A firewall lets it reach the internet and nothing else. Its users
   have `sudo` in it.
 - **One central policy** from `config.toml`, mounted read-only as each container's `/etc/hermes`
-  (Hermes "managed scope"): approvals and the agent kept in its container. The optional **model
+  (Hermes "managed scope"): approvals, the agent kept in its container, and Hermes not borrowing
+  Claude Code's or Codex CLI's sign-ins on its own (it could log them out). The optional **model
   lock** (`policy.model_lock`) also pins the provider, model, reasoning effort and plugins, and
   allows only `allowed_models`. Without it, users choose their own. One instance can have its own
   lock, or none, whatever the server's (`thinny instance lock` and `unlock`).
