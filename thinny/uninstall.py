@@ -55,7 +55,7 @@ def run() -> None:
     for inst in reg.instances.values():
         if inst.mailbox:
             try:
-                purelymail.delete(settings.load(), inst.mailbox)
+                purelymail.delete(inst.mailbox)
             except (settings.SettingsError, CommandError) as e:
                 log(f"{inst.name}: {e}")
                 left.append(inst.mailbox)

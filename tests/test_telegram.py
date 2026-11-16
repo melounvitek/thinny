@@ -3,12 +3,11 @@ import dataclasses
 import pytest
 from test_instances import S, gateways, incus  # noqa: F401 - the fake Incus and gateway fixtures
 
-from thinny import instances, system, telegram
+from thinny import instances, settings, system, telegram
 from thinny.registry import Registry, RegistryError
 from thinny.system import CommandError
 
 MANAGER = "1000:" + "M" * 35
-SITE = dataclasses.replace(S, telegram_manager_token=MANAGER)
 USER = {"id": 8428394378, "is_bot": False, "first_name": "Vítek", "last_name": "Meloun", "username": "vitek"}
 
 
@@ -54,7 +53,9 @@ class Telegram:
 
 @pytest.fixture
 def alice(incus, gateways, monkeypatch, tmp_path):
-    """alice, active, with her Webapp sign-in in her .env; thinny's locks in tmp_path."""
+    """alice, active, with her Webapp sign-in in her .env, on a server with a manager bot; thinny's locks in
+    tmp_path."""
+    settings.SECRETS_ENV.write_text(f"THINNY_TELEGRAM_MANAGER_TOKEN={MANAGER}\n")
     reg = Registry()
     reg.add("alice", "local", (9120, 9199)).state = "active"
     incus.containers["alice"] = {"state": "RUNNING", "devices": {}, "account": True, "hermes": True, "unit": True,
@@ -89,7 +90,7 @@ def env(incus):
 def test_the_bot_its_user_creates_connects_to_the_instance(alice, incus, gateways, bot_api, monkeypatch, capsys):
     api = bot_api(created(7, "acme_hermes_alice_bot"))
     asked = answering(monkeypatch, "y")
-    telegram.connect(SITE, "alice")
+    telegram.connect(S, "alice")
     out = capsys.readouterr().out
     assert "https://t.me/newbot/acme_hermes_bot/acme_hermes_alice_bot?name=Hermes" in out
     assert asked == ["Vítek Meloun (@vitek, 8428394378) created @acme_hermes_alice_bot. Is it alice's? [y/N] "]
@@ -109,7 +110,7 @@ def test_the_bot_its_user_creates_connects_to_the_instance(alice, incus, gateway
 def test_the_bot_greets_its_user_in_the_sites_language(alice, bot_api, monkeypatch):
     api = bot_api(created(7, "acme_hermes_alice_bot"))
     answering(monkeypatch, "y")
-    telegram.connect(dataclasses.replace(SITE, language="cs"), "alice")
+    telegram.connect(dataclasses.replace(S, language="cs"), "alice")
     assert api.sent()[0][1]["text"] == "Hermes je připravený. Napište mi cokoli."
 
 
@@ -118,7 +119,7 @@ def test_only_a_bot_the_admin_confirms_connects(alice, incus, bot_api, monkeypat
     api = bot_api(created(5, "acme_hermes_alice_bot", user={"id": 666, "first_name": "Eve"}),
                   created(6, "jirkas_alice_bot"))
     asked = answering(monkeypatch, "", "y")
-    telegram.connect(SITE, "alice")
+    telegram.connect(S, "alice")
     assert asked[0] == "Eve (666) created @acme_hermes_alice_bot. Is it alice's? [y/N] "
     assert [params for _, method, params in api.calls if method == "getManagedBotToken"] == [{"user_id": 906}]
     assert f'TELEGRAM_BOT_TOKEN="{token_of(906)}"' in env(incus)
@@ -130,11 +131,11 @@ def test_a_failed_connection_leaves_the_bot_for_the_next_try(alice, incus, gatew
     api = bot_api(created(7, "acme_hermes_alice_bot"))
     answering(monkeypatch, "y", "y")
     with pytest.raises(CommandError, match="gateway not active"):
-        telegram.connect(SITE, "alice")
+        telegram.connect(S, "alice")
     assert api.confirmed < 8 and api.sent() == []
 
     broken.clear()
-    telegram.connect(SITE, "alice")
+    telegram.connect(S, "alice")
     assert api.confirmed == 8 and len(api.sent()) == 1
 
 
@@ -150,7 +151,7 @@ def test_the_wait_leaves_thinny_free_for_other_runs_but_not_for_another_wait(ali
             with system.lock(telegram.LOCK):
                 pass
     api.while_waiting = other_runs
-    telegram.connect(SITE, "alice")
+    telegram.connect(S, "alice")
     assert free
 
 
@@ -162,7 +163,7 @@ def test_an_instance_disabled_during_the_wait_gets_no_bot(alice, incus, gateways
         alice.get("alice").state = "disabled"
     api.while_waiting = disable
     with pytest.raises(RegistryError, match="alice is disabled"):
-        telegram.connect(SITE, "alice")
+        telegram.connect(S, "alice")
     assert "TELEGRAM" not in env(incus)
     assert api.confirmed < 8
 
@@ -170,12 +171,13 @@ def test_an_instance_disabled_during_the_wait_gets_no_bot(alice, incus, gateways
 def test_stopping_the_wait_says_how_to_wait_again(alice, bot_api):
     bot_api()
     with pytest.raises(CommandError, match="thinny instance telegram alice"):
-        telegram.connect(SITE, "alice")
+        telegram.connect(S, "alice")
 
 
 def test_an_instance_needs_the_sites_manager_bot(alice, bot_api):
     api = bot_api()
-    with pytest.raises(CommandError, match="telegram.manager_token"):
+    settings.SECRETS_ENV.unlink()
+    with pytest.raises(CommandError, match="set THINNY_TELEGRAM_MANAGER_TOKEN first: thinny config edit --secrets"):
         telegram.connect(S, "alice")
     assert api.calls == []
 
@@ -194,7 +196,7 @@ def test_a_bot_connects_to_a_member_of_a_group_that_turns_telegram_on(alice, inc
     bot_api(created(7, "acme_hermes_alice_bot"))
     answering(monkeypatch, "y")
     alice.get("alice").group = "sales"
-    telegram.connect(dataclasses.replace(SITE, groups={"sales": {"platforms": {"telegram": {"enabled": True}}}}),
+    telegram.connect(dataclasses.replace(S, groups={"sales": {"platforms": {"telegram": {"enabled": True}}}}),
                      "alice")
     assert not incus.ran("hermes config set platforms.telegram.enabled")   # Hermes refuses what the policy pins
     assert "TELEGRAM_BOT_TOKEN" in env(incus)

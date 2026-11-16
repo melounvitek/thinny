@@ -100,7 +100,7 @@ def mailboxes(s: Settings, reg: Registry):
                        f"let outgoing TCP to port {port} through, also at your hosting provider (see README, Email)")
     try:
         purelymail.check_domain(s)
-        found = purelymail.api(s.email_api_token, "listUser")["users"]
+        found = purelymail.api("listUser")["users"]
     except system.CommandError as e:
         yield warn(f"mailboxes: {e}")
         return

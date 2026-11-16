@@ -1,6 +1,6 @@
 """Mail for an instance: a mailbox of its own, <name>@<domain> at Purelymail, which its Hermes reads and sends
 from (Hermes's email gateway). Only the addresses the admin names may write to it: the agent runs commands. The
-API token stays on the server, in config.toml: it manages every mailbox of the Purelymail account.
+API token stays on the server, in secrets.env: it manages every mailbox of the Purelymail account.
 
 The instance's .env holds the mailbox's password, and every run sets Purelymail's to it, so running it again
 finishes a run that failed halfway."""
@@ -25,8 +25,8 @@ def connect(s: Settings, reg: Registry, name: str, senders: list[str], new_passw
     """Give the instance its mailbox, which `senders` may write to (the first also gets its scheduled jobs' mail):
     create it, or change who may write, keeping its password unless `new_password`. No `senders` keeps those it
     has."""
-    if not s.email_api_token:
-        raise CommandError("set email.domain and email.api_token in config.toml first (see README, Email)")
+    if not s.email_domain:
+        raise CommandError("set email.domain first: thinny config edit (see README, Email)")
     inst = reg.get(name)
     if inst.state != "active":
         raise RegistryError(f"{name} is {inst.state}")
@@ -43,7 +43,7 @@ def connect(s: Settings, reg: Registry, name: str, senders: list[str], new_passw
                                f"(whoever may write to {name} can have it run commands)")
 
     purelymail.check_domain(s)
-    exists = address in purelymail.api(s.email_api_token, "listUser")["users"]
+    exists = address in purelymail.api("listUser")["users"]
     if exists and not inst.mailbox:
         raise CommandError(f"{address} exists in Purelymail, but thinny did not create it for {name}, so it stays as "
                            "it is (if an earlier run stopped without Purelymail's answer, delete it there, then run "
@@ -56,10 +56,10 @@ def connect(s: Settings, reg: Registry, name: str, senders: list[str], new_passw
                              "EMAIL_AUTHSERV_ID": purelymail.AUTHSERV_ID,
                              "EMAIL_ALLOWED_USERS": ",".join(senders), "EMAIL_HOME_ADDRESS": senders[0]})
     if exists:
-        purelymail.api(s.email_api_token, "modifyUser", userName=address, newPassword=password)
+        purelymail.api("modifyUser", userName=address, newPassword=password)
     else:
         local, _, domain = address.partition("@")
-        purelymail.api(s.email_api_token, "createUser", userName=local, domainName=domain, password=password,
+        purelymail.api("createUser", userName=local, domainName=domain, password=password,
             enablePasswordReset=False, sendWelcomeEmail=False)
         inst.mailbox = address
         reg.save()   # only now: a refusal may mean that someone else created it meanwhile

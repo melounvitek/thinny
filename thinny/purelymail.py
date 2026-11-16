@@ -6,7 +6,7 @@ import json
 import urllib.error
 import urllib.request
 
-from .settings import Settings
+from .settings import Settings, secret
 from .system import CommandError
 
 API = "https://purelymail.com/api/v0/"
@@ -17,8 +17,11 @@ IMAP_HOST, SMTP_HOST = "imap.purelymail.com", "smtp.purelymail.com"
 AUTHSERV_ID = "purelymail.com"
 
 
-def api(token: str, method: str, **params):
-    """The result of a Purelymail API call."""
+def api(method: str, **params):
+    """The result of a Purelymail API call, with the account's token."""
+    token = secret("THINNY_PURELYMAIL_API_TOKEN")
+    if not token:
+        raise CommandError("set THINNY_PURELYMAIL_API_TOKEN first: thinny config edit --secrets (see README, Email)")
     request = urllib.request.Request(API + method, json.dumps(params).encode(),
                                      {"Content-Type": "application/json", "Purelymail-Api-Token": token})
     try:
@@ -35,7 +38,7 @@ def api(token: str, method: str, **params):
 
 def check_domain(s: Settings) -> None:
     """Refuse a domain that Purelymail does not deliver mail for as thinny needs."""
-    domain = next((d for d in api(s.email_api_token, "listDomains")["domains"] if d["name"] == s.email_domain), None)
+    domain = next((d for d in api("listDomains")["domains"] if d["name"] == s.email_domain), None)
     if domain is None:
         raise CommandError(f"add {s.email_domain} in Purelymail first (see README, Email)")
     failing = [check.removeprefix("passes").upper() for check, passes in domain["dnsSummary"].items() if not passes]
@@ -46,10 +49,7 @@ def check_domain(s: Settings) -> None:
         raise CommandError(f"turn off symbolic subaddressing for {s.email_domain} in Purelymail (see README, Email)")
 
 
-def delete(s: Settings, address: str) -> None:
+def delete(address: str) -> None:
     """Delete a mailbox thinny created, with all its mail; one already gone counts as deleted."""
-    if not s.email_api_token:
-        raise CommandError(f"set email.domain and email.api_token in config.toml first: thinny deletes {address} "
-                           "with them")
-    if address in api(s.email_api_token, "listUser")["users"]:
-        api(s.email_api_token, "deleteUser", userName=address)
+    if address in api("listUser")["users"]:
+        api("deleteUser", userName=address)

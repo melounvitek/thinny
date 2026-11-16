@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 
 from . import host, purelymail, render, trace
 from .registry import Instance, Registry, RegistryError, validate_name
-from .settings import ACCESS_METHODS, Settings, group_file
+from .settings import ACCESS_METHODS, Settings, group_file, secret
 from .system import (INSTANCE_UID, STATE_DIR, CommandError, as_user, as_user_interactive, gateway_active, http_status,
                      in_container, log, printable, read_user_file, run, step, tailscale_name, uid_of, write_file,
                      write_user_file)
@@ -685,7 +685,7 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
             print(f"{name} starts on {s.model}" + (f", which its group sets: thinny config edit --group {inst.group}"
                   if "model.default" in pinned_keys(s) else
                   f". To pick another once it is signed in: thinny instance model {name} <model>"))
-        if s.telegram_manager_token:
+        if secret("THINNY_TELEGRAM_MANAGER_TOKEN"):
             print(f"Then send its user a Telegram bot: thinny instance telegram {name}")
         if s.email_domain:
             print(f"Then give it a mailbox, {name}@{s.email_domain}: thinny instance email {name} "
@@ -948,7 +948,7 @@ def remove(s: Settings, reg: Registry, name: str, purge: bool = False, keep_mail
 
     if inst.mailbox:   # first: when Purelymail fails, the instance stays as it is
         if not keep_mailbox:
-            purelymail.delete(s, inst.mailbox)
+            purelymail.delete(inst.mailbox)
         inst.mailbox = ""
         reg.save()   # at once: a mailbox created at its address later is not thinny's to delete
     if container_state(name) is not None:
