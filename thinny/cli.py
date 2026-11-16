@@ -14,7 +14,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import apply, checks, dashboard, host, instances, move, settings, system, telegram, trace, uninstall, update
+from . import apply, checks, dashboard, host, instances, mail, move, settings, system, telegram, trace, uninstall, update
 from .registry import Registry, RegistryError, validate_name
 from .settings import SettingsError, load
 from .system import CommandError, lock, write_file
@@ -153,6 +153,11 @@ def main(argv: list[str] | None = None) -> int:
     unl.add_argument("name", nargs="?")
     inst.add_parser("telegram", help="give an instance a Telegram bot its user creates with a link (see README)") \
         .add_argument("name")
+    eml = inst.add_parser("email", help="give an instance a mailbox, <name>@<email.domain> (see README, Email)")
+    eml.add_argument("name")
+    eml.add_argument("senders", nargs="*", metavar="ADDRESS",
+                     help="who may write to it; the first also gets its scheduled jobs' mail (default: as before)")
+    eml.add_argument("--new-password", action="store_true", help="give its mailbox a new password")
     trc = inst.add_parser("trace-sheet", help="send an instance's access trace to its users' Google Sheet too")
     trc.add_argument("name")
     trc.add_argument("url", metavar="URL|off", help="the URL of the sheet's script (see README, Access trace)")
@@ -163,6 +168,8 @@ def main(argv: list[str] | None = None) -> int:
     rmv.add_argument("name")
     rmv.add_argument("--purge", action="store_true",
                      help="free its name and port too, also once removed (its access trace stays, renamed)")
+    rmv.add_argument("--keep-mailbox", action="store_true",
+                     help="leave its mailbox in Purelymail (e.g. another server's after a move)")
     rst = inst.add_parser("restart", help="restart gateways one by one (all, or the named instances)")
     rst.add_argument("names", nargs="*")
     mov = inst.add_parser("move", help="move instances to another thinny server over SSH (experimental)")
@@ -178,6 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     rcv.add_argument("--frontend", choices=settings.FRONTENDS, default="webapp")
     rcv.add_argument("--release", nargs=2, required=True, metavar=("TAG", "COMMIT"))
     rcv.add_argument("--built-ins", required=True)
+    rcv.add_argument("--mailbox", default="")
     rcv.add_argument("--check", action="store_true")
     sub.add_parser("uninstall", help="remove thinny and every instance, with all their data")
     sub.add_parser("trace")  # without help, so not listed: thinny-trace.service runs it
@@ -311,6 +319,8 @@ def main(argv: list[str] | None = None) -> int:
             elif command == "instance unlock":
                 for name in chosen(reg, [a.name] if a.name else [], a.group):
                     instances.unlock(s, reg, name)
+            elif command == "instance email":
+                mail.connect(s, reg, a.name, a.senders, a.new_password)
             elif command == "instance trace-sheet":
                 trace.connect_sheet(reg, a.name, a.url)
             elif command == "instance reset-password":
@@ -318,7 +328,7 @@ def main(argv: list[str] | None = None) -> int:
             elif command == "instance disable":
                 instances.disable(s, reg, a.name)
             elif command == "instance remove":
-                instances.remove(s, reg, a.name, a.purge)
+                instances.remove(s, reg, a.name, a.purge, a.keep_mailbox)
             elif command == "instance restart":
                 targets = [reg.get(n) for n in chosen(reg, a.names, a.group)] if a.names or a.group is not None \
                     else reg.current()
@@ -329,7 +339,7 @@ def main(argv: list[str] | None = None) -> int:
                 move.move(s, reg, [] if a.all else chosen(reg, a.names, a.group), a.to)
             elif command == "instance receive":
                 move.receive(s, reg, a.name, a.access, a.url, tuple(a.release), a.built_ins,
-                             None if a.check else sys.stdin.buffer, frontend=a.frontend)
+                             None if a.check else sys.stdin.buffer, frontend=a.frontend, mailbox=a.mailbox)
         return 0
     except (SettingsError, RegistryError, CommandError) as e:
         print(f"thinny: {e}", file=sys.stderr)

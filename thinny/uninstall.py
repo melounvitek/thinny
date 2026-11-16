@@ -10,7 +10,7 @@ import socket
 import sys
 from pathlib import Path
 
-from . import dashboard, host, instances, render, settings, system, telegram, update
+from . import dashboard, host, instances, purelymail, render, settings, system, telegram, update
 from .registry import Registry
 from .system import CommandError, log
 
@@ -29,7 +29,8 @@ def run() -> None:
     if not sys.stdin.isatty():
         raise CommandError("no terminal to confirm on; nothing removed")
     print("This deletes every instance, with all its data:")
-    print("\n".join(f"  {inst.name} ({inst.state})" for inst in reg.instances.values()) or "  (none)")
+    print("\n".join(f"  {inst.name} ({inst.state}{', mailbox ' + inst.mailbox if inst.mailbox else ''})"
+                    for inst in reg.instances.values()) or "  (none)")
     print("It also removes what thinny set up: the Incus profile and storage pool (unless something else\n"
           "uses the pool), the firewall table, the nightly update, the access trace, the Webapps' Caddy and\n"
           f"Tailscale sites, the dashboard, {settings.CONFIG_TOML.parent}, {host.MANAGED}, {system.STATE_DIR} and\n"
@@ -50,6 +51,14 @@ def run() -> None:
         system.run(["systemctl", "disable", "--now", "thinny-trace.service"])
     had_dashboard = host.dashboard_access() is not None
     dashboard.turn_off()
+    left = []   # mailboxes Purelymail keeps: their failure must not keep thinny here
+    for inst in reg.instances.values():
+        if inst.mailbox:
+            try:
+                purelymail.delete(settings.load(), inst.mailbox)
+            except (settings.SettingsError, CommandError) as e:
+                log(f"{inst.name}: {e}")
+                left.append(inst.mailbox)
     for inst in reg.instances.values():
         if instances.container_state(inst.name) is not None:
             log(f"deleting {inst.name}'s container")
@@ -109,3 +118,5 @@ def run() -> None:
               f"  See: incus storage volume list {render.POOL}")
     if clone and clone != str(CLONE):
         print(f"  The clone {clone} stays.")
+    if left:
+        print(f"  Mailboxes it could not delete stay in Purelymail: {', '.join(left)}")

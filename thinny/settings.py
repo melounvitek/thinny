@@ -50,6 +50,8 @@ class Settings:
     network_interface: str = "eth0"
     blocked_networks: tuple[str, ...] = ()
     telegram_manager_token: str = ""
+    email_domain: str = ""
+    email_api_token: str = ""
     dashboard_enabled: bool = False
     dashboard_access: str = "local"
     dashboard_port: int = 9200
@@ -87,6 +89,8 @@ KEYS = {
     ("network", "interface"): "network_interface",
     ("network", "blocked_networks"): "blocked_networks",
     ("telegram", "manager_token"): "telegram_manager_token",
+    ("email", "domain"): "email_domain",
+    ("email", "api_token"): "email_api_token",
     ("dashboard", "enabled"): "dashboard_enabled",
     ("dashboard", "access"): "dashboard_access",
     ("dashboard", "port"): "dashboard_port",
@@ -223,6 +227,10 @@ def _validate(s: Settings, source: str) -> None:
             fail(f"network.blocked_networks: {network!r} is not a network")
     if s.telegram_manager_token and not re.fullmatch(r"\d+:[\w-]+", s.telegram_manager_token):
         fail("telegram.manager_token must be the manager bot's token from @BotFather, like 123456:ABC-xyz")
+    if s.email_domain and not re.fullmatch(r"([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}", s.email_domain):
+        fail("email.domain must be a domain in lowercase, like example.org")
+    if bool(s.email_domain) != bool(s.email_api_token):
+        fail("set both email.domain and email.api_token, or neither")
     if s.dashboard_access not in DASHBOARD_ACCESS:
         fail(f"dashboard.access must be one of {', '.join(DASHBOARD_ACCESS)}")
     if s.dashboard_retention_days < 1:

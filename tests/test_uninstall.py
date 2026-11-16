@@ -1,9 +1,11 @@
 import json
 import os
 import subprocess
+import urllib.request
 
 import pytest
 from test_dashboard import dashboard_files
+from test_mail import TOKEN, Purelymail
 
 from thinny import cli, dashboard, host, instances, render, settings, system, telegram, uninstall, update
 from thinny.registry import Instance, Registry
@@ -163,6 +165,30 @@ def test_uninstall_deletes_every_instance_and_everything_thinny_set_up(server, c
     assert all(uninstall.LIB in files and uninstall.COMMAND in files for files in srv.files)  # a rerun can continue
     assert (host.LIB / "thinny/cli.py").exists()
     assert "apt purge" in out and "until the next reboot" in out
+
+
+@pytest.mark.parametrize("config", ["with", "broken"])
+def test_uninstall_deletes_the_instances_mailboxes_or_names_those_left(server, monkeypatch, capsys, config):
+    load = settings.load   # its default path is the real one
+    monkeypatch.setattr(settings, "load", lambda: load(settings.CONFIG_TOML))
+    if config == "with":
+        settings.CONFIG_TOML.write_text('[access]\nlan_address = "192.168.1.10"\n'
+                                        f'[email]\ndomain = "example.org"\napi_token = "{TOKEN}"\n')
+    path = system.STATE_DIR / "instances.json"
+    reg = Registry.load()
+    reg.get("alice").mailbox, reg.get("bob").mailbox = "alice@example.org", "bob@example.org"
+    reg.save(path)
+    purelymail = Purelymail()
+    purelymail.users = {"alice@example.org": "a", "bob@example.org": "b"}
+    purelymail.broken["deleteUser"] = "Service unavailable"   # alice's
+    monkeypatch.setattr(urllib.request, "urlopen", purelymail.urlopen)
+    assert cli.main(["uninstall"]) == 0
+    out = capsys.readouterr().out
+    assert "alice (active, mailbox alice@example.org)" in out and "bob (disabled, mailbox bob@example.org)" in out
+    assert not server.containers and thinny_files() == []   # whatever Purelymail did
+    left = "alice@example.org" if config == "with" else "alice@example.org, bob@example.org"
+    assert f"  Mailboxes it could not delete stay in Purelymail: {left}\n" in out
+    assert list(purelymail.users) == left.split(", ")
 
 
 def test_uninstall_takes_the_dashboard_back_and_leaves_its_packages(server, monkeypatch, capsys):

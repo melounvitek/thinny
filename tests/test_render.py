@@ -23,6 +23,9 @@ def test_managed_config_pins_the_policy():
     assert config["approvals"] == {"mode": "smart"}
     # Hermes does not borrow Claude Code's login, which could log the Claude plugin out.
     assert config["auth"] == {"adopt_external_logins": False}
+    # nor messages users at every restart, such as the nightly update's or a reboot's
+    assert config["platforms"] == {platform: {"gateway_restart_notification": False}
+                                  for platform in ("email", "phone", "telegram")}
 
 
 def test_without_the_model_lock_users_choose_their_model_effort_and_plugins():
@@ -30,7 +33,9 @@ def test_without_the_model_lock_users_choose_their_model_effort_and_plugins():
     config = yaml.safe_load(render.managed_config(S))
     assert config == {"terminal": {"backend": "local"}, "bot_desktop": {"placement": "terminal"},
                       "security": {"redact_secrets": True}, "approvals": {"mode": "smart"},
-                      "auth": {"adopt_external_logins": False}}
+                      "auth": {"adopt_external_logins": False},
+                      "platforms": {platform: {"gateway_restart_notification": False}
+                                    for platform in ("email", "phone", "telegram")}}
 
 
 
@@ -39,9 +44,11 @@ def test_a_groups_hermes_settings_join_the_policy_under_thinnys():
     group = {"display": {"language": "cs"}, "terminal": {"timeout": 60, "backend": "docker"},
              "mcp_servers": {"github: work": {"command": "npx", "args": ["-y", "server-github"], "env": {}},
                              "on": {"command": "on-mcp"}, "123": {"url": "https://mcp.example.org/"}},
-             "approvals": {"mode": "off"}, "security": False, "model": {"default": "m9"}}
+             "approvals": {"mode": "off"}, "security": False, "model": {"default": "m9"},
+             "platforms": {"telegram": {"enabled": True, "gateway_restart_notification": True}}}
     config = yaml.safe_load(render.managed_config(dataclasses.replace(LOCKED, hermes=group)))
     assert config["display"] == {"language": "cs"}
+    assert config["platforms"]["telegram"] == {"enabled": True, "gateway_restart_notification": False}
     assert config["mcp_servers"] == group["mcp_servers"]   # names YAML would read as no strings too
     # thinny's own win, also over a whole section
     assert config["terminal"] == {"timeout": 60, "backend": "local"}

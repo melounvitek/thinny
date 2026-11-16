@@ -12,8 +12,10 @@ Status: in development. Design notes: [`PLAN.md`](PLAN.md).
   process and disk limits. A firewall lets it reach the internet and nothing else. Its users
   have `sudo` in it.
 - **One central policy** from `config.toml`, mounted read-only as each container's `/etc/hermes`
-  (Hermes "managed scope"): approvals, the agent kept in its container, and Hermes not borrowing
-  Claude Code's or Codex CLI's sign-ins on its own (it could log them out). The optional **model
+  (Hermes "managed scope"): approvals, the agent kept in its container, Hermes not borrowing
+  Claude Code's or Codex CLI's sign-ins on its own (it could log them out), and no messages to
+  users on Telegram, email or the phone whenever Hermes restarts, such as at the nightly update or
+  a reboot. The optional **model
   lock** (`policy.model_lock`) also pins the provider, model, reasoning effort and plugins, and
   allows only `allowed_models`. Without it, users choose their own. One instance can have its own
   lock, or none, whatever the server's (`thinny instance lock` and `unlock`).
@@ -24,6 +26,8 @@ Status: in development. Design notes: [`PLAN.md`](PLAN.md).
   plugin with Docker.
 - **Telegram with one link:** each instance's user creates a bot of their own that only they can
   write to (optional, see [Telegram](#telegram)).
+- **A mailbox per instance**, `alice@<your domain>` at Purelymail, that the people you name can email
+  and get replies from (optional, see [Email](#email)).
 - **One Hermes release**, with an optional nightly update that moves instances one at a time.
 - **Webapp or WebUI per instance:** Hermes's built-in Webapp, or hermes-webui, with the same
   password. WebUI follows its stable releases like Hermes.
@@ -198,6 +202,7 @@ thinny instance add alice               # about 7 minutes; asks how users open i
 thinny instance login alice             # sign in to a model provider; asks which
 thinny instance login alice --provider anthropic   # or name it: openai | anthropic
 thinny instance telegram alice          # a Telegram bot its user creates with a link (see Telegram)
+thinny instance email alice anna@example.com   # a mailbox alice@<domain> that anna can write to (see Email)
 thinny instance list                    # with each one's CPU, RAM and disk use
 thinny instance usage [alice]           # its users' share of their 5-hour and weekly subscription limits
 thinny instance access alice tailscale  # lan | tailscale | url=<URL> | local
@@ -420,6 +425,72 @@ can write to it. Their chat is also Hermes's Telegram home channel, so Hermes do
   confirm it. One wait at a time per server; other thinny commands run meanwhile.
 - Run it again to give an instance another bot, e.g. when its user deleted theirs. A moved
   instance keeps its bot.
+
+## Email
+
+Each instance can get a mailbox of its own, `alice@<your domain>`, at
+[Purelymail](https://purelymail.com/) ($10 a year for any number of mailboxes). The people you name
+can email the agent and get its replies, and its scheduled jobs can mail the first of them. Hermes
+reads the mailbox and sends from it with its
+[email gateway](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/email).
+
+Set it up once:
+
+1. Create a Purelymail account and add your domain. Add the DNS records Purelymail lists for it at
+   your DNS provider: the ownership TXT record, MX, SPF, the three DKIM records and DMARC. On
+   Cloudflare, keep them *DNS only*, not proxied.
+2. In the domain's settings, turn off *symbolic subaddressing*. With it on, Purelymail ignores dots
+   and may cut addresses at symbols such as `-`: mail for `office-sales@` could reach `office@`.
+3. Create an API token in Purelymail and put it, with the domain, in `config.toml` with
+   `thinny config edit`:
+
+   ```toml
+   [email]
+   domain = "example.org"
+   api_token = "..."
+   ```
+
+The server must reach `smtp.purelymail.com` on port 587 and `imap.purelymail.com` on 993. Some
+hosting providers block outgoing mail ports: netcup's default firewall policy *netcup Mail block*
+does (ports 25, 465 and 587), so remove it from the server. Until Hermes reaches both, it logs `email
+failed to connect` and tries again every few minutes.
+
+`thinny doctor` checks that the server reaches both and that the domain passes Purelymail's DNS
+checks. Then:
+
+```sh
+thinny instance email alice anna@example.com boss@example.com
+```
+
+It creates `alice@example.org`, sets alice's Hermes up with it and restarts alice's gateway. Only
+`anna@example.com` and `boss@example.com` can write to alice; mail from alice's scheduled jobs goes to
+the first.
+
+- Name whole addresses. Hermes ignores mail from anyone else, without an answer. thinny refuses
+  `*`: whoever can write to the agent can have it run commands in its container.
+- Hermes answers only mail whose sender Purelymail could verify (DMARC, SPF or DKIM), so a forged
+  sender gets nothing.
+- **Best effort:** Hermes skips mail that arrives while its gateway restarts (a Hermes update,
+  `config apply`, `reset-password`, a reboot) or while the instance is disabled. That mail stays
+  unread in the mailbox, and its sender has to write again.
+- Hermes does not mail the first address about its restarts ("back online", "shutting down"):
+  thinny's policy turns that off.
+- Run it again to change who can write to it; without addresses it keeps them. `--new-password`
+  gives the mailbox a new password. The password is in the instance's `.env`, where its users can
+  read it: the mailbox is theirs.
+- thinny never takes over a mailbox it did not create, and gives none to role names such as
+  `postmaster`, `abuse` or `admin`. If Purelymail created one but its answer never came, thinny
+  says so: delete the mailbox in Purelymail and run the command again.
+- `remove` deletes the mailbox, with all its mail, before the container. When Purelymail fails,
+  nothing is deleted: run it again. `--keep-mailbox` leaves the mailbox in Purelymail. `uninstall`
+  deletes every mailbox it can and names the rest.
+- The API token manages every mailbox of the Purelymail account. It stays on the server, in
+  `config.toml`, which only root can read. Keep people's mailboxes in another account, or at least
+  on another domain.
+- `move` takes the mailbox along: the new server deletes it when it removes the instance, with its
+  own `[email]` settings (the same Purelymail account). After the move, check that the instance
+  still gets and sends mail. When a move fails after the instance may have reached the other
+  server, remove the copy here with `--keep-mailbox` if it did.
 
 ## Updates
 

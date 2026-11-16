@@ -32,6 +32,10 @@ def move(s: Settings, reg: Registry, names: list[str], to: str) -> None:
     for inst in targets:
         if remote(to, receive_args(inst, release, check=True)):
             raise CommandError(f"{to} cannot take {inst.name} (see above); nothing moved")
+    for inst in targets:
+        if inst.mailbox:
+            print(f"{inst.name} has the mailbox {inst.mailbox}. It goes with {inst.name}, and {to} deletes it with "
+                  f"{inst.name}. After the move, check there that {inst.name} still gets and sends mail.")
 
     for inst in targets:
         name = inst.name
@@ -47,6 +51,8 @@ def move(s: Settings, reg: Registry, names: list[str], to: str) -> None:
             log(str(e) or "interrupted")
             code = 1
         if code == 0:
+            inst.mailbox = ""   # the other server's now: a remove here must not delete it
+            reg.save()
             instances.disable(s, reg, name)
         elif remote(to, receive_args(inst, release, check=True)) == 0:   # it did not get there
             run(["incus", "config", "unset", name, "boot.autostart"])
@@ -58,7 +64,9 @@ def move(s: Settings, reg: Registry, names: list[str], to: str) -> None:
                 f"  - if thinny instance list shows {name}, finish it there if pending (thinny instance add {name}), "
                 f"then here: thinny instance disable {name}\n"
                 f"  - if not, delete any container {name} there (incus delete {name}), then here: "
-                f"incus config unset {name} boot.autostart && incus start {name}")
+                f"incus config unset {name} boot.autostart && incus start {name}" +
+                (f"\nif {name} is there, its mailbox {inst.mailbox} is that server's: remove {name} here with "
+                 f"thinny instance remove {name} --keep-mailbox" if inst.mailbox else ""))
 
 
 def receive_args(inst: Instance, release: tuple[str, str], check: bool = False) -> list[str]:
@@ -66,6 +74,7 @@ def receive_args(inst: Instance, release: tuple[str, str], check: bool = False) 
     return ["instance", "receive", inst.name, "--access", inst.access,
             *(["--url", inst.url] if inst.access == "url" else []),
             *(["--frontend", inst.frontend] if inst.frontend != "webapp" else []),   # an older thinny knows none
+            *(["--mailbox", inst.mailbox] if inst.mailbox else []),   # nor this: it would not delete the mailbox
             "--release", *release, "--built-ins", inst.built_ins, *(["--check"] if check else [])]
 
 
@@ -82,9 +91,10 @@ def remote(to: str, args: list[str], stdin: BinaryIO | None = None) -> int:
 
 
 def receive(s: Settings, reg: Registry, name: str, access: str, url: str, release: tuple[str, str], built_ins: str,
-            archive: BinaryIO | None, frontend: str = "webapp") -> None:
+            archive: BinaryIO | None, frontend: str = "webapp", mailbox: str = "") -> None:
     """Take an instance another server moves here: `archive` is its `incus export`, which comes with
-    the Hermes `release` and `built_ins` it has. Without an archive, only check that it could."""
+    the Hermes `release` and `built_ins` it has, and the `mailbox` thinny created for it. Without an archive, only
+    check that it could."""
     if name in reg.instances:
         raise CommandError(f"{name} exists on this server too; names are not reused")
     instances.check_free_name(name)
@@ -110,7 +120,7 @@ def receive(s: Settings, reg: Registry, name: str, access: str, url: str, releas
     finally:
         path.unlink(missing_ok=True)
     inst = reg.add(name, access, s.port_range)
-    inst.moved, inst.built_ins, inst.frontend = True, built_ins, frontend
+    inst.moved, inst.built_ins, inst.frontend, inst.mailbox = True, built_ins, frontend, mailbox
     reg.save()
     if here is None:
         host.write_release(*release)

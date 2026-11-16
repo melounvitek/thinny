@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from thinny import apply, cli, dashboard, host, instances, move, render, settings, system, telegram, trace, update
+from thinny import apply, cli, dashboard, host, instances, mail, move, render, settings, system, telegram, trace, update
 from thinny.registry import Instance, Registry
 
 VALID = '[policy]\nmodel = "m1"\nallowed_models = ["m1"]\n\n[access]\nlan_address = "192.168.1.10"\n'
@@ -429,6 +429,20 @@ def test_instance_telegram_waits_without_thinnys_lock(server, monkeypatch):
     assert connected == ["alice"]
 
 
+def test_instance_email_takes_who_may_write_and_runs_with_thinnys_lock(server, monkeypatch):
+    connected = []
+
+    def connect(s, reg, name, senders, new_password):
+        with pytest.raises(system.CommandError, match="in progress"):
+            with system.lock():
+                pass
+        connected.append((name, senders, new_password))
+    monkeypatch.setattr(mail, "connect", connect)
+    assert cli.main(["instance", "email", "alice", "anna@example.com", "ben@example.com"]) == 0
+    assert cli.main(["instance", "email", "alice", "--new-password"]) == 0
+    assert connected == [("alice", ["anna@example.com", "ben@example.com"], False), ("alice", [], True)]
+
+
 def test_instance_trace_sheet_takes_a_url_or_off(server, monkeypatch):
     connected = []
     monkeypatch.setattr(trace, "connect_sheet", lambda reg, name, url: connected.append((name, url)))
@@ -450,14 +464,16 @@ def test_instance_move_takes_names_or_all(server, monkeypatch, capsys):
 
 def test_the_other_server_takes_the_archive_from_stdin_or_only_checks(server, monkeypatch):
     received = []
-    monkeypatch.setattr(move, "receive", lambda s, reg, *args, frontend: received.append((*args, frontend)))
+    monkeypatch.setattr(move, "receive", lambda s, reg, *args, frontend, mailbox:
+                        received.append((*args, frontend, mailbox)))
     monkeypatch.setattr(cli.sys, "stdin", type("Pipe", (), {"buffer": "the archive"})())
     args = ["instance", "receive", "bob", "--access", "url", "--url", "https://bob.example.org/",
             "--release", "v2", "c0ffee", "--built-ins", ""]   # added by a thinny without built-ins
     assert cli.main(args) == 0
-    assert cli.main([*args, "--check", "--frontend", "webui"]) == 0
-    assert received == [("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", "the archive", "webapp"),
-                        ("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", None, "webui")]
+    assert cli.main([*args, "--check", "--frontend", "webui", "--mailbox", "bob@example.org"]) == 0
+    assert received == [
+        ("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", "the archive", "webapp", ""),
+        ("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", None, "webui", "bob@example.org")]
 
 
 def test_the_trace_runs_even_with_a_broken_site_toml(server, monkeypatch):
@@ -654,6 +670,7 @@ def test_a_group_without_active_instances_selects_nothing(sales, capsys):
     ([], ["bogus"], "argument command: invalid choice: 'bogus'"),
     (["instance", "group"], [], "the following arguments are required: action"),
     (["instance", "telegram"], [], "the following arguments are required: name"),
+    (["instance", "email"], [], "the following arguments are required: name"),
     (["instance", "frontend"], ["alice", "x"], "argument frontend: invalid choice: 'x'"),
     (["instance", "telegram"], ["alice", "--bogus"], "unrecognized arguments: --bogus"),
     (["instance", "group", "list"], ["extra"], "unrecognized arguments: extra"),
