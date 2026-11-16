@@ -58,6 +58,7 @@ class Settings:
     dashboard_access: str = "local"
     dashboard_port: int = 9200
     dashboard_retention_days: int = 30
+    dashboard_subscription_usage: bool = False
     groups: dict[str, dict] = field(default_factory=dict)   # name -> the Hermes settings its members' policies pin
     hermes: dict = field(default_factory=dict)   # those of one instance's group (instances.settings_for)
 
@@ -95,6 +96,7 @@ KEYS = {
     ("dashboard", "access"): "dashboard_access",
     ("dashboard", "port"): "dashboard_port",
     ("dashboard", "retention_days"): "dashboard_retention_days",
+    ("dashboard", "subscription_usage"): "dashboard_subscription_usage",
 }
 
 

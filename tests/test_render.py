@@ -252,3 +252,10 @@ def test_disk_metrics_for_the_node_exporter():
     assert f'thinny_instance_disk_quota_bytes{{name="alice"}} {30 * 2**30}\n' in text
     assert 'thinny_instance_disk_quota_bytes{name="bob"} 10\n' in text
     assert "# TYPE thinny_instance_disk_used_bytes gauge\n" in text and text.endswith("10\n")
+
+
+def test_subscription_usage_for_the_node_exporter():
+    text = render.usage_metrics([("alice", "ChatGPT", "5h", 0.37), ("alice", "ChatGPT", "week", 0.124)])
+    assert 'thinny_instance_subscription_used_ratio{name="alice",provider="ChatGPT",window="5h"} 0.37\n' in text
+    assert "# TYPE thinny_instance_subscription_used_ratio gauge\n" in text and text.endswith("} 0.124\n")
+    assert render.usage_metrics([]).count("\n") == 2   # its HELP and TYPE: nobody's usage known
