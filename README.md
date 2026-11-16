@@ -321,11 +321,25 @@ microphone, notifications and the Bot Screen. `<name>.localhost` through SSH kee
 `/etc/caddy/Caddyfile`. It copies the root certificate to `/etc/thinny/office-root.crt`, readable
 by any account. While an instance uses LAN access, Caddy also serves it on the office network at
 `http://<lan_address>/office-root.crt`; thinny prints the link when an instance gets LAN access.
-Download it on each office PC and install it as trusted: open it, "Install Certificate", "Current
-User", "Trusted Root Certification Authorities" (or for all accounts, as administrator:
-`certutil -addstore Root office-root.crt`). Over plain HTTP, someone on the office network could
-swap the file; where that matters, copy it with `scp <you>@<server>:/etc/thinny/office-root.crt .`
-instead.
+Download it on each office PC, install it as trusted and restart the browser:
+
+- Windows: open it, "Install Certificate", "Current User", "Trusted Root Certification Authorities"
+  (or for all accounts, as administrator: `certutil -addstore Root office-root.crt`).
+- macOS: `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain office-root.crt`,
+  or in Keychain Access add it to the System keychain, open it and under "Trust" set "When using
+  this certificate" to "Always Trust".
+- Arch, Fedora: `sudo trust anchor --store office-root.crt`.
+- Debian, Ubuntu: `sudo cp office-root.crt /usr/local/share/ca-certificates/` (keep the `.crt`
+  extension), then `sudo update-ca-certificates`.
+- Browsers that ignore the Linux store need it imported too: Chrome, Chromium and Firefox on
+  Debian and Ubuntu (snaps included), and Firefox from Mozilla or Flathub. Chrome:
+  `chrome://certificate-manager`, "Local certificates", "Installed by you", "Trusted Certificates",
+  "Import". Firefox: in settings, "Certificates", "Manage certificates" (or "View Certificates…"),
+  "Authorities", "Import…", "Trust this CA to identify websites". Opening it in GNOME's
+  Certificate Viewer doesn't trust it.
+
+Over plain HTTP, someone on the office network could swap the file; where that matters, copy it
+with `scp <you>@<server>:/etc/thinny/office-root.crt .` instead.
 
 **One tunnel for every `url` instance:** set `access.tunnel_port` (e.g. `8080`) and run
 `thinny config apply`. Caddy then serves every `url` instance at `http://127.0.0.1:8080`, by the
