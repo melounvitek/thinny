@@ -9,7 +9,7 @@ import types
 
 import pytest
 
-from thinny import dashboard, host, instances, render, system
+from thinny import cli, dashboard, host, instances, render, system
 from thinny.registry import Instance, Registry
 from thinny.settings import Settings
 from thinny.system import CommandError
@@ -34,6 +34,7 @@ class Server:
         self.containers = {"alice": 30 * 2**30}   # name -> its disk quota
         self.answers = []
         self.prompts = []
+        self.fails = set()   # commands that fail, by their start
 
     def run(self, cmd, *, check=True, **kw):
         self.calls.append(" ".join(cmd))
@@ -43,6 +44,8 @@ class Server:
         return subprocess.CompletedProcess(cmd, code, out, "")
 
     def answer(self, cmd):
+        if " ".join(cmd).startswith(tuple(self.fails)):
+            return "", 1
         if cmd[0] == "dpkg-query":
             return "".join(f"{p} install ok installed\n" for p in cmd[3:] if p in self.installed), \
                 int(not set(cmd[3:]) <= self.installed)
@@ -274,3 +277,41 @@ def test_off_leaves_a_metrics_address_thinny_did_not_set(server):
     srv.metrics_address = "10.0.0.5:8444"   # the admin's, since
     dashboard.apply(S, Registry.load())
     assert srv.metrics_address == "10.0.0.5:8444"
+
+
+def test_the_timer_writes_the_disk_use_of_every_instance_with_a_container(server, monkeypatch):
+    srv = server
+    srv.containers = {"alice": 30 * 2**30, "bob": 10 * 2**30}
+    reg = Registry({"alice": Instance("alice", 9120, "lan", state="active"),
+                    "bob": Instance("bob", 9121, "local", state="disabled"),   # its disk stays
+                    "carol": Instance("carol", 9122, "local")})   # its add stopped before its container
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(cli, "load", lambda: pytest.fail("a broken config.toml must not stop it"))
+    assert cli.main(["metrics"]) == 0
+    assert dashboard.DISK_METRICS.read_text() == \
+        render.disk_metrics([("alice", 2**30, 30 * 2**30), ("bob", 2**30, 10 * 2**30)])
+
+    srv.fails.add("btrfs qgroup show")
+    assert cli.main(["metrics"]) == 1   # not a 0: the last file stays, and grows old
+    assert "bob" in dashboard.DISK_METRICS.read_text()
+
+
+def test_the_update_renews_grafanas_key_only_while_its_repository_is_in_use(server, monkeypatch, capsys):
+    dashboard.renew_key()
+    assert not dashboard.GRAFANA_KEY.exists()
+    dashboard.GRAFANA_SOURCE.parent.mkdir(parents=True)
+    dashboard.GRAFANA_SOURCE.write_text(render.grafana_source(str(dashboard.GRAFANA_KEY)))
+    dashboard.renew_key()
+    assert dashboard.GRAFANA_KEY.read_text() == KEY
+
+    def offline(url, timeout):
+        raise dashboard.urllib.error.URLError("Temporary failure in name resolution")
+    monkeypatch.setattr(dashboard.urllib.request, "urlopen", offline)
+    dashboard.renew_key()   # the update goes on
+    monkeypatch.setattr(dashboard.urllib.request, "urlopen", lambda url, timeout: io.BytesIO(b"<html>"))
+    dashboard.renew_key()
+    assert dashboard.GRAFANA_KEY.read_text() == KEY
+    err = capsys.readouterr().err
+    assert "Grafana's apt key not renewed: <urlopen error Temporary failure in name resolution>" in err
+    assert "is not an OpenPGP key" in err

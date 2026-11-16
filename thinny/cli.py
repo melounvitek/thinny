@@ -14,7 +14,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import apply, checks, host, instances, move, settings, system, telegram, trace, uninstall, update
+from . import apply, checks, dashboard, host, instances, move, settings, system, telegram, trace, uninstall, update
 from .registry import Registry, RegistryError, validate_name
 from .settings import SettingsError, load
 from .system import CommandError, lock, write_file
@@ -181,6 +181,7 @@ def main(argv: list[str] | None = None) -> int:
     rcv.add_argument("--check", action="store_true")
     sub.add_parser("uninstall", help="remove thinny and every instance, with all their data")
     sub.add_parser("trace")  # without help, so not listed: thinny-trace.service runs it
+    sub.add_parser("metrics")  # without help, so not listed: thinny-metrics.timer runs it
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["complete"]:   # not listed: the bash completion runs it, as whoever presses Tab
         for word in complete(ap, argv[1:]):
@@ -211,6 +212,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if command == "trace":  # without config.toml: a broken one must not stop the trace
             return trace.run()
+        if command == "metrics":  # without config.toml or thinny's lock, which an update holds for long
+            dashboard.write_disk_metrics()
+            return 0
         if command == "uninstall":
             with lock(update.SELF_UPDATE_LOCK), lock():
                 uninstall.run()
@@ -241,6 +245,8 @@ def main(argv: list[str] | None = None) -> int:
         if command == "instance telegram":   # takes thinny's lock only once its user created the bot
             telegram.connect(s, a.name)
             return 0
+        if command == "update" and not a.dry_run:   # before install.sh's apt-get update, whatever auto_update says
+            dashboard.renew_key()
         # Before the lock: the install.sh of a new thinny runs `thinny setup`.
         if command == "update" and not a.dry_run and (s.auto_update or not a.scheduled) and update.update_thinny():
             # on with the new code

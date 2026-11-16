@@ -144,6 +144,16 @@ def refresh_key() -> None:
     write_file(GRAFANA_KEY, key)
 
 
+def renew_key() -> None:
+    """Grafana's key afresh while its repository is in use (thinny update): an expired one would fail every apt-get
+    update, install.sh's too. A failure is only logged; the key in use stays."""
+    if GRAFANA_SOURCE.exists():
+        try:
+            refresh_key()
+        except (OSError, ValueError, CommandError) as e:   # urllib's errors are OSErrors
+            log(f"Grafana's apt key not renewed: {e}")
+
+
 def configure(s: Settings) -> None:
     """Incus's metrics for Prometheus's certificate, the services' settings, then the services started (those whose
     settings changed restarted) and the first file of each instance's disk use."""
