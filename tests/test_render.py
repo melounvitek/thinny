@@ -180,6 +180,16 @@ def test_incus_starts_only_behind_the_firewall():
     assert "After=nftables.service" in dropin and "PartOf=nftables.service" in dropin
 
 
+def test_the_firewall_check_runs_every_minute_from_boot_on_and_logs_only_what_it_says():
+    # AccuracySec: not up to a minute late
+    assert "\nOnBootSec=1min\nOnUnitActiveSec=1min\nAccuracySec=1s\n" in render.FIREWALL_TIMER
+    assert "\nWantedBy=timers.target\n" in render.FIREWALL_TIMER
+    service = render.FIREWALL_SERVICE
+    assert "\nType=oneshot\nExecStart=/usr/local/sbin/thinny firewall-check\n" in service
+    # systemd's lines about each start are info; what the command says must pass their filter
+    assert "\nLogLevelMax=notice\nSyslogLevel=warning\n" in service
+
+
 def test_container_profile_limits_and_isolation():
     profile = json.loads(render.profile(Settings(model="m1", allowed_models=("m1",), lan_address="10.0.0.5",
                                                  container_cpu=3, container_memory_mb=6144, container_disk_gb=40)))

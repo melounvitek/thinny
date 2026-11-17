@@ -124,10 +124,12 @@ def install_units(s: Settings) -> None:
         write_file(SYSTEMD / "thinny-update.service", render.UPDATE_SERVICE),
         write_file(SYSTEMD / "thinny-update.timer", render.update_timer(s)),
         write_file(SYSTEMD / "thinny-trace.service", render.TRACE_SERVICE),
+        write_file(SYSTEMD / "thinny-firewall.service", render.FIREWALL_SERVICE),
+        write_file(SYSTEMD / "thinny-firewall.timer", render.FIREWALL_TIMER),
     ]
     if any(changed):
         run(["systemctl", "daemon-reload"])
-    run(["systemctl", "enable", "--now", "thinny-update.timer"])
+    run(["systemctl", "enable", "--now", "thinny-update.timer", "thinny-firewall.timer"])
     run(["systemctl", "enable", "thinny-trace.service"])
     run(["systemctl", "restart", "thinny-trace.service"])  # install.sh may have brought a new thinny
     write_file(SYSCTL_FILE, render.SYSCTL)
