@@ -233,6 +233,7 @@ thinny instance model alice gpt-5.5     # new chats start on it; --provider open
 thinny instance lock alice [model ...]  # only these models (default: the one it uses)
 thinny instance unlock alice            # its users choose, even with the server's lock
 thinny instance reset-password alice
+thinny instance reset-password alice --set   # to one you type in, not a random one
 thinny instance export alice            # its chats, memories and skills for its users, without sign-ins
 thinny instance disable alice           # stop it for good, keep its data
 thinny instance remove alice            # then delete its container and data; asks you to type its name

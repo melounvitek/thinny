@@ -1008,7 +1008,11 @@ def signs_in(c, password):
     _, n, r, p, salt, key = stored[1].split("$")
     webapp = hashlib.scrypt(password.encode(), salt=base64.b64decode(salt), n=int(n), r=int(r), p=int(p), dklen=32,
                             maxmem=0) == base64.b64decode(key)
-    return webapp, c["files"].get("/home/alice/.config/hermes-webui.env") == f"HERMES_WEBUI_PASSWORD={password}\n"
+    # as WebUI gets it: systemd reads it in double quotes, a backslash taking the next character as it is, then
+    # WebUI strips it
+    webui = re.fullmatch(r'HERMES_WEBUI_PASSWORD="(.*)"\n', c["files"].get("/home/alice/.config/hermes-webui.env", ""),
+                         re.S)
+    return webapp, bool(webui) and re.sub(r"\\(.)", r"\1", webui[1], flags=re.S).strip() == password
 
 
 def printed_password(capsys):
@@ -1030,6 +1034,17 @@ def test_one_password_signs_in_to_either_frontend_and_a_reset_changes_both(incus
     # everyone signed in to WebUI signs in again: it keeps its sessions in memory, so it stops first
     assert incus.where("systemctl --user stop hermes-webui") < incus.where("rm -f /home/alice/.hermes/webui/.sessions.json") \
         < incus.where("systemctl --user restart hermes-webui")
+
+
+def test_a_password_typed_in_signs_in_to_either_frontend_as_typed(incus, capsys):
+    reg = Registry()
+    instances.add(S, reg, "alice", "local")
+    first = printed_password(capsys)
+    typed = 'a "b\\" $HOME #c'
+    instances.password(S, reg, "alice", lambda name: typed)
+    assert typed not in capsys.readouterr().out
+    assert signs_in(incus.containers["alice"], typed) == (True, True)
+    assert signs_in(incus.containers["alice"], first) == (False, False)
 
 
 def test_an_instance_from_before_webui_gets_a_new_password_when_it_switches(incus, capsys):
