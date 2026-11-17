@@ -333,6 +333,15 @@ def test_instance_add_connects_no_phone_line_unless_asked_to(server, terminal, p
     assert phones == [None]
 
 
+def test_reset_password_set_takes_a_password_typed_twice_without_showing_it(server, monkeypatch):
+    hidden = answering(monkeypatch, "secret", "typo", "", "secret", "secret")
+    assert cli.main(["instance", "reset-password", "bob", "--set"]) == 1 and hidden == []   # no such instance
+    typed = []
+    monkeypatch.setattr(instances, "password", lambda s, reg, name, ask=None: typed.append(ask(name)))
+    assert cli.main(["instance", "reset-password", "alice", "--set"]) == 0
+    assert typed == ["secret"] and len(hidden) == 5   # again after a typo, and after an empty one
+
+
 def test_what_a_failing_command_in_a_container_said_reaches_the_admin_without_control_characters(
         server, monkeypatch, capsys):
     # Its users are root in it: every command there sets the terminal's title, clears it and turns the text around.

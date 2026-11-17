@@ -16,6 +16,7 @@ import shutil
 import sys
 import textwrap
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
@@ -436,10 +437,10 @@ def ensure_sign_in(inst: Instance) -> str | None:
     return None if has else reset_password(inst.name)
 
 
-def reset_password(name: str) -> str:
-    """A new password for both frontends: the Webapp's username and password in the instance's .env, and WebUI's.
-    WebUI must not run: it would keep the sessions it signs everyone out of."""
-    password = secrets.token_urlsafe(12)
+def reset_password(name: str, password: str | None = None) -> str:
+    """A new password for both frontends (default: a random one): the Webapp's username and password in the
+    instance's .env, and WebUI's. WebUI must not run: it would keep the sessions it signs everyone out of."""
+    password = password or secrets.token_urlsafe(12)
     lines = [line for line in _env_lines(name) if not line.startswith(AUTH_PREFIX)] + [
         f"{AUTH_PREFIX}USERNAME={name}",
         f"{AUTH_PREFIX}PASSWORD_HASH='{password_hash(password)}'",  # quoted: '$' in the hash
@@ -448,7 +449,9 @@ def reset_password(name: str) -> str:
     # In plain text: WebUI takes no hash from its environment. Its unit reads the file, the gateway does not.
     files = webui_files(name)
     as_user(name, ["mkdir", "-p", str(files["password"].parent)])
-    write_user_file(name, str(files["password"]), f"HERMES_WEBUI_PASSWORD={password}\n")
+    # In double quotes with \ and " escaped: systemd then takes a typed one's spaces, $ and # as they are.
+    quoted = password.replace("\\", "\\\\").replace('"', '\\"')
+    write_user_file(name, str(files["password"]), f'HERMES_WEBUI_PASSWORD="{quoted}"\n')
     as_user(name, ["rm", "-f", str(files["state"] / ".sessions.json")])
     return password
 
@@ -910,13 +913,19 @@ def login(reg: Registry, name: str, provider: str) -> None:
         raise CommandError("the login did not finish")
 
 
-def password(s: Settings, reg: Registry, name: str) -> None:
+def password(s: Settings, reg: Registry, name: str, ask: Callable[[str], str] | None = None) -> None:
+    """A new password for the instance's frontend: a random one, or the one `ask` gets once it is known to be
+    active."""
     inst = _active(reg, name)
+    typed = ask(name) if ask else None
     if inst.frontend == "webui":
         mark_restart([name])   # first: a failure leaves it for the next restart
         as_user(name, ["systemctl", "--user", "stop", "hermes-webui"], timeout=RESTART_TIMEOUT)
-    new = reset_password(name)
+    new = reset_password(name, typed)
     start_or_restart_gateway(s, inst)
+    if typed:
+        print(f"{name}: new {FRONTEND_NAMES[inst.frontend]} password set   (open browsers must sign in again)")
+        return
     print(f"{name}: new {FRONTEND_NAMES[inst.frontend]} password: {new}   (shown once; open browsers must sign in "
           "again)")
 

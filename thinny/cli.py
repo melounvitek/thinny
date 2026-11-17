@@ -170,9 +170,10 @@ def main(argv: list[str] | None = None) -> int:
     trc = inst.add_parser("trace-sheet", help="send an instance's access trace to its users' Google Sheet too")
     trc.add_argument("name")
     trc.add_argument("url", metavar="URL|off", help="the URL of the sheet's script (see README, Access trace)")
-    for name, text in (("reset-password", "give an instance a new Webapp password"),
-                       ("disable", "stop an instance's container for good, keep its data")):
-        inst.add_parser(name, help=text).add_argument("name")
+    rpw = inst.add_parser("reset-password", help="give an instance a new Webapp password")
+    rpw.add_argument("name")
+    rpw.add_argument("--set", action="store_true", help="to one you type in (default: a random one)")
+    inst.add_parser("disable", help="stop an instance's container for good, keep its data").add_argument("name")
     rmv = inst.add_parser("remove", help="delete a disabled instance's container and data for good")
     rmv.add_argument("name")
     rmv.add_argument("--purge", action="store_true",
@@ -343,7 +344,7 @@ def main(argv: list[str] | None = None) -> int:
             elif command == "instance trace-sheet":
                 trace.connect_sheet(reg, a.name, a.url)
             elif command == "instance reset-password":
-                instances.password(s, reg, a.name)
+                instances.password(s, reg, a.name, ask_new_password if a.set else None)
             elif command == "instance disable":
                 instances.disable(s, reg, a.name)
             elif command == "instance remove":
@@ -492,6 +493,13 @@ def ask_secret(question: str) -> str:
     while True:
         if answer := getpass.getpass(f"{question}: "):
             return answer
+
+
+def ask_new_password(name: str) -> str:
+    """A new password for the instance, typed twice without showing it."""
+    while (password := ask_secret(f"New password for {name}")) != ask_secret("Type it again"):
+        print("The two differ; type them again.")
+    return password
 
 
 def ask_phone(name: str) -> dict[str, str] | None:
