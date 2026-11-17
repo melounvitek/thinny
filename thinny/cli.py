@@ -497,9 +497,14 @@ def ask_secret(question: str) -> str:
 
 def ask_new_password(name: str) -> str:
     """A new password for the instance, typed twice without showing it."""
-    while (password := ask_secret(f"New password for {name}")) != ask_secret("Type it again"):
-        print("The two differ; type them again.")
-    return password
+    while True:
+        password = ask_secret(f"New password for {name}")
+        if password != password.strip():   # WebUI strips it: spaces only would turn its password off
+            print("WebUI drops spaces around a password; type one without them.")
+        elif password == ask_secret("Type it again"):
+            return password
+        else:
+            print("The two differ; type them again.")
 
 
 def ask_phone(name: str) -> dict[str, str] | None:

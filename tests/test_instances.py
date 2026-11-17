@@ -1008,10 +1008,11 @@ def signs_in(c, password):
     _, n, r, p, salt, key = stored[1].split("$")
     webapp = hashlib.scrypt(password.encode(), salt=base64.b64decode(salt), n=int(n), r=int(r), p=int(p), dklen=32,
                             maxmem=0) == base64.b64decode(key)
-    # as systemd reads WebUI's file: in double quotes, a backslash takes the next character as it is
+    # as WebUI gets it: systemd reads it in double quotes, a backslash taking the next character as it is, then
+    # WebUI strips it
     webui = re.fullmatch(r'HERMES_WEBUI_PASSWORD="(.*)"\n', c["files"].get("/home/alice/.config/hermes-webui.env", ""),
                          re.S)
-    return webapp, bool(webui) and re.sub(r"\\(.)", r"\1", webui[1], flags=re.S) == password
+    return webapp, bool(webui) and re.sub(r"\\(.)", r"\1", webui[1], flags=re.S).strip() == password
 
 
 def printed_password(capsys):
@@ -1039,7 +1040,7 @@ def test_a_password_typed_in_signs_in_to_either_frontend_as_typed(incus, capsys)
     reg = Registry()
     instances.add(S, reg, "alice", "local")
     first = printed_password(capsys)
-    typed = 'a "b\\" $HOME #c '
+    typed = 'a "b\\" $HOME #c'
     instances.password(S, reg, "alice", lambda name: typed)
     assert typed not in capsys.readouterr().out
     assert signs_in(incus.containers["alice"], typed) == (True, True)

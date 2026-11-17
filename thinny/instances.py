@@ -449,7 +449,7 @@ def reset_password(name: str, password: str | None = None) -> str:
     # In plain text: WebUI takes no hash from its environment. Its unit reads the file, the gateway does not.
     files = webui_files(name)
     as_user(name, ["mkdir", "-p", str(files["password"].parent)])
-    # In double quotes with \ and " escaped: systemd then takes a typed one's spaces, $ and # as they are.
+    # In double quotes with \ and " escaped: systemd then takes a typed one's quotes, $ and # as they are.
     quoted = password.replace("\\", "\\\\").replace('"', '\\"')
     write_user_file(name, str(files["password"]), f'HERMES_WEBUI_PASSWORD="{quoted}"\n')
     as_user(name, ["rm", "-f", str(files["state"] / ".sessions.json")])
