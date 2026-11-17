@@ -334,7 +334,7 @@ thinny instance restart --group sales   # instead of names: resize, login, model
   The [access trace](#access-trace) notes `thinny instance export alice ran its commands in alice`.
 - Shell in a container: `sudo incus exec alice -- runuser -l alice` (or `-- bash` for root).
   Both show in the [access trace](#access-trace).
-- **`move` is experimental:** it has not moved an instance between two real servers yet.
+- **`move` is experimental:** so far it has moved one small instance between two servers, once.
   Snapshot both servers first.
 - `move` takes whole containers over SSH to another server that runs thinny, one at a time, each
   down for a few minutes. Everything inside comes along: data, sign-ins, the password, Webapp or
