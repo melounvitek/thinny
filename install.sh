@@ -4,6 +4,8 @@
 # incus-base: containers only (no virtual machines). Ubuntu 24.04 has no incus-base, and its
 # incus has no virtual machines either.
 set -eu
+# Not the admin's: containers read the model guard installed here as others.
+umask 022
 
 LIB=/usr/local/lib/thinny
 CONFIG=/etc/thinny/config.toml

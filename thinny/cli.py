@@ -92,6 +92,7 @@ def complete(parser: argparse.ArgumentParser, words: list[str]) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    os.umask(0o022)   # not the admin's: a container reads what thinny makes for it, such as its policy, as others
     ap = Parser(prog="thinny", description="Shared Hermes Agent server, one isolated container per instance.")
     sub = ap.add_subparsers(dest="command", required=True, metavar="command")
     sub.add_parser("init", help="ask for the main settings and write config.toml (on a new server)")
