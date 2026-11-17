@@ -50,7 +50,12 @@ private networks or the tailnet, and cannot change the shared policy.
   when the admin enters a container;
 - the policy from an instance's users: they are root in their container, so the policy is a
   guardrail. `doctor` reports the bypasses it can see;
-- users from their own agent: it can do whatever they can in the container, but cannot leave it.
+- users from their own agent: it can do whatever they can in the container, but cannot leave it;
+- an instance's sign-in from other instances' users, with `lan` or `tailscale` access. Those
+  instances share one address, and browsers send a site's cookies to every port of it: when
+  Alice opens Bob's address in the browser she is signed in with, Bob's container gets her
+  sign-in, and Bob is root there. Where users do not trust each other, give each instance an
+  address of its own (`url`, see [Access](#access)).
 
 ## Requirements
 
@@ -383,6 +388,9 @@ thinny instance restart --group sales   # also resize, login, model, lock, unloc
 | `tailscale` | `https://<machine>.<tailnet>.ts.net:<port>/` | the server and users' devices on the tailnet, with MagicDNS and HTTPS certificates |
 | `url=<URL>` | your URL, on a host of its own               | a proxy or tunnel on this server, serving HTTPS and forwarding to `http://127.0.0.1:<port>`, or one tunnel for all (below) |
 | `local`     | `http://<name>.localhost:<port>/`            | `ssh -L <port>:127.0.0.1:<port> <you>@<server>` |
+
+`lan` and `tailscale` instances share one address, so one's users can get another's sign-in (see
+[Security](#security)); `url` and `local` instances each have a host of their own.
 
 Use HTTPS for network addresses: on plain HTTP, browsers turn off the Webapp's clipboard,
 microphone, notifications and the Bot Screen. `<name>.localhost` through SSH keeps them.
