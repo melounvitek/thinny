@@ -142,6 +142,17 @@ def firewall(s: Settings) -> None:
     run(["nft", "-f", str(FIREWALL_FILE)])
 
 
+def firewall_check() -> None:
+    """Load the firewall table again, as it was last written, when it is gone: what flushes the ruleset without
+    restarting nftables.service (`nft flush ruleset`, Debian's own /etc/nftables.conf) removes it, and incus.service
+    does not load it then. Run every minute by thinny-firewall.timer."""
+    if "table inet thinny" in run(["nft", "list", "tables"]).stdout.splitlines():
+        return
+    run(["nft", "-f", str(FIREWALL_FILE)])
+    log("firewall table inet thinny was missing and is loaded again; Incus's and Tailscale's tables may be gone too "
+        "(see README, Prerequisites)")
+
+
 def ufw_lacks(rules: list[str]) -> list[str]:
     """Those of `rules` (ufw commands) ufw has not got while it is on; none while it is off or busy."""
     if not shutil.which("ufw") or "ENABLED=yes" not in UFW_CONF.read_text().splitlines():
