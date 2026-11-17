@@ -17,7 +17,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import host, instances, render
+from . import host, instances, render, update
 from .registry import Registry
 from .settings import CONFIG_TOML, MONITORING_PORTS, Settings, load
 from .system import STATE_DIR, CommandError, http_status, log, run, step, tailscale_name, write_file
@@ -301,8 +301,13 @@ def write_usage_metrics() -> None:
 
 
 def _usage_of(name: str) -> list[tuple[str, str, str, float]]:
-    """The instance's (name, provider, window, share used) of thinny's providers; none when Hermes got nothing.
-    Hermes asks the provider the instance uses, its lock's included. Its users control what Hermes says."""
+    """The instance's (name, provider, window, share used) of thinny's providers; none when Hermes got nothing, or
+    while an update changes its Hermes. Hermes asks the provider the instance uses, its lock's included. Its users
+    control what Hermes says."""
+    # Read just before starting Hermes, which could otherwise finish the update itself and fail it (NOTES, Dashboard).
+    with contextlib.suppress(FileNotFoundError):
+        if update.UNFINISHED.read_text().split()[2:] == [name]:
+            return []
     try:
         res = instances.hermes(name, ["usage", "--json"], check=False, timeout=instances.USAGE_TIMEOUT)
         if res.returncode:   # without a credential, or the provider did not answer

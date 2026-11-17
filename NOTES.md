@@ -149,6 +149,9 @@ Debian 13, kernel 6.12, Incus 6.0.4 (`incus-base`), Hermes v0.23.0 -> v0.23.1. A
   `tailscale serve` got `__Host-` Secure cookies, the Czech UI and the seeded look.
 - `incus exec --user` sets no supplementary groups, so commands run through `runuser`.
   Gateway ExecStart: `"/home/<name>/.hermes/hermes-agent/.hermes/bin/hermes" "gateway" "run"`.
+- A timed-out command (2026-11-17, Incus 6.0.5 on this workstation): killing `incus exec`, as thinny's
+  timeout does, leaves the command running in the container under its init (`runuser` goes, its child
+  stays). Its output pipe is closed, so it dies at its next write (a shell from SIGPIPE).
 - Policy: a read-only `/etc/hermes` disk (`shift=true`) was honoured ("9 managed settings
   were not saved"); model-guard mounted read-only into `hermes-agent/plugins/` plus a
   `.git/info/exclude` line was enabled. Managed `plugins.enabled` replaces the instance's
@@ -337,6 +340,17 @@ Incus 6.0.0, 6.0.4 and 6.0.5, Prometheus 2.45 and 2.53, node exporter 1.7 to 1.1
   exporter 1.7 and 1.10 label `node_textfile_mtime_seconds` with the file's full path. From public reports,
   not tried: Codex's own TUI reads its limits every minute; Anthropic's limits readout answers few requests per
   sign-in, and a 429 can last hours, also for the user's own Claude Code.
+- Usage checks during an update (Hermes v0.23.1 **[src]**): every `hermes` run first checks that its
+  dependencies match the checkout (`uv.lock`, `pyproject.toml`, the Python pin; v0.23.0 to v0.23.2 each changed
+  one). Started between the installer's move of the checkout and its `pm install`, `hermes usage` would find them
+  stale and finish the update itself under Hermes's update lock, building for minutes, past thinny's timeout
+  (see Incus containers); the installer's build step then fails at once on that lock, and the update with it. So
+  the check skips the instance `update-unfinished` names: the update names it before touching it (apt and
+  `git fetch` take seconds before the checkout moves), keeps it until the next instance or the end, and after a
+  failure until a run finishes it. Not thinny's lock: it waits for nobody, so a check holding it at the wrong
+  moment would fail the update or a command. A `hermes` started meanwhile by hand, by `thinny doctor` or
+  `thinny instance usage` can still do it. The credential refresh is safe alongside: nothing in the update
+  writes `auth.json`, and Hermes writes it atomically under `auth.lock`, as the gateway does.
 - Grafana answers about 10 s after it starts (database migrations, provisioning): restarting all
   three at every apply left `doctor` failing and the printed address unanswered, so apply restarts
   only what changed and waits until Prometheus and Grafana answer. Memory with one instance:
@@ -464,7 +478,6 @@ Hermes v0.23.1 (3b42157) **[src]**, hermes-webui 0.52 and hermes-3310 **[src]**;
 - Subscription usage on the dashboard is untested on a server: a day with a ChatGPT and a Claude instance
   (time and CPU per check, Anthropic's 429s). Also open: Codex's usage endpoint may answer 429 at 100 % (a gap
   where it matters most); the Claude plugin reads Claude Code's older answer (`utilization`) of 1 or less as a
-  fraction, so 1 % or less could show as up to 100 % (upstream); a check that starts `hermes` during the
-  nightly update; whether a timed-out `incus exec` leaves the command running in the container.
+  fraction, so 1 % or less could show as up to 100 % (upstream).
 - Per-instance ChatGPT seats versus one API account per organisation (a local proxy such as
   CLIProxyAPI is parked).

@@ -11,7 +11,7 @@ import types
 
 import pytest
 
-from thinny import cli, dashboard, host, instances, render, system
+from thinny import cli, dashboard, host, instances, render, system, update
 from thinny.registry import Instance, Registry
 from thinny.settings import Settings, SettingsError
 from thinny.system import CommandError
@@ -157,6 +157,7 @@ def server(tmp_path, monkeypatch):
     monkeypatch.setattr(dashboard, "load", lambda: srv.settings)
     monkeypatch.setattr(cli.os, "geteuid", lambda: 0)   # as root: cli.main would run itself again with sudo
     dashboard_files(tmp_path, monkeypatch)
+    monkeypatch.setattr(update, "UNFINISHED", tmp_path / "update-unfinished")
     (tmp_path / "etc/thinny").mkdir(parents=True)
     monkeypatch.setattr(host, "SYSTEMD", tmp_path / "etc/systemd/system")
     monkeypatch.setattr(host, "DASHBOARD_STATE", tmp_path / "var/lib/thinny/dashboard")
@@ -450,6 +451,26 @@ def test_it_asks_once_a_clock_hour_at_the_timers_first_run_in_it(server):
         if asked(srv):
             hours.append(minute)
     assert hours == [-10, 0, 60, 120]
+
+
+def test_it_leaves_out_the_instance_whose_hermes_an_update_is_changing(server, monkeypatch):
+    srv = server
+    reg = Registry({name: Instance(name, 9120 + i, "lan", state="active") for i, name in enumerate(["alice", "bob"])})
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
+    srv.containers = {"alice": 30 * 2**30, "bob": 30 * 2**30}
+    srv.settings = USAGE
+    srv.usage = {name: usage("openai-codex", ("Session", 37), ("Weekly", 12)) for name in ("alice", "bob")}
+    update.UNFINISHED.write_text("v0.23.2 abc123 bob\n")
+    srv.now = HOUR
+    assert cli.main(["metrics"]) == 0
+    assert asked(srv) == ["alice"]
+    assert dashboard.USAGE_METRICS.read_text() == render.usage_metrics([("alice", "ChatGPT", "5h", 0.37),
+                                                                        ("alice", "ChatGPT", "week", 0.12)])
+    update.UNFINISHED.write_text("v0.23.2 abc123\n")   # not on an instance yet
+    srv.now = HOUR + 3600
+    srv.calls.clear()
+    cli.main(["metrics"])
+    assert asked(srv) == ["alice", "bob"]
 
 
 def test_a_round_keeps_only_what_it_got_and_freshens_the_file_also_when_it_stays(server, monkeypatch):
