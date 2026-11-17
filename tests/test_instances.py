@@ -134,9 +134,13 @@ class Incus:
         elif cmd[:2] == ["incus", "import"]:
             self.imported_mode = os.stat(cmd[2]).st_mode & 0o777
             try:
-                self.containers[cmd[3]] = json.loads(Path(cmd[2]).read_text())
+                container = json.loads(Path(cmd[2]).read_text())
             except ValueError:
                 return "Error: not a backup", 1
+            for device, d in container["devices"].items():
+                if d["type"] == "disk" and d.get("required") != "false" and not Path(d["source"]).exists():
+                    return f'Error: Missing source path "{d["source"]}" for disk "{device}"', 1
+            self.containers[cmd[3]] = container
         elif cmd[:2] == ["incus", "start"]:
             self.containers[cmd[2]]["state"] = "RUNNING"
         elif cmd[:2] == ["incus", "delete"]:

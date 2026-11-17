@@ -24,8 +24,10 @@ def archive(**changes) -> io.BytesIO:
                  "account": True, "hermes": True, "unit": True,
                  "devices": {"eth0": {"type": "nic", "nictype": "routed", "ipv4.address": "10.78.0.7",
                                       "host_name": "thinny-9127"},
-                             "policy": {"type": "disk", "source": "/etc/hermes", "path": "/etc/hermes",
-                                        "readonly": "true", "shift": "true"},
+                             "policy": {"type": "disk", "source": str(host.POLICIES / "alice"),
+                                        "path": "/etc/hermes", "readonly": "true", "shift": "true"},
+                             "trace": {"type": "disk", "source": "/var/lib/thinny/trace/alice",
+                                       "path": "/var/log/thinny", "readonly": "true", "required": "false"},
                              "webapp": {"type": "proxy", "listen": "tcp:127.0.0.1:9127",
                                         "connect": "tcp:127.0.0.1:9127"},
                              "model-guard": guard},
@@ -41,6 +43,8 @@ def target(incus, tmp_path, monkeypatch):
     monkeypatch.setattr(move, "STATE_DIR", tmp_path)
     monkeypatch.setattr(update, "UNFINISHED", tmp_path / "update-unfinished")
     monkeypatch.setattr(host, "tailscale_status", lambda: None)
+    monkeypatch.setattr(host, "FILES", tmp_path / "files")
+    (tmp_path / "files" / "model-guard").mkdir(parents=True)
     return Registry({"bob": Instance("bob", 9120, "local", address="10.78.0.1", state="active")})
 
 
@@ -69,7 +73,7 @@ def test_a_moved_instance_keeps_its_users_settings_and_gets_this_servers_port_an
     assert (devices["eth0"]["ipv4.address"], devices["eth0"]["host_name"]) == ("10.78.0.2", "thinny-9121")
     assert (devices["webapp"]["listen"], devices["webapp"]["connect"]) == ("tcp:127.0.0.1:9121",) * 2
     assert incus.index("incus config device set alice eth0") < incus.index("incus start alice")
-    # this server's policy for alice, also when its old one shared /etc/hermes
+    # this server's policy for alice, written before the import: Incus refuses a disk whose source is missing
     assert devices["policy"]["source"] == str(host.POLICIES / "alice")
     assert devices["policy"]["shift"] == devices["model-guard"]["shift"] == "false"
     assert incus.index("incus config device set alice policy") < incus.index("incus start alice")
