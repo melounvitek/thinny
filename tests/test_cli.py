@@ -1,8 +1,10 @@
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from test_instances import incus  # noqa: F401 - incus: the fake Incus fixture
 
 from thinny import (apply, cli, dashboard, export, host, instances, mail, move, render, settings, system, telegram, trace,
                     update)
@@ -209,6 +211,16 @@ def test_instance_add_takes_the_limits_of_the_new_instance(server, monkeypatch):
     with pytest.raises(SystemExit):
         cli.main(["instance", "add", "carol", "--access", "local", "--cpu", "0"])
     assert len(added) == 2
+
+
+def test_an_instances_policy_is_readable_in_its_container_whatever_the_admins_umask(server, incus):
+    umask = os.umask(0o077)   # sudo passes the admin's on, and a hardened server's is strict
+    try:
+        assert cli.main(["instance", "add", "alice", "--access", "local"]) == 0
+    finally:
+        os.umask(umask)
+    # Its account is only "others" on its policy folder, and Hermes takes a policy it cannot read as none.
+    assert (host.POLICIES / "alice").stat().st_mode & 0o777 == 0o755
 
 
 @pytest.fixture
