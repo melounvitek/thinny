@@ -4,7 +4,7 @@
 # incus-base: containers only (no virtual machines). Ubuntu 24.04 has no incus-base, and its
 # incus has no virtual machines either.
 set -eu
-# Not the admin's: containers read the model guard installed here as others.
+# Not the admin's: other accounts read what is installed here too, as Grafana's does its dashboards.
 umask 022
 
 LIB=/usr/local/lib/thinny
@@ -36,6 +36,8 @@ cp -r "$SRC/thinny" "$SRC/bin" "$SRC/config.example.toml" "$SRC/group.example.to
 # leave them an empty one. Gateways load a changed model guard at their next restart.
 mkdir -p "$LIB/files"
 cp -r "$SRC/files/." "$LIB/files/"
+# Readable whatever the clone's umask, which cp keeps: containers and Grafana read these as others.
+chmod -R a+rX "$LIB/files"
 find "$LIB" -name __pycache__ -prune -exec rm -rf {} +
 chmod 755 "$LIB/bin/thinny"
 ln -sfn "$LIB/bin/thinny" /usr/local/sbin/thinny
