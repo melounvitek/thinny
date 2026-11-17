@@ -32,9 +32,9 @@ def run() -> None:
     print("\n".join(f"  {inst.name} ({inst.state}{', mailbox ' + inst.mailbox if inst.mailbox else ''})"
                     for inst in reg.instances.values()) or "  (none)")
     print("It also removes what thinny set up: the Incus profile and storage pool (unless something else\n"
-          "uses the pool), the firewall table, the nightly update, the access trace, the Webapps' Caddy and\n"
-          f"Tailscale sites, the dashboard, {settings.CONFIG_TOML.parent}, {host.MANAGED}, {system.STATE_DIR} and\n"
-          "thinny itself.")
+          "uses the pool), the firewall table and its check, the nightly update, the access trace, the\n"
+          f"Webapps' Caddy and Tailscale sites, the dashboard, {settings.CONFIG_TOML.parent}, {host.MANAGED},\n"
+          f"{system.STATE_DIR} and thinny itself.")
     hostname = socket.gethostname()
     try:
         answer = input(f"Type this server's hostname ({hostname}) to remove it all: ")
@@ -49,6 +49,9 @@ def run() -> None:
         system.run(["systemctl", "stop", "thinny-update.service"])
     if (host.SYSTEMD / "thinny-trace.service").exists():
         system.run(["systemctl", "disable", "--now", "thinny-trace.service"])
+    if (host.SYSTEMD / "thinny-firewall.timer").exists():   # its check would load the table again once it is deleted
+        system.run(["systemctl", "disable", "--now", "thinny-firewall.timer"])
+        system.run(["systemctl", "stop", "thinny-firewall.service"])   # a check that is running
     had_dashboard = host.dashboard_access() is not None
     dashboard.turn_off()
     left = []   # mailboxes Purelymail keeps: their failure must not keep thinny here
@@ -81,7 +84,8 @@ def run() -> None:
             if image["cached"]:
                 system.run(["incus", "image", "delete", image["fingerprint"]], check=False)
         pool_kept = system.run(["incus", "storage", "delete", render.POOL], check=False).returncode != 0
-    for unit in ("thinny-update.service", "thinny-update.timer", "thinny-trace.service", "incus.service.d/thinny.conf"):
+    for unit in ("thinny-update.service", "thinny-update.timer", "thinny-trace.service", "thinny-firewall.service",
+                 "thinny-firewall.timer", "incus.service.d/thinny.conf"):
         (host.SYSTEMD / unit).unlink(missing_ok=True)
     with contextlib.suppress(OSError):  # gone, or with the admin's own drop-ins
         (host.SYSTEMD / "incus.service.d").rmdir()
