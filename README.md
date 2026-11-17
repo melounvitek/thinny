@@ -6,7 +6,7 @@ system container with its own Hermes and a password-protected Webapp, or
 [hermes-webui](https://github.com/nesquena/hermes-webui) in its place. All instances share one
 central policy and one Hermes release.
 
-Status: in development. Design notes: [`PLAN.md`](PLAN.md).
+Status: in development. Design notes: [`NOTES.md`](NOTES.md).
 
 - **Isolated instances:** one container each (Debian 13 with systemd), with CPU, memory,
   process and disk limits. A firewall lets it reach the internet and nothing else. Its users
