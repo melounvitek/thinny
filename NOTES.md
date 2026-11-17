@@ -412,6 +412,27 @@ Hermes v0.23.1 (3b42157) **[src]**, hermes-webui 0.52 and hermes-3310 **[src]**;
   and `auth.json` its user signs in again.
 - Other containers filling the storage pool during an export are not the export's to stop.
 
+### Firewall check (2026-11-17)
+**[tested]** in a VM of Ubuntu 24.04 (systemd 255) and one of Debian 13 (systemd 257), with thinny's table and
+the check's two units but without Incus, unless marked.
+
+- `nft flush ruleset`, and `nft -f` of a file that starts with it (Debian's own `/etc/nftables.conf`), remove
+  thinny's table without restarting `nftables.service`, so the incus.service drop-in does not load it again.
+  `thinny-firewall.timer` runs `thinny firewall-check` every minute: when `nft list tables` lacks
+  `table inet thinny`, it loads `/etc/thinny/thinny.nft` as it is. After a flush the table was back within the
+  minute. Only thinny's: Incus's per-NIC rules and Tailscale's tables stay gone.
+- `OnBootSec=1min` with `OnUnitActiveSec=1min` ran the check every 60 to 61 s, the first time a minute after
+  boot, or at once when the timer was enabled later. `AccuracySec=1s`: by default a timer may run up to a
+  minute late **[docs]**.
+- At boot the drop-in loads the table when incus.service starts. Where it has not by the first check (a boot
+  of over a minute, or one where nothing starts incusd), the check loads the table and logs its line, once per
+  boot.
+- systemd logs three or four lines for each run of a oneshot service ("Starting", "Deactivated successfully",
+  "Finished", "Consumed ... CPU time"), all as info. `LogLevelMax=notice` drops them, and with them what the
+  command prints, logged as info by default: the check's line reached `thinny.log` but not the journal.
+  `SyslogLevel=warning` logs what it prints as warnings, which pass. A failing run still shows: thinny's error,
+  "Main process exited" (notice), "Failed with result" (warning) and "Failed to start" (err).
+
 ## 2. Rejected options (and why)
 
 - Docker: docker group = root.
@@ -472,6 +493,8 @@ Hermes v0.23.1 (3b42157) **[src]**, hermes-webui 0.52 and hermes-3310 **[src]**;
 - Per-instance SSH and Tailscale are left to the users; SSH needs the host as jump host.
 - Not tested: `systemctl restart nftables` with containers running (do Incus's per-NIC
   anti-spoofing rules come back without restarting the containers?).
+- The firewall check is untested on a server: a flush with containers running and Incus's and Tailscale's
+  tables around, and a boot with Incus (does incus.service load the table before the first check?).
 - The storage pool is sized once at install; growing it is manual.
 - Alerting from the server itself: the dashboard sends none, and the watchdog runs off-server.
 - The dashboard on Debian 13 and Ubuntu 24.04, and a Grafana upgrade by unattended upgrades.

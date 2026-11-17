@@ -219,6 +219,22 @@ def test_doctor_warns_when_admins_access_is_not_traced(monkeypatch, tmp_path, en
     assert found == level and fix == ("" if level == "OK" else "thinny config apply")
 
 
+@pytest.mark.parametrize("enabled, running, level", [
+    ("enabled", "active", "OK"),
+    ("enabled", "inactive", "WARN"),     # stopped
+    ("disabled", "active", "WARN"),      # gone after the next reboot
+    ("not-found", "inactive", "WARN"),   # a server set up before the check
+])
+def test_doctor_warns_when_nothing_would_load_a_flushed_firewall_table_again(monkeypatch, enabled, running, level):
+    answers = {"list": LISTED, "is-enabled": enabled + "\n", "is-active": running + "\n"}
+    monkeypatch.setattr(system, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, answers[cmd[1]], ""))
+    s = dataclasses.replace(S, blocked_networks=("203.0.113.0/24",))
+    [(table, _, _), (found, message, fix)] = checks.firewall(s, Registry())
+    assert table == "OK"
+    assert found == level and "thinny-firewall.timer" in message
+    assert fix == ("" if level == "OK" else "thinny config apply")
+
+
 def test_doctor_warns_while_rows_wait_for_a_sheet(monkeypatch, tmp_path):
     monkeypatch.setattr(system, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "enabled\n", ""))
     monkeypatch.setattr(trace, "UNSENT", tmp_path)

@@ -124,10 +124,12 @@ def install_units(s: Settings) -> None:
         write_file(SYSTEMD / "thinny-update.service", render.UPDATE_SERVICE),
         write_file(SYSTEMD / "thinny-update.timer", render.update_timer(s)),
         write_file(SYSTEMD / "thinny-trace.service", render.TRACE_SERVICE),
+        write_file(SYSTEMD / "thinny-firewall.service", render.FIREWALL_SERVICE),
+        write_file(SYSTEMD / "thinny-firewall.timer", render.FIREWALL_TIMER),
     ]
     if any(changed):
         run(["systemctl", "daemon-reload"])
-    run(["systemctl", "enable", "--now", "thinny-update.timer"])
+    run(["systemctl", "enable", "--now", "thinny-update.timer", "thinny-firewall.timer"])
     run(["systemctl", "enable", "thinny-trace.service"])
     run(["systemctl", "restart", "thinny-trace.service"])  # install.sh may have brought a new thinny
     write_file(SYSCTL_FILE, render.SYSCTL)
@@ -140,6 +142,17 @@ def firewall(s: Settings) -> None:
     write_file(FIREWALL_FILE, render.firewall(s.network_interface, list(s.blocked_networks)))
     run(["nft", "-c", "-f", str(FIREWALL_FILE)])
     run(["nft", "-f", str(FIREWALL_FILE)])
+
+
+def firewall_check() -> None:
+    """Load the firewall table again, as it was last written, when it is gone: what flushes the ruleset without
+    restarting nftables.service (`nft flush ruleset`, Debian's own /etc/nftables.conf) removes it, and incus.service
+    does not load it then. Run every minute by thinny-firewall.timer."""
+    if "table inet thinny" in run(["nft", "list", "tables"]).stdout.splitlines():
+        return
+    run(["nft", "-f", str(FIREWALL_FILE)])
+    log("firewall table inet thinny was missing and is loaded again; Incus's and Tailscale's tables may be gone too "
+        "(see README, Prerequisites)")
 
 
 def ufw_lacks(rules: list[str]) -> list[str]:

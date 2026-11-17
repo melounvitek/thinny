@@ -287,6 +287,35 @@ PartOf=nftables.service
 ExecStartPre=/usr/sbin/nft -f {FIREWALL_FILE}
 """
 
+# What flushes the ruleset without restarting nftables.service (`nft flush ruleset`, Debian's own /etc/nftables.conf)
+# removes the table until this check loads it again. The journal gets nothing while the table is there: LogLevelMax
+# drops systemd's lines about each start, which are info, and what the check says is a warning, so it stays.
+FIREWALL_SERVICE = f"""# {HEADER}
+[Unit]
+Description=thinny check that the containers' firewall table is loaded
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/thinny firewall-check
+LogLevelMax=notice
+SyslogLevel=warning
+"""
+
+# Every minute, the first time a minute after boot, which leaves incus.service the time to load the table first.
+# AccuracySec: by default systemd may run a timer up to a minute late.
+FIREWALL_TIMER = f"""# {HEADER}
+[Unit]
+Description=thinny check that the containers' firewall table is loaded
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
+"""
+
 SYSCTL = f"""# {HEADER}
 # Instance containers have routed addresses.
 net.ipv4.ip_forward = 1

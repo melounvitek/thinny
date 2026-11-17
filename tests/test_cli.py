@@ -528,6 +528,52 @@ def test_the_trace_runs_even_with_a_broken_site_toml(server, monkeypatch):
     assert cli.main(["trace"]) == 1
 
 
+@pytest.fixture
+def nft(server, monkeypatch, tmp_path):
+    """Plays nft with thinny's table loaded, config.toml broken and an update holding thinny's lock. Returns its
+    tables, the commands it got and the output of those that fail."""
+    site, _ = server
+    site.write_text("[policy]\nmodel = \n")
+    tables, calls, fails = ["table inet filter", "table inet thinny"], [], {}
+
+    def run(cmd, **kw):
+        calls.append(" ".join(cmd))
+        if calls[-1] in fails:
+            raise system.CommandError(f"{calls[-1]} -> exit 1\n{fails[calls[-1]]}")
+        if cmd[:2] == ["nft", "-f"]:
+            tables.append("table inet thinny")
+        return subprocess.CompletedProcess(cmd, 0, "".join(f"{table}\n" for table in tables), "")
+    monkeypatch.setattr(host, "run", run)
+    monkeypatch.setattr(system, "LOG_FILE", tmp_path / "log")
+    with system.lock():
+        yield tables, calls, fails
+
+
+def test_the_firewall_check_loads_a_missing_table_again_and_logs_it(nft, capsys):
+    tables, calls, _ = nft
+    assert cli.main(["firewall-check"]) == 0
+    assert calls == ["nft list tables"]
+    assert capsys.readouterr().err == "" and not system.LOG_FILE.exists()
+
+    tables.remove("table inet thinny")   # nft flush ruleset, then the admin's own table loaded again
+    assert cli.main(["firewall-check"]) == 0
+    assert calls[1:] == ["nft list tables", "nft -f /etc/thinny/thinny.nft"]
+    line = ("firewall table inet thinny was missing and is loaded again; Incus's and Tailscale's tables may be gone "
+            "too (see README, Prerequisites)\n")
+    assert capsys.readouterr().err == line
+    assert system.LOG_FILE.read_text().endswith(" " + line)
+
+
+@pytest.mark.parametrize("failing", ["nft list tables", "nft -f /etc/thinny/thinny.nft"])
+def test_a_firewall_check_that_cannot_tell_or_load_the_table_fails(nft, capsys, failing):
+    tables, _, fails = nft
+    tables.remove("table inet thinny")
+    fails[failing] = "Error: Could not process rule: Operation not permitted"
+    assert cli.main(["firewall-check"]) == 1
+    assert capsys.readouterr().err == f"thinny: {failing} -> exit 1\n{fails[failing]}\n"
+    assert not system.LOG_FILE.exists()   # nothing says it is loaded
+
+
 def test_config_edit_applies_a_valid_change_even_to_a_broken_site_toml(server, monkeypatch):
     site, calls = server
     site.write_text("[policy]\nmodel = \n")

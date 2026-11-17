@@ -118,6 +118,10 @@ With ufw, run `ufw route allow in on thinny-+` instead of the forward chain.
 > it happens, run `thinny config apply` and `systemctl restart tailscaled`, then reboot at a
 > quiet time.
 
+Every minute, thinny checks that its table is loaded and loads it again when something flushed it,
+with a line in `/var/log/thinny.log` and the journal. That can take about a minute, and brings back
+thinny's table only: Incus's and Tailscale's tables stay gone, so the steps above still apply.
+
 **Unattended upgrades.** If they reboot the server, schedule it well after the nightly Hermes
 update (`hermes.update_time`, 03:00), which can take an hour with many instances:
 
@@ -154,8 +158,8 @@ bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/melounvitek/th
 6. On the first run, `thinny init` asks for the settings below and writes them into
    `/etc/thinny/config.toml`, a copy of the commented example. Without a terminal, it copies the
    example and stops.
-7. Once `config.toml` exists, it runs `thinny setup`: the Incus storage pool, the firewall, the
-   update timer and the shared policy.
+7. Once `config.toml` exists, it runs `thinny setup`: the Incus storage pool, the firewall and its
+   check, the update timer and the shared policy.
 
 It does not add any instances.
 
@@ -729,10 +733,10 @@ thinny uninstall
 It lists the instances and asks you to type the server's hostname. Then it deletes every
 instance's container with all its data, and everything thinny set up: the update timer, the
 access trace, `tailscale serve` of the instances' ports, thinny's Caddyfile (Caddy is disabled),
-the dashboard's settings, the Incus profile and storage pool, the firewall table, `/etc/thinny`,
-`/etc/hermes`, `/var/lib/thinny`, the log, `/etc/sudoers.d/thinny-checks`, the clone in
-`/usr/local/src/thinny` and thinny itself. **There is no undo.** If a step fails, fix the cause and
-run it again: it continues.
+the dashboard's settings, the Incus profile and storage pool, the firewall table and its check,
+`/etc/thinny`, `/etc/hermes`, `/var/lib/thinny`, the log, `/etc/sudoers.d/thinny-checks`, the clone
+in `/usr/local/src/thinny` and thinny itself. **There is no undo.** If a step fails, fix the cause
+and run it again: it continues.
 
 A storage pool that something else uses stays; the output says so. The packages stay installed (the
 dashboard's with their services masked, and their history): `apt purge` removes those nothing else

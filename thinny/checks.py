@@ -181,6 +181,12 @@ def firewall(s: Settings, reg: Registry):
            if table_parts(listed) == table_parts(rendered)
            else fail("firewall table inet thinny is missing or not as config.toml says: containers may reach "
                      "each other, the host or blocked networks", "thinny config apply"))
+    enabled, running = (system.run(["systemctl", query, "thinny-firewall.timer"], check=False).stdout.strip()
+                        for query in ("is-enabled", "is-active"))
+    yield (ok("thinny-firewall.timer checks every minute that the firewall table is loaded")
+           if (enabled, running) == ("enabled", "active")
+           else warn(f"thinny-firewall.timer is {enabled} and {running}: a flushed firewall table may stay gone",
+                     "thinny config apply"))
 
 
 def table_parts(text: str) -> tuple[dict[str, list[str]], dict[str, str]]:

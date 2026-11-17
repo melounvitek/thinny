@@ -83,7 +83,10 @@ def test_units_and_forwarding(commands):
     assert "net.ipv4.ip_forward = 1" in host.SYSCTL_FILE.read_text()
     assert "-kernel.apparmor_restrict_unprivileged_userns = 0" in host.SYSCTL_FILE.read_text()
     assert (host.SYSTEMD / "thinny-trace.service").read_text() == render.TRACE_SERVICE
-    assert [c for c, _ in calls] == ["systemctl daemon-reload", "systemctl enable --now thinny-update.timer",
+    assert (host.SYSTEMD / "thinny-firewall.service").read_text() == render.FIREWALL_SERVICE
+    assert (host.SYSTEMD / "thinny-firewall.timer").read_text() == render.FIREWALL_TIMER
+    assert [c for c, _ in calls] == ["systemctl daemon-reload",
+                                     "systemctl enable --now thinny-update.timer thinny-firewall.timer",
                                      # restarted: a new thinny may have come with install.sh
                                      "systemctl enable thinny-trace.service", "systemctl restart thinny-trace.service",
                                      f"/usr/lib/systemd/systemd-sysctl {host.SYSCTL_FILE}"]

@@ -201,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("uninstall", help="remove thinny and every instance, with all their data")
     sub.add_parser("trace")  # without help, so not listed: thinny-trace.service runs it
     sub.add_parser("metrics")  # without help, so not listed: thinny-metrics.timer runs it
+    sub.add_parser("firewall-check")  # without help, so not listed: thinny-firewall.timer runs it
     for commands in (sub, cfg, inst, grp):   # listed alphabetically in help
         commands._choices_actions.sort(key=lambda action: action.dest)
     argv = sys.argv[1:] if argv is None else argv
@@ -238,6 +239,9 @@ def main(argv: list[str] | None = None) -> int:
         if command == "metrics":  # without thinny's lock, which an update holds for long; disk use without config.toml
             dashboard.write_disk_metrics()
             dashboard.write_usage_metrics()
+            return 0
+        if command == "firewall-check":  # without config.toml and thinny's lock, like the two above
+            host.firewall_check()
             return 0
         if command == "uninstall":
             with lock(update.SELF_UPDATE_LOCK), lock():
