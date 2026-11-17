@@ -192,6 +192,13 @@ Debian 13, kernel 6.12, Incus 6.0.4 (`incus-base`), Hermes v0.23.0 -> v0.23.1. A
 - A running gateway got the `docker` group only after `incus restart` of its container.
 - The OS inside the containers is updated by their own `unattended-upgrades` with Debian's
   defaults, not by thinny.
+- A strict umask (2026-11-17, thinny 2a1f9a3). In a Debian 13 VM, the README's one-line
+  installer as an account with sudo, without a terminal and under umask 077, then `install.sh`
+  again: both exit 0, the clone 700 with 600 files, `/usr/local/lib/thinny` 755 with 644 files;
+  as that account without sudo, `thinny status` and `thinny complete` worked. On this
+  workstation (Incus 6.0.5), `instance add` under umask 077: the policy folder 755 with 644
+  files; inside, the instance's account read `/etc/hermes/config.yaml` (its owner shows as
+  `nobody`) and model-guard's files. It took 441 s.
 
 ### Ubuntu (2026-11-13)
 In local Multipass VMs **[tested]**: 26.04.1 (kernel 7.0, Incus
@@ -234,6 +241,12 @@ Debian 13, Incus 6.0.4, from Incus's stable-6.0 source and **[tested]** on the t
   (`<86>`: authpriv.info).
 - A bound Apps Script deployed as a web app has no active spreadsheet (Google's docs), so the
   README's script opens its sheet by ID.
+- (2026-11-17) The installed service, on this workstation and in a Debian 13 VM **[tested]**: a
+  run of thinny was noted once per instance (`thinny instance export <name> ran its commands in
+  <name>`; in a move, the new server's `thinny instance receive ...`), a direct `incus exec` in
+  full, `incus file push` as `incus file (pull, push, edit or mount) <name>`, and the move's
+  export, in the instance's trace on the old server, as `incus export <name>`
+  (`instance-backup-created`).
 
 ### Plugins and Claude Code (2026-11-13)
 - `hermes plugins install` without a terminal reads `requires_env` prompts from stdin; with
@@ -391,7 +404,7 @@ issues **[docs]**, not tried.
   needed the registry's empty `mailbox` fields removed **[tested]**.
 
 ### Export (2026-11-16)
-Hermes v0.23.1 (3b42157) **[src]**, hermes-webui 0.52 and hermes-3310 **[src]**; nothing run.
+Hermes v0.23.1 (3b42157) **[src]**, hermes-webui 0.52 and hermes-3310 **[src]**; run only where **[tested]**.
 
 - `hermes backup -o <zip>` zips the Hermes root (`~/.hermes`, profiles included) without the codebase,
   venvs and dependency trees, browser profiles, `backups/`, `state-snapshots/`, `checkpoints/`, runtime roots
@@ -411,6 +424,24 @@ Hermes v0.23.1 (3b42157) **[src]**, hermes-webui 0.52 and hermes-3310 **[src]**;
   member it restores before writing, and asks before overwriting a home (`--force` does not). Without `.env`
   and `auth.json` its user signs in again.
 - Other containers filling the storage pool during an export are not the export's to stop.
+- On this workstation (2026-11-17, thinny 1ad9f29, a WebUI instance) **[tested]**: `thinny instance export`
+  took 2 s, Hermes's backup 1 s of them: a 7.0 MiB zip of 488 files (17.2 MiB unpacked), every member's CRC
+  right, its `state.db` 1.4 MB. Besides skills, plugins, `cron`, the databases, `config.yaml`, `SOUL.md` and
+  `ui-preferences.json` it holds Hermes's logs (25 files under `logs/`) and lock files (`gateway.lock`,
+  `auth.lock` and the like).
+- It left out 11 files: `.env`, `auth.json`, `gateway-connections.json`, `webapp/session-token`, the vault's
+  `.vault.lock`, `vault.key` and `vault.json.enc`, WebUI's `.pbkdf2_key`, `.login_attempts.json` and
+  `.sessions.json`, and one more that thinny did not name. None of the instance's 11 real sign-in values was
+  in any member: Claude Code's and Codex's access and refresh tokens, the Webapp's password hash and secret,
+  WebUI's password and the rest of `auth.json`'s long values. Only the provider's base URL was, no secret
+  (`state.db`, `context_length_cache.yaml`, `logs/agent.log`).
+- `hermes import --force <zip>` as the account of a fresh Webapp instance of thinny, its gateway stopped
+  first: it checked the archive, restored 485 of the 488 files in 3.2 s, kept 3 runtime files of its own
+  (`gateway.lock`, `gateway_state.json`, a cached document), started the gateway service itself and exited 0.
+  The instance still had its own `.env` and no `auth.json`; `state.db` and `config.yaml` had the archive's
+  sizes. After `thinny config apply`, which restarted its gateway, `doctor` was all OK and the instance had
+  the exported one's `model.default`. Inferred, not looked at: the archive's `config.yaml` brought the
+  exported instance's `webapp` settings, and apply put its own back.
 
 ### Firewall check (2026-11-17)
 **[tested]** in a VM of Ubuntu 24.04 (systemd 255) and one of Debian 13 (systemd 257), with thinny's table and
@@ -432,6 +463,47 @@ the check's two units but without Incus, unless marked.
   command prints, logged as info by default: the check's line reached `thinny.log` but not the journal.
   `SyslogLevel=warning` logs what it prints as warnings, which pass. A failing run still shows: thinny's error,
   "Main process exited" (notice), "Failed with result" (warning) and "Failed to start" (err).
+- With Incus (thinny 7a4444d): in a Debian 13 VM (Incus 6.0.4, one container running, no Tailscale, no
+  firewall of its own) the timer ran every minute and wrote nothing to the journal while the table was
+  loaded. At one boot incus.service started 40 s before the first check, which logged nothing. On this
+  workstation (Ubuntu 26.04, Incus 6.0.5, two containers, Tailscale) the timer was active after the update
+  and its service wrote no journal line in its first 25 minutes; nothing was flushed there.
+- `nft flush ruleset` in that VM removed `inet thinny` and `inet incus`. Until the check ran, the container
+  could not reach the internet and could open the server's SSH port at the server's own address (blocked
+  before). The table was back after 52 s, the internet with it and the SSH port blocked again; one warning
+  line in the journal, the same in `thinny.log`.
+- `systemctl restart nftables` there (the service was disabled and inactive): incus.service restarted with
+  it and loaded thinny's table, and the check logged nothing; ten seconds later the container had the
+  internet and the SSH port was blocked.
+- Incus's per-NIC anti-spoofing rule came back after neither, nor after `systemctl restart incus` (the
+  container kept running): only after `incus restart <name>`. `thinny doctor` does not look for it:
+  `checks.firewall` compares `inet thinny` only, so it says OK while the rule is gone **[static]**.
+
+### Move (2026-11-17)
+**[tested]** once, thinny 7a4444d on both servers: from this workstation (Ubuntu 26.04, Incus 6.0.5) to a
+Debian 13 VM on it (QEMU/KVM, 4 CPUs, 6 GiB, Incus 6.0.4, sudo 1.9.16p2, no Tailscale, no firewall of its
+own), through `sudo -n` there. The instance: Webapp, local access, no group, lock, mailbox or phone line,
+2.8 GiB of disk (3.3 GiB on the new server).
+
+- Exit 0 after 626 s, about ten and a half minutes of them down: about 7 min from the start to the end of
+  `incus export` (the stop included), 25 s for the copy and the transfer over SSH, 2 min 30 s for
+  `incus import`, 27 s for the setup (from both servers' logs and traces). Debian's sudo passed the 2.9 GB
+  archive on stdin.
+- The new server gave it another port and address and the `host_name` `thinny-<port>`; its MAC address
+  stayed. `volatile.idmap.base` changed, and everything under its home was still its account's
+  (model-guard's mount point `nobody`'s). systemd-networkd had the new address and the container reached
+  the internet.
+- Kept: `.env` (same checksum, so the password) and `SOUL.md` identical, `state.db` the same size;
+  `config.yaml` had the new `webapp.port` and `public_url`. The gateway was active, the Webapp answered 302
+  and its login page 200, `doctor` exit 0 with all the instance's checks OK. The new server had no release
+  and got the old one's in `/var/lib/thinny/release`.
+- Docker data: a busybox container (`--restart unless-stopped`, overlay2) with a named volume, made in the
+  instance before the move, was up after it, with the volume's file.
+- A reboot of the new server: SSH back after about 36 s; the instance running, its gateway active, the
+  Docker container up, both nft tables loaded, thinny's units active, `doctor` exit 0.
+- The old server afterwards: the instance disabled, its container stopped with `boot.autostart` false,
+  nothing of the archive left in `/var/lib/thinny`, `doctor` all OK. It was not rebooted.
+- The new server logs `resuming the unfinished setup of <name>` for the instance it just received.
 
 ## 2. Rejected options (and why)
 
@@ -474,27 +546,25 @@ the check's two units but without Incus, unless marked.
 
 - The Google Sheet of the access trace is tested against a stand-in only: check a real Apps
   Script web app, its "ok" after the redirect, and the answer of one not open to anyone.
-- `instance move` is experimental, tested with fakes only. Between two real servers, check: the
-  uid remap of an imported container with `security.idmap.isolated`, a routed NIC changed with
-  `device set` before the first start, Docker data, a reboot of either server afterwards, and
-  sudo (Ubuntu's sudo-rs too) passing the archive on stdin.
+- `instance move` is experimental: one small Webapp instance moved once (section 1, Move). Not
+  tried: a move that fails on the way, a large instance, WebUI, `lan`, `tailscale` or `url`
+  access, a phone line, a group, a lock or the new server's model lock, sudo-rs on the new
+  server, and a reboot of the old one.
 - Package drift: `render.PACKAGES` copies the official image's Dockerfile lists (v0.23.1).
   When Hermes adds a system dependency the list must follow; containers get the list at
   `instance add` and before each Hermes update.
 - Phone line: a whole `instance add` with one, and a call from Hermes, are untested on a server.
 - Telegram: `instance telegram` against a real instance is untested on a server.
-- Access trace: an export's event (`instance-backup-created`, from the source only) and the
-  installed service with the wider trace are untested on a server.
+- Access trace: snapshots, `incus console --show-log` and other clients' file events are
+  untested with the installed service.
 - Mailboxes: not yet tried are a scheduled job's mail, mail from another Purelymail mailbox (dropped?),
   `move` and `uninstall` with a mailbox.
-- Export: untested on a server: a real `hermes backup` in a container, its time on a large `state.db`, the
-  copy with Hermes's real `profile_path_is_private`, and `hermes import` of the result. It follows Hermes's
-  list of credentials, but mirrors its private any-depth names: check them when Hermes changes.
+- Export: not tried are its time on a large `state.db` (2 s with 1.4 MB) and `hermes import` into a Hermes
+  outside thinny. It follows Hermes's list of credentials, but mirrors its private any-depth names: check
+  them when Hermes changes.
 - Per-instance SSH and Tailscale are left to the users; SSH needs the host as jump host.
-- Not tested: `systemctl restart nftables` with containers running (do Incus's per-NIC
-  anti-spoofing rules come back without restarting the containers?).
-- The firewall check is untested on a server: a flush with containers running and Incus's and Tailscale's
-  tables around, and a boot with Incus (does incus.service load the table before the first check?).
+- The firewall check: a flush with Tailscale's tables around is untried (the VM had no Tailscale, and nothing
+  was flushed on the workstation).
 - The storage pool is sized once at install; growing it is manual.
 - Alerting from the server itself: the dashboard sends none, and the watchdog runs off-server.
 - The dashboard on Debian 13 and Ubuntu 24.04, and a Grafana upgrade by unattended upgrades.
