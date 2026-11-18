@@ -546,11 +546,11 @@ def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_
     expected.update((reader, name) for reader in readers for name in ("alice", "bob"))
     instances.list_instances(reg)
     assert capsys.readouterr().out.splitlines() == [
-        "NAME   STATE   GROUP  ACCESS  FRONTEND  GATEWAY   CPU  RAM     DISK     MAIL  PHONE  URL",
-        "alice  active  -      lan     webapp    active    50%  1.0/4G  3.0/30G  yes   yes    https://192.0.2.10:9120",
-        "bob    active  sales  lan     webapp    INACTIVE  -    -       1.0/30G  -     -",
-        "carol  active  -      lan     webapp    -         -    -       -        -     -",
-        "dave   active  sales  lan     webui     active    -    0.5/4G  1.0/30G  -     ?      https://192.0.2.10:9123",
+        "NAME   STATE   GROUP  ACCESS  FRONTEND  GATEWAY   CPU    RAM     DISK     MAIL  PHONE  URL",
+        "alice  active  -      lan     webapp    active    1.0/2  1.0/4G  3.0/30G  yes   yes    https://192.0.2.10:9120",
+        "bob    active  sales  lan     webapp    INACTIVE  -      -       1.0/30G  -     -",
+        "carol  active  -      lan     webapp    -         -      -       -        -     -",
+        "dave   active  sales  lan     webui     active    -      0.5/4G  1.0/30G  -     ?      https://192.0.2.10:9123",
     ]
     del incus.containers["dave"]   # started again during the next list
     read.clear()
