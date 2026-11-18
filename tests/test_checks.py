@@ -188,8 +188,10 @@ def test_automatic_reboots_off_warn(setting):
         "03:00 in /etc/apt/apt.conf.d/ (see README, Prerequisites)")
 
 
-def test_unattended_upgrades_off_warns():
-    assert [r[0] for r in checks.unattended_upgrades('APT::Periodic::Unattended-Upgrade "0";\n', "03:00")] == ["WARN"]
+def test_unattended_upgrades_off_warns_about_automatic_reboots_too():
+    results = checks.unattended_upgrades('APT::Periodic::Unattended-Upgrade "0";\n', "03:00")
+    assert [message.split(":")[0] for _, message, _ in results] == ["unattended upgrades are off",
+                                                                     "automatic reboots are off"]
 
 
 @pytest.mark.parametrize("pending", [True, False])

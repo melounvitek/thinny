@@ -169,8 +169,8 @@ def unattended_upgrades(apt_dump: str, update_time: str):
     if values.get("APT::Periodic::Unattended-Upgrade") != "1":
         yield warn("unattended upgrades are off: security updates wait for you",
                    "apt install unattended-upgrades && dpkg-reconfigure -plow unattended-upgrades")
-        return
-    yield ok("unattended upgrades on")
+    else:
+        yield ok("unattended upgrades on")
     reboot = values.get("Unattended-Upgrade::Automatic-Reboot-Time", "")
     if values.get("Unattended-Upgrade::Automatic-Reboot") != "true":
         yield warn("automatic reboots are off: a new kernel protects the containers only after you reboot",
