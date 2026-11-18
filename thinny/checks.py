@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import dashboard as dash
-from . import host, instances, purelymail, render, settings, system, trace
+from . import host, instances, purelymail, render, settings, system, trace, update
 from .registry import Instance, Registry
 from .settings import MONITORING_PORTS, Settings
 
@@ -157,10 +157,14 @@ def prerequisites(s: Settings, reg: Registry):
                      "networks", "set up a forward chain that drops by default; " + FORWARD_FIX))
 
     yield from unattended_upgrades(system.run(["apt-config", "dump"], check=False).stdout, s.update_time)
+    # The containers share the server's kernel: a fixed one protects them only once it runs.
+    yield (warn(f"a reboot is pending ({update.REBOOT_REQUIRED}): until then, upgrades that need it, such as a new "
+                "kernel, protect nothing", "reboot at a quiet time, or wait for the automatic reboot")
+           if update.REBOOT_REQUIRED.exists() else ok("no reboot pending"))
 
 
 def unattended_upgrades(apt_dump: str, update_time: str):
-    """Unattended upgrades on, and automatic reboots (if any) after the nightly Hermes update."""
+    """Unattended upgrades on, and automatic reboots on, after the nightly Hermes update."""
     values = dict(re.findall(r'^(\S+) "(.*)";$', apt_dump, re.M))
     if values.get("APT::Periodic::Unattended-Upgrade") != "1":
         yield warn("unattended upgrades are off: security updates wait for you",
@@ -168,10 +172,15 @@ def unattended_upgrades(apt_dump: str, update_time: str):
         return
     yield ok("unattended upgrades on")
     reboot = values.get("Unattended-Upgrade::Automatic-Reboot-Time", "")
-    if values.get("Unattended-Upgrade::Automatic-Reboot") == "true" and re.fullmatch(r"\d\d:\d\d", reboot) \
-            and reboot <= update_time:
+    if values.get("Unattended-Upgrade::Automatic-Reboot") != "true":
+        yield warn("automatic reboots are off: a new kernel protects the containers only after you reboot",
+                   'set Unattended-Upgrade::Automatic-Reboot "true" and Unattended-Upgrade::Automatic-Reboot-Time '
+                   f"later than {update_time} in /etc/apt/apt.conf.d/ (see README, Prerequisites)")
+    elif re.fullmatch(r"\d\d:\d\d", reboot) and reboot <= update_time:
         yield warn(f"automatic reboots at {reboot}, not after the nightly Hermes update at {update_time}",
                    f"set Unattended-Upgrade::Automatic-Reboot-Time later than {update_time} in /etc/apt/apt.conf.d/")
+    else:
+        yield ok("automatic reboots on")
 
 
 def firewall(s: Settings, reg: Registry):
