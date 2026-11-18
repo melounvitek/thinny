@@ -1117,7 +1117,7 @@ def list_instances(reg: Registry, group: str | None = None) -> None:
                     used = state["cpu"]["usage"] - before[inst.name]["state"]["cpu"]["usage"]   # in ns
                     cpu = f"{used / 1e9 / seconds / int(c['expanded_config']['limits.cpu']):.0%}"
         rows.append((inst.name, inst.state, inst.group or "-", inst.access, inst.frontend, gateway, cpu, ram, disk,
-                     "yes" if inst.mailbox else "-", phone, inst.url.partition("://")[2].rstrip("/")))   # no scheme
+                     "yes" if inst.mailbox else "-", phone, inst.url.rstrip("/")))
     columns = [column for column in zip(*rows) if set(column[1:]) != {"-"}]
     widths = [max(map(len, column)) for column in columns]
     for r in zip(*columns):
