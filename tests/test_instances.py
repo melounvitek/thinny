@@ -546,11 +546,11 @@ def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_
     expected.update((reader, name) for reader in readers for name in ("alice", "bob"))
     instances.list_instances(reg)
     assert capsys.readouterr().out.splitlines() == [
-        "NAME   STATE   GROUP  ACCESS  FRONTEND  GATEWAY   CPU    RAM     DISK     MAIL  PHONE  URL",
-        "alice  active  -      lan     webapp    active    1.0/2  1.0/4G  3.0/30G  yes   yes    https://192.0.2.10:9120",
-        "bob    active  sales  lan     webapp    INACTIVE  -      -       1.0/30G  -     -",
-        "carol  active  -      lan     webapp    -         -      -       -        -     -",
-        "dave   active  sales  lan     webui     active    -      0.5/4G  1.0/30G  -     ?      https://192.0.2.10:9123",
+        "NAME   STATE   GROUP  FRONTEND  GATEWAY   CPU    RAM     DISK     MAIL  PHONE  URL",
+        "alice  active  -      webapp    active    1.0/2  1.0/4G  3.0/30G  yes   yes    https://192.0.2.10:9120",
+        "bob    active  sales  webapp    INACTIVE  -      -       1.0/30G  -     -",
+        "carol  active  -      webapp    -         -      -       -        -     -",
+        "dave   active  sales  webui     active    -      0.5/4G  1.0/30G  -     ?      https://192.0.2.10:9123",
     ]
     del incus.containers["dave"]   # started again during the next list
     read.clear()
@@ -559,7 +559,7 @@ def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_
     lines = capsys.readouterr().out.splitlines()
     assert [line.split()[0] for line in lines] == ["NAME", "bob", "dave"]
     # Neither had CPU use measured, nor has a mailbox.
-    assert lines[0].split() == ["NAME", "STATE", "GROUP", "ACCESS", "FRONTEND", "GATEWAY", "RAM", "DISK", "PHONE", "URL"]
+    assert lines[0].split() == ["NAME", "STATE", "GROUP", "FRONTEND", "GATEWAY", "RAM", "DISK", "PHONE", "URL"]
 
 
 @pytest.fixture

@@ -1100,7 +1100,7 @@ def list_instances(reg: Registry, group: str | None = None) -> None:
         time.sleep(1)
         containers = _containers()
         seconds = time.monotonic() - start
-    rows = [("NAME", "STATE", "GROUP", "ACCESS", "FRONTEND", "GATEWAY", "CPU", "RAM", "DISK", "MAIL", "PHONE", "URL")]
+    rows = [("NAME", "STATE", "GROUP", "FRONTEND", "GATEWAY", "CPU", "RAM", "DISK", "MAIL", "PHONE", "URL")]
     for inst in shown:
         c = containers.get(inst.name)
         gateway = cpu = ram = disk = phone = "-"
@@ -1116,7 +1116,7 @@ def list_instances(reg: Registry, group: str | None = None) -> None:
                 if before.get(inst.name, {}).get("status") == "Running":   # not started in between
                     used = state["cpu"]["usage"] - before[inst.name]["state"]["cpu"]["usage"]   # in ns
                     cpu = f"{used / 1e9 / seconds:.1f}/{c['expanded_config']['limits.cpu']}"
-        rows.append((inst.name, inst.state, inst.group or "-", inst.access, inst.frontend, gateway, cpu, ram, disk,
+        rows.append((inst.name, inst.state, inst.group or "-", inst.frontend, gateway, cpu, ram, disk,
                      "yes" if inst.mailbox else "-", phone, inst.url.rstrip("/")))
     columns = [column for column in zip(*rows) if set(column[1:]) != {"-"}]
     widths = [max(map(len, column)) for column in columns]
