@@ -403,6 +403,33 @@ issues **[docs]**, not tried.
 - An older thinny refuses registry fields it does not know: going back to `main` after the test
   needed the registry's empty `mailbox` fields removed **[tested]**.
 
+### Mail from the agent (2026-11-18)
+Hermes v0.23.1 **[src]**; himalaya v1.2.0 and v2.2.1 **[static]**, its binary run on this workstation where
+noted **[tested]**.
+
+- Hermes has no agent tool that sends messages, on purpose (`tools/send_message_tool.py`); `hermes send
+  --to email` sends over SMTP as plain text with a fixed subject, without attachments. Outside mail chats
+  the prompt never mentions the mailbox, in Telegram chats only among scheduled jobs' destinations. So
+  agents told users that no email was connected **[src]**.
+- Hermes bundles a himalaya skill (and `email-inbox-triage`, which uses it). It lists the skill without
+  checking that `himalaya` is installed **[src]**.
+- himalaya v2 (2026-07) dropped `template`, MML and `--output`, which the skill uses; v1.2.0 has them. Its
+  releases publish no checksums; GitHub's API gives each file's sha256 **[static]**.
+- himalaya v1.2.0 reads one file, `~/.config/himalaya/config.toml`; `-a` goes after the last subcommand
+  (`himalaya --account x ...` fails) **[tested]**. `auth.cmd` runs through `sh -c` and takes the first line.
+  It saves a copy to Sent after SMTP: when that fails, it exits non-zero with the mail sent. `message read
+  --preview` leaves mail unread; `read` without it, `message export`, `attachment download` and `template
+  reply`/`forward` mark it read **[static]**.
+- The gateway takes unread mail in INBOX every 15 s and marks it read **[src]**.
+- Hermes removes `EMAIL_*` from the terminal's environment, and its file tool refuses `.env`; `grep` in the
+  terminal reads it **[src]**.
+- `agent.environment_hint`, also from the managed scope, is in the prompt on every platform;
+  `HERMES_ENVIRONMENT_HINT` wins over it **[src]**.
+- A chat reuses the prompt it started with. `hermes sessions refresh-prompts` has each chat of the profile
+  rebuild it once, on its next turn, its history kept, also with the gateway running **[src]**.
+- thinny's account in the v1.2.0 binary: it read the password from a `.env` as `set_env` writes it and
+  reached `imap.purelymail.com`, which refused the made-up password **[tested]**.
+
 ### Export (2026-11-16)
 Hermes v0.23.1 (3b42157) **[src]**, hermes-webui 0.52 and hermes-3310 **[src]**; run only where **[tested]**.
 
@@ -534,6 +561,9 @@ own), through `sudo -n` there. The instance: Webapp, local access, no group, loc
   passes its token on; users found it confusing. A bot from BotFather with Hermes's pairing:
   the pairing message tells users to run a command in a terminal. One bot for all instances:
   one gateway per token (section 1, Telegram).
+- Mail from the agent through `hermes send`: plain text only. himalaya v2: the skill's commands are gone.
+  The user's address in the policy: thinny would have to keep it, e.g. in the registry; the agent greps it.
+  Copies to Sent: one that fails after sending has the agent send the mail again.
 - Mail: a mail server on the host (inbound port 25, and mail from a VPS address lands in spam), Migadu
   (daily sending caps per account), Cloudflare's Email Routing and agent inbox (no mailboxes or IMAP,
   which Hermes needs). DNS records through Cloudflare's API in thinny: a one-time step, and sites use
@@ -559,6 +589,8 @@ own), through `sudo -n` there. The instance: Webapp, local access, no group, loc
   untested with the installed service.
 - Mailboxes: not yet tried are a scheduled job's mail, mail from another Purelymail mailbox (dropped?),
   `move` and `uninstall` with a mailbox.
+- Mail from the agent is untried on a server: a mail with an attachment, the agent reading its users'
+  address with `grep`, the gateway answering mail while the agent reads INBOX, `--new-password`.
 - Export: not tried are its time on a large `state.db` (2 s with 1.4 MB) and `hermes import` into a Hermes
   outside thinny. It follows Hermes's list of credentials, but mirrors its private any-depth names: check
   them when Hermes changes.
