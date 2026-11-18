@@ -123,8 +123,10 @@ Every minute, thinny checks that its table is loaded and loads it again when som
 with a line in `/var/log/thinny.log` and the journal. That can take about a minute, and brings back
 thinny's table only: Incus's and Tailscale's tables stay gone, so the steps above still apply.
 
-**Unattended upgrades.** If they reboot the server, schedule it well after the nightly Hermes
-update (`hermes.update_time`, 03:00), which can take an hour with many instances:
+**Unattended upgrades, with automatic reboots.** The containers share the server's kernel, so a
+fixed kernel protects them only once the server reboots into it. Schedule the reboot well after
+the nightly Hermes update (`hermes.update_time`, 03:00), which can take an hour with many
+instances. `thinny doctor` warns when automatic reboots are off and while a reboot is pending:
 
 ```sh
 apt install unattended-upgrades

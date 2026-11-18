@@ -177,11 +177,47 @@ def test_automatic_reboot_must_come_after_the_update(reboot, warned):
     dump = ('APT::Periodic::Unattended-Upgrade "1";\nUnattended-Upgrade::Automatic-Reboot "true";\n'
             f'Unattended-Upgrade::Automatic-Reboot-Time "{reboot}";\n')
     levels = [level for level, _, _ in checks.unattended_upgrades(dump, "03:00")]
-    assert levels == (["OK", "WARN"] if warned else ["OK"])
+    assert levels == ["OK", "WARN" if warned else "OK"]
 
 
-def test_unattended_upgrades_off_warns():
-    assert [r[0] for r in checks.unattended_upgrades('APT::Periodic::Unattended-Upgrade "0";\n', "03:00")] == ["WARN"]
+@pytest.mark.parametrize("setting", ['Unattended-Upgrade::Automatic-Reboot "false";\n', ""])
+def test_automatic_reboots_off_warn(setting):
+    dump = 'APT::Periodic::Unattended-Upgrade "1";\n' + setting
+    assert list(checks.unattended_upgrades(dump, "03:00"))[1] == (
+        "WARN", "automatic reboots are off: a new kernel protects the containers only after you reboot",
+        'set Unattended-Upgrade::Automatic-Reboot "true" and Unattended-Upgrade::Automatic-Reboot-Time later than '
+        "03:00 in /etc/apt/apt.conf.d/ (see README, Prerequisites)")
+
+
+@pytest.mark.parametrize("value", ["true", "1", "Yes", "on", "with", "ENABLE"])   # as apt reads booleans
+def test_automatic_reboots_on_in_any_of_apts_words(value):
+    dump = f'APT::Periodic::Unattended-Upgrade "1";\nUnattended-Upgrade::Automatic-Reboot "{value}";\n'
+    assert list(checks.unattended_upgrades(dump, "03:00")) == [("OK", "unattended upgrades on", ""),
+                                                              ("OK", "automatic reboots on", "")]
+
+
+# unattended-upgrades reboots at the end of its run, so with it off nothing reboots.
+@pytest.mark.parametrize("setting", ['Unattended-Upgrade::Automatic-Reboot "true";\n', ""])
+def test_unattended_upgrades_off_warns_about_automatic_reboots_too(setting):
+    results = checks.unattended_upgrades('APT::Periodic::Unattended-Upgrade "0";\n' + setting, "03:00")
+    assert [message.split(":")[0] for _, message, _ in results] == ["unattended upgrades are off"] + (
+        [] if setting else ["automatic reboots are off"])
+
+
+@pytest.mark.parametrize("pending", [True, False])
+def test_doctor_warns_while_a_reboot_is_pending(monkeypatch, tmp_path, pending):
+    # Also when an automatic reboot would come tonight.
+    dump = 'APT::Periodic::Unattended-Upgrade "1";\nUnattended-Upgrade::Automatic-Reboot "true";\n'
+    monkeypatch.setattr(system, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, dump, ""))
+    flag = tmp_path / "reboot-required"
+    monkeypatch.setattr("thinny.update.REBOOT_REQUIRED", flag)
+    if pending:
+        flag.touch()
+    results = [r for r in checks.prerequisites(S, Registry()) if "reboot" in r[1]]
+    assert results == [("OK", "automatic reboots on", ""), ("WARN", f"a reboot is pending ({flag}): "
+                        "until then, upgrades that need it, such as a new kernel, protect nothing",
+                        "reboot at a quiet time, or wait for the automatic reboot") if pending
+                       else ("OK", "no reboot pending", "")]
 
 
 @pytest.mark.parametrize("answer, expected", [
