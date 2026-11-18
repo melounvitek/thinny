@@ -43,7 +43,7 @@ Status: in development. Design notes: [`NOTES.md`](NOTES.md).
 **Protected:** instances from each other. Each container has its own uid range, filesystem,
 network namespace and processes. It cannot reach other containers, the host's services,
 private networks or the tailnet, and cannot change the shared policy. It cannot send mail straight
-to mail servers on port 25 either, so spam from one instance cannot get the server's address blocked.
+to mail servers on port 25 either, so spam sent that way cannot get the server's address blocked.
 
 **Not protected:**
 
