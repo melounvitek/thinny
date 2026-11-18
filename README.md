@@ -9,8 +9,8 @@ central policy and one Hermes release.
 Status: in development. Design notes: [`NOTES.md`](NOTES.md).
 
 - **Isolated instances:** one container each (Debian 13 with systemd), with CPU, memory,
-  process and disk limits. A firewall lets it reach the internet and nothing else. Its users
-  have `sudo` in it.
+  process and disk limits. A firewall lets it reach the internet but not mail servers on port 25,
+  and nothing else. Its users have `sudo` in it.
 - **One central policy** from `config.toml`, mounted read-only as each container's `/etc/hermes`
   (Hermes "managed scope"): approvals, the agent kept in its container, Hermes not borrowing
   Claude Code's or Codex CLI's sign-ins on its own (it could log them out), and no messages to
@@ -42,7 +42,8 @@ Status: in development. Design notes: [`NOTES.md`](NOTES.md).
 
 **Protected:** instances from each other. Each container has its own uid range, filesystem,
 network namespace and processes. It cannot reach other containers, the host's services,
-private networks or the tailnet, and cannot change the shared policy.
+private networks or the tailnet, and cannot change the shared policy. It cannot send mail straight
+to mail servers on port 25 either, so spam from one instance cannot get the server's address blocked.
 
 **Not protected:**
 
@@ -507,8 +508,9 @@ Set it up once:
 
 The server must reach `smtp.purelymail.com` on port 587 and `imap.purelymail.com` on 993. Some
 hosting providers block outgoing mail ports: netcup's default firewall policy *netcup Mail block*
-does (ports 25, 465 and 587), so remove it from the server. Until Hermes reaches both, it logs `email
-failed to connect` and tries again every few minutes.
+does (ports 25, 465 and 587), so remove it from the server. That opens port 25 too, but thinny's
+firewall keeps the instances from it: they send mail through Purelymail. Until Hermes reaches both,
+it logs `email failed to connect` and tries again every few minutes.
 
 `thinny doctor` checks that the server reaches both and that the domain passes Purelymail's DNS
 checks. Then:

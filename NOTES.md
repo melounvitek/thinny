@@ -400,6 +400,11 @@ issues **[docs]**, not tried.
   for email, the phone and Telegram: a block there makes Hermes load that adapter at start, but not
   turn the platform on **[src]**. The reply to the note got an answer in the thread. A reconnect within
   one gateway process takes the mail that came meanwhile; only a new process skips it.
+- On the production server (2026-11-18, netcup, Debian 13, three instances) **[tested]**: with "netcup Mail
+  block" removed, outgoing 25 is open too: `gmail-smtp-in.l.google.com:25` answered the host (not a
+  container) with its 220 banner. `/proc/net/nf_conntrack` held no flow to 25, 465, 587 or 2525: one look,
+  not a history. thinny's mail uses only 587 and 993 **[static]**, so its table drops TCP to port 25 from
+  the containers: spam from one would get the server's shared address blocked.
 - An older thinny refuses registry fields it does not know: going back to `main` after the test
   needed the registry's empty `mailbox` fields removed **[tested]**.
 

@@ -165,6 +165,7 @@ def test_firewall_lets_containers_reach_the_internet_only():
     assert 'iifname "thinny-*" oifname != "eth0" drop' in text            # no other container, no tailnet
     assert 'iifname "thinny-*" ip daddr @blocked_v4 drop' in text
     assert 'iifname "thinny-*" meta nfproto ipv6 drop' in text
+    assert 'iifname "thinny-*" tcp dport 25 drop' in text                  # no mail straight to mail servers
     assert 'oifname "thinny-*" ct state != { established, related } drop' in text
     assert 'chain input {\n\t\ttype filter hook input priority filter - 1; policy accept;\n' \
            '\t\tiifname "thinny-*" ct state != { established, related } drop' in text

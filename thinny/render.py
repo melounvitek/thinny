@@ -264,8 +264,8 @@ def firewall(interface: str, blocked_networks: list[str]) -> str:
     """nft table for the instance containers (routed NICs named thinny-<port>, addresses in SUBNET).
 
     A container reaches the internet through `interface` only: no other container, no service of
-    the host, no private, tailnet or blocked network, no IPv6. Nothing opens a connection into a
-    container. Incus itself drops packets with another container's source address.
+    the host, no private, tailnet or blocked network, no IPv6, no mail server on port 25. Nothing
+    opens a connection into a container. Incus itself drops packets with another container's source address.
     """
     nets = [ipaddress.ip_network(n) for n in [*PRIVATE_V4, *blocked_networks]]
     v4 = ipaddress.collapse_addresses(n for n in nets if n.version == 4)  # nft refuses overlaps
@@ -280,6 +280,7 @@ def firewall(interface: str, blocked_networks: list[str]) -> str:
         f'\t\tiifname "thinny-*" oifname != "{interface}" drop',
         '\t\tiifname "thinny-*" ip daddr @blocked_v4 drop',
         '\t\tiifname "thinny-*" meta nfproto ipv6 drop',
+        '\t\tiifname "thinny-*" tcp dport 25 drop',
         '\t\toifname "thinny-*" ct state != { established, related } drop',
         "\t}",
         "\tchain input {",
