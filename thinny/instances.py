@@ -1078,7 +1078,7 @@ def list_groups(s: Settings, reg: Registry) -> None:
 
 
 def list_instances(reg: Registry, group: str | None = None) -> None:
-    """CPU is the use over a second, as a share of the instance's own CPU limit; each instance's gateway, disk use
+    """CPU is how many of its CPUs an instance kept busy over a second; each instance's gateway, disk use
     and phone line are read meanwhile. `group`: its members only. A column with nothing in it (only -) is left out."""
     shown = [inst for inst in sorted(reg.instances.values(), key=lambda inst: inst.port)
              if group is None or inst.group == group]
@@ -1115,7 +1115,7 @@ def list_instances(reg: Registry, group: str | None = None) -> None:
                 ram = _gib(_memory_used(inst.name, state["memory"]["usage"]), state["memory"]["total"])
                 if before.get(inst.name, {}).get("status") == "Running":   # not started in between
                     used = state["cpu"]["usage"] - before[inst.name]["state"]["cpu"]["usage"]   # in ns
-                    cpu = f"{used / 1e9 / seconds / int(c['expanded_config']['limits.cpu']):.0%}"
+                    cpu = f"{used / 1e9 / seconds:.1f}/{c['expanded_config']['limits.cpu']}"
         rows.append((inst.name, inst.state, inst.group or "-", inst.access, inst.frontend, gateway, cpu, ram, disk,
                      "yes" if inst.mailbox else "-", phone, inst.url.rstrip("/")))
     columns = [column for column in zip(*rows) if set(column[1:]) != {"-"}]
