@@ -195,16 +195,21 @@ Debian 13, kernel 6.12, Incus 6.0.4 (`incus-base`), Hermes v0.23.0 -> v0.23.1. A
 - Reboots (2026-11-18): the containers share the host's kernel and their users are root in a user
   namespace with nesting on, so a kernel privilege escalation is the likely way out. A fixed kernel
   protects nothing until the server reboots into it: `doctor` warns when `Unattended-Upgrade::Automatic-Reboot`
-  is not `"true"` and whenever `/run/reboot-required` exists, also when the automatic reboot comes that night.
-- Who creates `/run/reboot-required` after a kernel upgrade **[static]**, read in the packages, never seen
-  after a real upgrade: on Debian 13 only the hook of `unattended-upgrades` 2.12,
-  `/etc/kernel/postinst.d/unattended-upgrades`, which the kernel's postinst runs through `linux-run-hooks`
-  (linux-base 4.12.1, without the `touch-reboot-required` hook of later versions). On Ubuntu (26.04 on this
-  workstation) that hook, linux-base's and update-notifier's. unattended-upgrades reboots only when the file
-  exists.
-- netcup, Debian 13, kernel 6.12.117+deb13-amd64, read there on 2026-11-18: `Automatic-Reboot "true"`,
-  `Automatic-Reboot-WithUsers "true"`, `Automatic-Reboot-Time "04:00"`, no `/run/reboot-required`, up 3
-  days. Neither warning would show there.
+  is off and whenever `/run/reboot-required` exists, also when the automatic reboot comes that night.
+- Who creates `/run/reboot-required` after a kernel upgrade, read in the packages **[static]**: on Debian 13
+  only the hook of `unattended-upgrades` 2.12, `/etc/kernel/postinst.d/unattended-upgrades`, which the
+  kernel's postinst runs through `linux-run-hooks` (linux-base 4.12.1, without the `touch-reboot-required`
+  hook of later versions). On Ubuntu (26.04 on this workstation) that hook, linux-base's and
+  update-notifier's. unattended-upgrades reboots at the end of its own run, only when the file exists, and
+  `apt.systemd.daily` runs it only with `APT::Periodic::Unattended-Upgrade` on.
+- On netcup (Debian 13), read there on 2026-11-18 **[tested]**: the hook is there and touches
+  `/var/run/reboot-required`. `dpkg.log`: `2026-11-14 06:55:07 install linux-image-6.12.117+deb13-amd64`;
+  `unattended-upgrades.log`: `2026-11-14 06:55:30 WARNING Found /var/run/reboot-required, rebooting`, then
+  `Reboot scheduled for Sun 2026-11-15 04:00:00 CET`. `journalctl --list-boots`: the server was rebooted on
+  Sat 2026-11-14 at 20:10, before that, and not at 04:00 on the 15th. So the file and the scheduling were
+  seen, the automatic reboot itself was not. Its settings: `Automatic-Reboot "true"`,
+  `Automatic-Reboot-WithUsers "true"`, `Automatic-Reboot-Time "04:00"`; no `/run/reboot-required`, running
+  6.12.117+deb13-amd64, up 3 days. Neither warning would show there.
 - A strict umask (2026-11-17, thinny 2a1f9a3). In a Debian 13 VM, the README's one-line
   installer as an account with sudo, without a terminal and under umask 077, then `install.sh`
   again: both exit 0, the clone 700 with 600 files, `/usr/local/lib/thinny` 755 with 644 files;
