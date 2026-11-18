@@ -188,10 +188,19 @@ def test_automatic_reboots_off_warn(setting):
         "03:00 in /etc/apt/apt.conf.d/ (see README, Prerequisites)")
 
 
-def test_unattended_upgrades_off_warns_about_automatic_reboots_too():
-    results = checks.unattended_upgrades('APT::Periodic::Unattended-Upgrade "0";\n', "03:00")
-    assert [message.split(":")[0] for _, message, _ in results] == ["unattended upgrades are off",
-                                                                     "automatic reboots are off"]
+@pytest.mark.parametrize("value", ["true", "1", "Yes", "on", "with", "ENABLE"])   # as apt reads booleans
+def test_automatic_reboots_on_in_any_of_apts_words(value):
+    dump = f'APT::Periodic::Unattended-Upgrade "1";\nUnattended-Upgrade::Automatic-Reboot "{value}";\n'
+    assert list(checks.unattended_upgrades(dump, "03:00")) == [("OK", "unattended upgrades on", ""),
+                                                              ("OK", "automatic reboots on", "")]
+
+
+# unattended-upgrades reboots at the end of its run, so with it off nothing reboots.
+@pytest.mark.parametrize("setting", ['Unattended-Upgrade::Automatic-Reboot "true";\n', ""])
+def test_unattended_upgrades_off_warns_about_automatic_reboots_too(setting):
+    results = checks.unattended_upgrades('APT::Periodic::Unattended-Upgrade "0";\n' + setting, "03:00")
+    assert [message.split(":")[0] for _, message, _ in results] == ["unattended upgrades are off"] + (
+        [] if setting else ["automatic reboots are off"])
 
 
 @pytest.mark.parametrize("pending", [True, False])

@@ -166,20 +166,20 @@ def prerequisites(s: Settings, reg: Registry):
 def unattended_upgrades(apt_dump: str, update_time: str):
     """Unattended upgrades on, and automatic reboots on, after the nightly Hermes update."""
     values = dict(re.findall(r'^(\S+) "(.*)";$', apt_dump, re.M))
-    if values.get("APT::Periodic::Unattended-Upgrade") != "1":
-        yield warn("unattended upgrades are off: security updates wait for you",
-                   "apt install unattended-upgrades && dpkg-reconfigure -plow unattended-upgrades")
-    else:
-        yield ok("unattended upgrades on")
+    upgrades = values.get("APT::Periodic::Unattended-Upgrade") == "1"
+    yield (ok("unattended upgrades on") if upgrades
+           else warn("unattended upgrades are off: security updates wait for you",
+                     "apt install unattended-upgrades && dpkg-reconfigure -plow unattended-upgrades"))
     reboot = values.get("Unattended-Upgrade::Automatic-Reboot-Time", "")
-    if values.get("Unattended-Upgrade::Automatic-Reboot") != "true":
+    # apt's words for true
+    if values.get("Unattended-Upgrade::Automatic-Reboot", "").lower() not in ("true", "yes", "on", "1", "with", "enable"):
         yield warn("automatic reboots are off: a new kernel protects the containers only after you reboot",
                    'set Unattended-Upgrade::Automatic-Reboot "true" and Unattended-Upgrade::Automatic-Reboot-Time '
                    f"later than {update_time} in /etc/apt/apt.conf.d/ (see README, Prerequisites)")
     elif re.fullmatch(r"\d\d:\d\d", reboot) and reboot <= update_time:
         yield warn(f"automatic reboots at {reboot}, not after the nightly Hermes update at {update_time}",
                    f"set Unattended-Upgrade::Automatic-Reboot-Time later than {update_time} in /etc/apt/apt.conf.d/")
-    else:
+    elif upgrades:   # unattended-upgrades reboots at the end of its run
         yield ok("automatic reboots on")
 
 
