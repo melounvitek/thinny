@@ -127,7 +127,7 @@ def settings_for(s: Settings, inst: Instance) -> Settings:
         s = dataclasses.replace(s, hermes=s.groups[inst.group])
     if inst.mailbox:
         groups = s.hermes.get("agent", {}).get("environment_hint")
-        hint = "\n\n".join(filter(None, [groups, render.mail_hint(inst.mailbox)]))
+        hint = "\n\n".join(filter(None, [groups, render.mail_hint(inst.mailbox, HIMALAYA_BIN)]))
         s = dataclasses.replace(s, hermes=render.merged(s.hermes, {"agent": {"environment_hint": hint}}))
     if inst.lock is None:
         return s
@@ -323,7 +323,7 @@ def ensure_account(name: str) -> None:
 
 def ensure_mail_client(inst: Instance) -> None:
     """For an instance with a mailbox: the pinned himalaya, which its agent uses through Hermes's himalaya skill, with
-    the mailbox as its account `mailbox`. A user's own himalaya accounts stay."""
+    the mailbox as an account named after its address. A user's own himalaya accounts stay."""
     if not inst.mailbox:
         return
     name = inst.name
@@ -340,14 +340,11 @@ def ensure_mail_client(inst: Instance) -> None:
     config = read_user_file(name, path)
     account = render.himalaya_account(inst.mailbox, str(home(name) / ".env"), default=not config.strip())
     try:
-        accounts = tomllib.loads(config).get("accounts", {})
-        if "mailbox" not in accounts:
+        if inst.mailbox not in tomllib.loads(config).get("accounts", {}):
             tomllib.loads(config + account)   # fails e.g. after `accounts = {...}`
             as_user(name, ["mkdir", "-p", str(PurePosixPath(path).parent)])
             write_user_file(name, path, config + account)
-        elif accounts["mailbox"].get("email") != inst.mailbox:
-            raise ValueError(f"its account mailbox is {accounts['mailbox'].get('email')}'s")
-    except ValueError as e:   # TOMLDecodeError too
+    except tomllib.TOMLDecodeError as e:
         log(f"{name}: {path} gets no account for {inst.mailbox}, which its agent sends mail with: {e}")
 
 

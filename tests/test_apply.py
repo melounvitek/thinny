@@ -229,7 +229,7 @@ def test_mailboxes_from_before_get_the_email_client(server, incus):
 
     apply.apply(S)
     assert incus.containers["alice"]["himalaya"] == instances.HIMALAYA
-    assert "[accounts.mailbox]" in incus.containers["alice"]["files"]["/home/alice/.config/himalaya/config.toml"]
+    assert '[accounts."alice@example.org"]' in incus.containers["alice"]["files"]["/home/alice/.config/himalaya/config.toml"]
     assert "himalaya" not in incus.containers["bob"] and "files" not in incus.containers["bob"]
 
 
@@ -246,7 +246,7 @@ def test_agents_of_mailboxes_from_before_learn_how_to_send_mail_after_their_grou
     apply.apply(s)
     hints = {name: yaml.safe_load((host.POLICIES / name / "config.yaml").read_text())["agent"]["environment_hint"]
              for name in reg.instances}
-    assert hints == {"alice": "Office hours: 9-17.\n\n" + render.mail_hint("alice@example.org"),
+    assert hints == {"alice": "Office hours: 9-17.\n\n" + render.mail_hint("alice@example.org", instances.HIMALAYA_BIN),
                      "bob": "Office hours: 9-17."}
     assert incus.containers["alice"]["hermes_config"] == {}   # pinned now
     assert restarted == ["alice", "bob"]

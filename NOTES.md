@@ -412,7 +412,8 @@ noted **[tested]**.
   the prompt never mentions the mailbox, in Telegram chats only among scheduled jobs' destinations. So
   agents told users that no email was connected **[src]**.
 - Hermes bundles a himalaya skill (and `email-inbox-triage`, which uses it). It lists the skill without
-  checking that `himalaya` is installed **[src]**.
+  checking that `himalaya` is installed, and the skill installs the latest into `~/.local/bin`, first on the
+  instance's `PATH` **[src]**.
 - himalaya v2 (2026-07) dropped `template`, MML and `--output`, which the skill uses; v1.2.0 has them. Its
   releases publish no checksums; GitHub's API gives each file's sha256 **[static]**.
 - himalaya v1.2.0 reads one file, `~/.config/himalaya/config.toml`; `-a` goes after the last subcommand

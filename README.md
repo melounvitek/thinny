@@ -532,8 +532,8 @@ the first.
   thinny's policy turns that off.
 - Its agent can also send mail from the mailbox, attachments too, and read it, when its users ask:
   with Hermes's himalaya skill and [himalaya](https://github.com/pimalaya/himalaya) v1.2.0, which
-  thinny installs in the instance. The mailbox is the account `mailbox`, added to its users' own
-  himalaya config, if any. thinny's policy tells the agent so, and where its users' address is. No copy of
+  thinny installs in the instance. The mailbox is an account named after its address, added to its
+  users' own himalaya config, if any. thinny's policy tells the agent so, and where its users' address is. No copy of
   what it sends is kept. Mailboxes from before get it at the next `thinny config apply` or update.
 - Run it again to change who can write to it; without addresses it keeps them. `--new-password`
   gives the mailbox a new password. The password is in the instance's `.env`, where its users can

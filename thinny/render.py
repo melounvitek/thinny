@@ -96,7 +96,7 @@ def managed_config(s: Settings) -> str:
 
 HIMALAYA_ACCOUNT = r"""
 # thinny's: the instance's mailbox, which Hermes's email gateway reads too.
-[accounts.mailbox]
+[accounts."{address}"]
 {default}email = "{address}"
 backend.type = "imap"
 backend.host = "{imap}"
@@ -125,16 +125,17 @@ def himalaya_account(address: str, env: str, default: bool) -> str:
                                    smtp=SMTP_HOST, password=password)
 
 
-def mail_hint(address: str) -> str:
+def mail_hint(address: str, client: str) -> str:
     """For the prompt of an instance's agent: Hermes has no tool that sends mail, and outside mail chats it does not
     tell the agent about its mailbox."""
     return (f"This instance has a mailbox of its own, {address}. Hermes's email gateway answers the mail its allowed "
             "senders write to it. To send mail from it, attachments too (e.g. when the user asks you to email them "
-            "something), or to read it, use the himalaya skill with the account `mailbox`, which is set up: put "
-            "`-a mailbox` after the last subcommand, as in `himalaya template send -a mailbox`. Attach files with MML, "
+            f"something), or to read it, use the himalaya skill with {client}, the version it needs (another himalaya "
+            f"on PATH may not be), and the account {address}, which is set up: put `-a {address}` after the last "
+            f"subcommand, as in `{client} template send -a {address}`. Attach files with MML, "
             "`<#part filename=/path/to/file><#/part>`. The user's own address is EMAIL_HOME_ADDRESS in ~/.hermes/.env "
             "(`grep ^EMAIL_HOME_ADDRESS= ~/.hermes/.env`). No copy of sent mail is kept. Read mail with "
-            "`himalaya message read -a mailbox --preview`: without --preview, and with `message export`, "
+            f"`{client} message read -a {address} --preview`: without --preview, and with `message export`, "
             "`attachment download`, `template reply` or `template forward`, unread mail becomes read, and the gateway "
             "answers only unread mail.")
 

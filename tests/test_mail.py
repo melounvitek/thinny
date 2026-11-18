@@ -147,7 +147,7 @@ def test_a_mailbox_comes_with_the_email_client_of_hermess_himalaya_skill(alice, 
 def test_himalayas_account_for_the_mailbox_reads_the_password_from_the_env_at_every_use(alice, incus, purelymail,
                                                                                       tmp_path):
     mail.connect(SITE, alice, "alice", ["anna@example.com"])
-    account = tomllib.loads(incus.containers["alice"]["files"][HIMALAYA_CONFIG])["accounts"]["mailbox"]
+    account = tomllib.loads(incus.containers["alice"]["files"][HIMALAYA_CONFIG])["accounts"]["alice@example.org"]
     cmd = account["backend"]["auth"].pop("cmd")
     assert account == {
         "default": True, "email": "alice@example.org",
@@ -173,24 +173,19 @@ def test_a_users_own_himalaya_accounts_stay(alice, incus, purelymail):
     mail.connect(SITE, alice, "alice", ["anna@example.com"])
     config = incus.containers["alice"]["files"][HIMALAYA_CONFIG]
     accounts = tomllib.loads(config)["accounts"]
-    assert config.startswith(own) and accounts["gmail"]["default"] and "default" not in accounts["mailbox"]
+    assert config.startswith(own) and accounts["gmail"]["default"] and "default" not in accounts["alice@example.org"]
 
     mail.connect(SITE, alice, "alice", [])
     assert incus.containers["alice"]["files"][HIMALAYA_CONFIG] == config
 
 
-@pytest.mark.parametrize("own, reason", [
-    ("[accounts", ""),   # Python's own words
-    ('accounts = { gmail = { email = "anna@gmail.com" } }', ""),
-    ('[accounts.mailbox]\nemail = "anna@gmail.com"', "its account mailbox is anna@gmail.com's"),
-])
-def test_a_himalaya_config_thinny_cannot_add_its_account_to_stays_as_it_is(alice, incus, purelymail, capsys, own,
-                                                                           reason):
+@pytest.mark.parametrize("own", ["[accounts", 'accounts = { gmail = { email = "anna@gmail.com" } }'])
+def test_a_himalaya_config_thinny_cannot_add_its_account_to_stays_as_it_is(alice, incus, purelymail, capsys, own):
     incus.containers["alice"]["files"][HIMALAYA_CONFIG] = own
     mail.connect(SITE, alice, "alice", ["anna@example.com"])
     assert incus.containers["alice"]["files"][HIMALAYA_CONFIG] == own
     assert f"alice: {HIMALAYA_CONFIG} gets no account for alice@example.org, which its agent sends mail with: " \
-        f"{reason}" in capsys.readouterr().err
+        in capsys.readouterr().err
 
 
 def test_the_agent_learns_how_to_send_mail_from_the_mailbox_before_its_gateway_restarts(alice, incus, gateways,
@@ -198,9 +193,9 @@ def test_the_agent_learns_how_to_send_mail_from_the_mailbox_before_its_gateway_r
     hints = []
     monkeypatch.setattr(instances, "_gateway_up", lambda s, inst: hints.append(policy_hint()))
     mail.connect(SITE, alice, "alice", ["anna@example.com"])
-    hint = render.mail_hint("alice@example.org")
+    hint = render.mail_hint("alice@example.org", instances.HIMALAYA_BIN)
     assert hints == [hint]
-    assert "alice@example.org" in hint and "himalaya template send -a mailbox" in hint
+    assert "/usr/local/bin/himalaya template send -a alice@example.org" in hint
     assert "EMAIL_HOME_ADDRESS" in hint and "--preview" in hint
 
 
