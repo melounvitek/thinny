@@ -214,6 +214,8 @@ class Incus:
             if isinstance(c.get("usage"), CommandError):
                 raise c["usage"]
             return c.get("usage", ""), 0 if c.get("usage") else 1
+        elif cmd[:3] == ["hermes", "sessions", "refresh-prompts"]:
+            return "", c.get("refresh_exit", 0)
         elif cmd[:3] == ["hermes", "auth", "status"]:
             return f"{cmd[3]}: {'logged in' if c.get('signed_in', True) else 'logged out'}\n", 0
         elif cmd[:2] == ["sh", "-c"] and instances.DEFAULT_MODEL in cmd:
@@ -982,6 +984,22 @@ def test_an_instance_switches_to_webui_and_back_on_its_port(incus):
     assert incus.where("systemctl --user disable --now hermes-webui") < incus.where("hermes gateway restart --yes")
     assert WEBUI_UNIT not in alice["files"]
     assert not incus.ran("restart hermes-webui")
+
+
+def test_chats_going_on_rebuild_their_prompts_after_a_restart(incus):
+    alice = Instance("alice", 9120, "local", state="active")
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {}, "unit": True}
+    instances.start_or_restart_gateway(S, alice)
+    assert incus.where("hermes gateway restart --yes") < incus.where("hermes sessions refresh-prompts")
+
+
+def test_a_failed_refresh_of_the_chats_prompts_leaves_the_restart_done(incus, capsys):
+    alice = Instance("alice", 9120, "local", state="active")
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {}, "unit": True, "refresh_exit": 1}
+    instances.mark_restart(["alice"])
+    instances.start_or_restart_gateway(S, alice)
+    assert not instances.RESTART_PENDING.exists()
+    assert "alice: chats going on keep their prompts: " in capsys.readouterr().err
 
 
 def test_a_switch_to_webui_that_cannot_fetch_it_leaves_the_webapp_on(incus):

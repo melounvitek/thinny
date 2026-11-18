@@ -628,6 +628,12 @@ def _gateway_up(s: Settings, inst: Instance) -> None:
     if inst.frontend == "webui":   # after the gateway: also after a Hermes update, which WebUI needs
         as_user(inst.name, ["systemctl", "--user", "restart", "hermes-webui"], timeout=RESTART_TIMEOUT)
     check_gateway(s, inst)
+    # Chats going on keep the prompt they started with: each rebuilds it once, on its next turn, with what changed
+    # (e.g. the policy). Not worth a restart that counts as failed.
+    try:
+        hermes(inst.name, ["sessions", "refresh-prompts"], timeout=120)
+    except CommandError as e:
+        log(f"{inst.name}: chats going on keep their prompts: {e}")
 
 
 def _pending() -> list[str]:
