@@ -125,6 +125,20 @@ def himalaya_account(address: str, env: str, default: bool) -> str:
                                    smtp=SMTP_HOST, password=password)
 
 
+def mail_hint(address: str) -> str:
+    """For the prompt of an instance's agent: Hermes has no tool that sends mail, and outside mail chats it does not
+    tell the agent about its mailbox."""
+    return (f"This instance has a mailbox of its own, {address}. Hermes's email gateway answers the mail its allowed "
+            "senders write to it. To send mail from it, attachments too (e.g. when the user asks you to email them "
+            "something), or to read it, use the himalaya skill with the account `mailbox`, which is set up: put "
+            "`-a mailbox` after the last subcommand, as in `himalaya template send -a mailbox`. Attach files with MML, "
+            "`<#part filename=/path/to/file><#/part>`. The user's own address is EMAIL_HOME_ADDRESS in ~/.hermes/.env "
+            "(`grep ^EMAIL_HOME_ADDRESS= ~/.hermes/.env`). No copy of sent mail is kept. Read mail with "
+            "`himalaya message read -a mailbox --preview`: without --preview, and with `message export`, "
+            "`attachment download`, `template reply` or `template forward`, unread mail becomes read, and the gateway "
+            "answers only unread mail.")
+
+
 def managed_env() -> str:
     return (f"# {HEADER}\n# World-readable: never put secrets here.\n"
             "TERMINAL_ENV=local\n"

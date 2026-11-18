@@ -7,9 +7,10 @@ import tomllib
 import urllib.request
 
 import pytest
+import yaml
 from test_instances import S, gateways, incus, typed  # noqa: F401 - the fake Incus, gateway and terminal fixtures
 
-from thinny import checks, instances, mail, settings
+from thinny import checks, host, instances, mail, render, settings
 from thinny.registry import Instance, Registry, RegistryError
 from thinny.system import CommandError
 
@@ -190,6 +191,22 @@ def test_a_himalaya_config_thinny_cannot_add_its_account_to_stays_as_it_is(alice
     assert incus.containers["alice"]["files"][HIMALAYA_CONFIG] == own
     assert f"alice: {HIMALAYA_CONFIG} gets no account for alice@example.org, which its agent sends mail with: " \
         f"{reason}" in capsys.readouterr().err
+
+
+def test_the_agent_learns_how_to_send_mail_from_the_mailbox_before_its_gateway_restarts(alice, incus, gateways,
+                                                                                       purelymail, monkeypatch):
+    hints = []
+    monkeypatch.setattr(instances, "_gateway_up", lambda s, inst: hints.append(policy_hint()))
+    mail.connect(SITE, alice, "alice", ["anna@example.com"])
+    hint = render.mail_hint("alice@example.org")
+    assert hints == [hint]
+    assert "alice@example.org" in hint and "himalaya template send -a mailbox" in hint
+    assert "EMAIL_HOME_ADDRESS" in hint and "--preview" in hint
+
+
+def policy_hint():
+    """What alice's policy adds to her agent's prompt."""
+    return yaml.safe_load((host.POLICIES / "alice/config.yaml").read_text()).get("agent", {}).get("environment_hint")
 
 
 def test_an_older_himalaya_gets_the_pinned_one(alice, incus, purelymail):

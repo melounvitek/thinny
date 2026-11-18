@@ -119,11 +119,16 @@ def devices(name: str) -> dict[str, dict[str, str]]:
 
 
 def settings_for(s: Settings, inst: Instance) -> Settings:
-    """The settings with the Hermes settings of the instance's group and its own model lock, when it has them."""
+    """The settings with the Hermes settings of the instance's group and its mailbox, and its own model lock, when it
+    has them."""
     if inst.group:
         if inst.group not in s.groups:
             raise CommandError(f"{inst.name} is in the group {inst.group}, but {group_file(inst.group)} is missing")
         s = dataclasses.replace(s, hermes=s.groups[inst.group])
+    if inst.mailbox:
+        groups = s.hermes.get("agent", {}).get("environment_hint")
+        hint = "\n\n".join(filter(None, [groups, render.mail_hint(inst.mailbox)]))
+        s = dataclasses.replace(s, hermes=render.merged(s.hermes, {"agent": {"environment_hint": hint}}))
     if inst.lock is None:
         return s
     if not inst.lock:

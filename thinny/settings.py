@@ -60,7 +60,7 @@ class Settings:
     dashboard_retention_days: int = 30
     dashboard_subscription_usage: bool = False
     groups: dict[str, dict] = field(default_factory=dict)   # name -> the Hermes settings its members' policies pin
-    hermes: dict = field(default_factory=dict)   # those of one instance's group (instances.settings_for)
+    hermes: dict = field(default_factory=dict)   # one instance's: its group's and mailbox's (instances.settings_for)
 
 
 # (section, key) in config.toml -> Settings field
