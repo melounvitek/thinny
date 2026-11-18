@@ -1154,26 +1154,30 @@ def _usage_row(s: Settings, reg: Registry, name: str) -> tuple[str, ...]:
                     "not signed in" if reason.startswith("no Claude subscription login") else reason)
         windows = {w["label"]: w for w in doc["windows"]}
         return name, shown, account, _window(windows, FIVE_HOURS, "%H:%M"), _window(windows, WEEK, "%a %H:%M")
-    except (CommandError, ValueError, TypeError, KeyError, AttributeError, OverflowError):   # or what its users made Hermes say
+    except (CommandError, ValueError, TypeError, KeyError, AttributeError, OverflowError,
+            RecursionError):   # or what its users made Hermes say
         return name, shown, account, "?"
 
 
 def _account(name: str, provider: str) -> str:
     """The email of the account the instance is signed in to the provider with; - when there is none, ? when it
-    is unknown. Claude Code tells it; Hermes keeps ChatGPT's in its token, but does not show it."""
+    is unknown. Claude Code tells it; Hermes keeps ChatGPT's in its tokens, but does not show it. Hermes may hold
+    several, and picks one per request: each of their emails."""
     try:
         if provider == CLAUDE_PROVIDER:
             status = as_user(name, ["claude", "auth", "status"], check=False, timeout=USAGE_TIMEOUT).stdout
             return str(json.loads(status).get("email") or "-")
         if provider == "openai-codex":
             auth = json.loads(read_user_file(name, str(home(name) / "auth.json")) or "{}")
-            if not (pool := auth.get("credential_pool", {}).get(provider)):
-                return "-"
-            payload = pool[0]["access_token"].split(".")[1]   # of a JWT
-            claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
-            return str(claims["https://api.openai.com/profile"]["email"])
+            emails = []
+            for credential in auth.get("credential_pool", {}).get(provider, []):
+                payload = credential["access_token"].split(".")[1]   # of a JWT
+                claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+                emails.append(str(claims["https://api.openai.com/profile"]["email"]))
+            return ", ".join(dict.fromkeys(emails)) or "-"
         return "-"
-    except (CommandError, ValueError, TypeError, KeyError, IndexError, AttributeError):   # or what its users wrote
+    except (CommandError, ValueError, TypeError, KeyError, IndexError, AttributeError,
+            RecursionError):   # or what its users wrote
         return "?"
 
 

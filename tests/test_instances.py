@@ -580,11 +580,12 @@ def usage_json(*windows, reason=None):
                        "details": [], "unavailable_reason": reason})
 
 
-def chatgpt_auth(email):
-    """Hermes's auth.json, signed in to ChatGPT as `email`: in its token's claims."""
-    claims = json.dumps({"https://api.openai.com/profile": {"email": email, "email_verified": True}})
-    payload = base64.urlsafe_b64encode(claims.encode()).decode().rstrip("=")
-    return json.dumps({"credential_pool": {"openai-codex": [{"access_token": f"header.{payload}.signature"}]}})
+def chatgpt_auth(*emails):
+    """Hermes's auth.json, signed in to ChatGPT with an account of each email: in its tokens' claims."""
+    def token(email):
+        claims = json.dumps({"https://api.openai.com/profile": {"email": email, "email_verified": True}})
+        return f"header.{base64.urlsafe_b64encode(claims.encode()).decode().rstrip('=')}.signature"
+    return json.dumps({"credential_pool": {"openai-codex": [{"access_token": token(email)} for email in emails]}})
 
 
 def test_usage_shows_each_active_instances_subscription_limits_in_the_servers_time(incus, capsys, prague):
@@ -632,20 +633,25 @@ def test_usage_shows_each_active_instances_subscription_limits_in_the_servers_ti
 
 
 def test_usage_takes_what_an_instances_users_make_hermes_say_as_text_or_a_failure(incus, capsys, prague):
-    reg = Registry({n: Instance(n, 9120 + i, "lan", state="active") for i, n in enumerate(["alice", "bob", "carol"])})
+    names = ["alice", "bob", "carol", "dave"]
+    reg = Registry({n: Instance(n, 9120 + i, "lan", state="active") for i, n in enumerate(names)})
+    nested = "[" * 100_000   # deeper than Python's JSON parser goes
     incus.containers = {
         "alice": {"state": "RUNNING", "hermes_config": {"model.provider": "own\x1b[2J\nINJECTED"},
                   "usage": usage_json(reason="Claude Code did not answer in time\x1b[2J")},
         "bob": {"state": "RUNNING", "usage": usage_json(("Session", 37, "9999-12-31T23:59:59+00:00")),   # 10000 here
-                "files": {"/home/bob/.hermes/auth.json": '{"credential_pool": {"openai-codex": [{}]}}'}},
+                "files": {"/home/bob/.hermes/auth.json": nested}},
         "carol": {"state": "RUNNING", "usage": usage_json(("Session", 37, "2026-11-19T20:00:00+00:00")),
                   "files": {"/home/carol/.hermes/auth.json": chatgpt_auth("carol\x1b[2J@example.com")}},
+        "dave": {"state": "RUNNING", "usage": nested,   # two accounts, one signed in twice
+                 "files": {"/home/dave/.hermes/auth.json": chatgpt_auth("d@example.com", "d@example.org", "d@example.com")}},
     }
     instances.usage(S, reg)
     assert capsys.readouterr().out.splitlines()[1:] == [
-        "alice  own[2JINJECTED  -                     Claude Code did not answer in time[2J",   # without control characters
-        "bob    ChatGPT         ?                     ?",
-        "carol  ChatGPT         carol[2J@example.com  37% → 21:00  -",
+        "alice  own[2JINJECTED  -                             Claude Code did not answer in time[2J",   # without control characters
+        "bob    ChatGPT         ?                             ?",
+        "carol  ChatGPT         carol[2J@example.com          37% → 21:00  -",
+        "dave   ChatGPT         d@example.com, d@example.org  ?",
     ]
 
 
