@@ -16,6 +16,7 @@ import shutil
 import sys
 import textwrap
 import time
+import tomllib
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
@@ -34,6 +35,12 @@ RESTART_PENDING = STATE_DIR / "restart-pending"
 IMAGE = "images:debian/13"
 URL_RE = re.compile(r"https?://[a-z0-9.-]+(:\d+)?/?")
 CLAUDE_INSTALLER = "https://claude.ai/install.sh"
+# The email client of Hermes's himalaya skill, for a mailbox. v2 dropped the commands the skill uses (template,
+# MML, --output). Its releases publish no checksums; these are GitHub's for the release's files.
+HIMALAYA = "v1.2.0"
+HIMALAYA_SHA256 = {"x86_64": "e04e6382e3e664ef34b01afa1a2216113194a2975d2859727647b22d9b36d4e4",
+                   "aarch64": "643020b220991fac67726f3be11310fcf806e757feadbbab3efbddd713597872"}
+HIMALAYA_BIN = "/usr/local/bin/himalaya"
 WEBUI_GIT = f"https://github.com/{host.WEBUI_REPO}"
 FRONTEND_NAMES = {"webapp": "Webapp", "webui": "WebUI"}
 CGROUPS = Path("/sys/fs/cgroup")   # each container's as lxc.payload.<name>
@@ -112,11 +119,16 @@ def devices(name: str) -> dict[str, dict[str, str]]:
 
 
 def settings_for(s: Settings, inst: Instance) -> Settings:
-    """The settings with the Hermes settings of the instance's group and its own model lock, when it has them."""
+    """The settings with the Hermes settings of the instance's group and its mailbox, and its own model lock, when it
+    has them."""
     if inst.group:
         if inst.group not in s.groups:
             raise CommandError(f"{inst.name} is in the group {inst.group}, but {group_file(inst.group)} is missing")
         s = dataclasses.replace(s, hermes=s.groups[inst.group])
+    if inst.mailbox:
+        groups = s.hermes.get("agent", {}).get("environment_hint")
+        hint = "\n\n".join(filter(None, [groups, render.mail_hint(inst.mailbox, HIMALAYA_BIN)]))
+        s = dataclasses.replace(s, hermes=render.merged(s.hermes, {"agent": {"environment_hint": hint}}))
     if inst.lock is None:
         return s
     if not inst.lock:
@@ -307,6 +319,33 @@ def ensure_account(name: str) -> None:
             return
         time.sleep(1)
     raise CommandError(f"the user manager of {name} did not start")
+
+
+def ensure_mail_client(inst: Instance) -> None:
+    """For an instance with a mailbox: the pinned himalaya, which its agent uses through Hermes's himalaya skill, with
+    the mailbox as an account named after its address. A user's own himalaya accounts stay."""
+    if not inst.mailbox:
+        return
+    name = inst.name
+    if not in_container(name, [HIMALAYA_BIN, "--version"], check=False).stdout.startswith(f"himalaya {HIMALAYA} "):
+        arch = in_container(name, ["uname", "-m"]).stdout.strip()
+        if arch not in HIMALAYA_SHA256:
+            raise CommandError(f"{name}: himalaya has no release for {arch}")
+        url = f"https://github.com/pimalaya/himalaya/releases/download/{HIMALAYA}/himalaya.{arch}-linux.tgz"
+        in_container(name, ["sh", "-c", 'set -e; d=$(mktemp -d); curl -fsSL --max-time 300 -o "$d/h.tgz" "$1"; '
+                            'echo "$2  $d/h.tgz" | sha256sum -c --quiet; tar -xzf "$d/h.tgz" -C "$d" himalaya; '
+                            'install -m 755 "$d/himalaya" "$3"; rm -r "$d"', "sh", url, HIMALAYA_SHA256[arch],
+                            HIMALAYA_BIN], timeout=600)
+    path = f"/home/{name}/.config/himalaya/config.toml"
+    config = read_user_file(name, path)
+    account = render.himalaya_account(inst.mailbox, str(home(name) / ".env"), default=not config.strip())
+    try:
+        if inst.mailbox not in tomllib.loads(config).get("accounts", {}):
+            tomllib.loads(config + account)   # fails e.g. after `accounts = {...}`
+            as_user(name, ["mkdir", "-p", str(PurePosixPath(path).parent)])
+            write_user_file(name, path, config + account)
+    except tomllib.TOMLDecodeError as e:
+        log(f"{name}: {path} gets no account for {inst.mailbox}, which its agent sends mail with: {e}")
 
 
 def install_hermes(s: Settings, name: str, commit: str, enable: bool) -> None:
@@ -586,6 +625,12 @@ def _gateway_up(s: Settings, inst: Instance) -> None:
     if inst.frontend == "webui":   # after the gateway: also after a Hermes update, which WebUI needs
         as_user(inst.name, ["systemctl", "--user", "restart", "hermes-webui"], timeout=RESTART_TIMEOUT)
     check_gateway(s, inst)
+    # Chats going on keep the prompt they started with: each rebuilds it once, on its next turn, with what changed
+    # (e.g. the policy). Not worth a restart that counts as failed.
+    try:
+        hermes(inst.name, ["sessions", "refresh-prompts"], timeout=120)
+    except CommandError as e:
+        log(f"{inst.name}: chats going on keep their prompts: {e}")
 
 
 def _pending() -> list[str]:
@@ -660,6 +705,7 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
             install_webui(name)
     with step(f"{name}: settings"):
         ensure_model_guard(name)
+        ensure_mail_client(inst)   # a moved instance's mailbox
         inst.url = url_for(s, inst)
         reg.save()
         configure_webapp(s, inst)

@@ -2,12 +2,15 @@ import dataclasses
 import io
 import json
 import socket
+import subprocess
+import tomllib
 import urllib.request
 
 import pytest
+import yaml
 from test_instances import S, gateways, incus, typed  # noqa: F401 - the fake Incus, gateway and terminal fixtures
 
-from thinny import checks, instances, mail, settings
+from thinny import checks, host, instances, mail, render, settings
 from thinny.registry import Instance, Registry, RegistryError
 from thinny.system import CommandError
 
@@ -15,6 +18,7 @@ TOKEN = "pm-live-" + "t" * 32
 SITE = dataclasses.replace(S, email_domain="example.org")
 NO_TOKEN = "set THINNY_PURELYMAIL_API_TOKEN first: thinny config edit --secrets \\(see README, Email\\)"
 ENV = "/home/alice/.hermes/.env"
+HIMALAYA_CONFIG = "/home/alice/.config/himalaya/config.toml"
 
 
 class Purelymail:
@@ -124,6 +128,94 @@ def test_an_instance_gets_a_mailbox_that_only_named_addresses_may_write_to(alice
     assert not any(TOKEN in call or password in call for call in incus.calls)
     assert "alice reads and sends mail as alice@example.org. anna@example.com, Boss@Example.com may write to it." \
         in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("arch, sha", list(instances.HIMALAYA_SHA256.items()))
+def test_a_mailbox_comes_with_the_email_client_of_hermess_himalaya_skill(alice, incus, purelymail, arch, sha):
+    incus.containers["alice"]["arch"] = arch
+    mail.connect(SITE, alice, "alice", ["anna@example.com"])
+    # the pinned release for its architecture, checked before it is unpacked
+    url = f"https://github.com/pimalaya/himalaya/releases/download/{instances.HIMALAYA}/himalaya.{arch}-linux.tgz"
+    assert incus.ran(f"{url} {sha} /usr/local/bin/himalaya")
+    assert incus.containers["alice"]["himalaya"] == instances.HIMALAYA
+
+    incus.calls.clear()
+    mail.connect(SITE, alice, "alice", [])
+    assert not incus.ran("sha256sum")
+
+
+def test_himalayas_account_for_the_mailbox_reads_the_password_from_the_env_at_every_use(alice, incus, purelymail,
+                                                                                      tmp_path):
+    mail.connect(SITE, alice, "alice", ["anna@example.com"])
+    account = tomllib.loads(incus.containers["alice"]["files"][HIMALAYA_CONFIG])["accounts"]["alice@example.org"]
+    cmd = account["backend"]["auth"].pop("cmd")
+    assert account == {
+        "default": True, "email": "alice@example.org",
+        "backend": {"type": "imap", "host": "imap.purelymail.com", "port": 993, "encryption": {"type": "tls"},
+                    "login": "alice@example.org", "auth": {"type": "password"}},
+        "message": {"send": {"backend": {"type": "smtp", "host": "smtp.purelymail.com", "port": 587,
+                                         "encryption": {"type": "start-tls"}, "login": "alice@example.org",
+                                         "auth": {"type": "password", "cmd": cmd}},
+                             "save-copy": False}}}
+
+    def password():   # as himalaya gets it
+        (tmp_path / ".env").write_text(incus.containers["alice"]["files"][ENV])
+        return subprocess.run(["sh", "-c", cmd.replace(ENV, str(tmp_path / ".env"))], capture_output=True,
+                              text=True, check=True).stdout.strip()
+    assert password() == purelymail.users["alice@example.org"]
+    mail.connect(SITE, alice, "alice", [], new_password=True)
+    assert password() == purelymail.users["alice@example.org"]
+
+
+def test_a_users_own_himalaya_accounts_stay(alice, incus, purelymail):
+    own = '[accounts.gmail]\nemail = "anna@gmail.com"\ndefault = true\nbackend.type = "none"'
+    incus.containers["alice"]["files"][HIMALAYA_CONFIG] = own
+    mail.connect(SITE, alice, "alice", ["anna@example.com"])
+    config = incus.containers["alice"]["files"][HIMALAYA_CONFIG]
+    accounts = tomllib.loads(config)["accounts"]
+    assert config.startswith(own) and accounts["gmail"]["default"] and "default" not in accounts["alice@example.org"]
+
+    mail.connect(SITE, alice, "alice", [])
+    assert incus.containers["alice"]["files"][HIMALAYA_CONFIG] == config
+
+
+@pytest.mark.parametrize("own", ["[accounts", 'accounts = { gmail = { email = "anna@gmail.com" } }'])
+def test_a_himalaya_config_thinny_cannot_add_its_account_to_stays_as_it_is(alice, incus, purelymail, capsys, own):
+    incus.containers["alice"]["files"][HIMALAYA_CONFIG] = own
+    mail.connect(SITE, alice, "alice", ["anna@example.com"])
+    assert incus.containers["alice"]["files"][HIMALAYA_CONFIG] == own
+    assert f"alice: {HIMALAYA_CONFIG} gets no account for alice@example.org, which its agent sends mail with: " \
+        in capsys.readouterr().err
+
+
+def test_the_agent_learns_how_to_send_mail_from_the_mailbox_before_its_gateway_restarts(alice, incus, gateways,
+                                                                                       purelymail, monkeypatch):
+    hints = []
+    monkeypatch.setattr(instances, "_gateway_up", lambda s, inst: hints.append(policy_hint()))
+    mail.connect(SITE, alice, "alice", ["anna@example.com"])
+    hint = render.mail_hint("alice@example.org", instances.HIMALAYA_BIN)
+    assert hints == [hint]
+    assert "/usr/local/bin/himalaya template send -a alice@example.org" in hint
+    assert "EMAIL_HOME_ADDRESS" in hint and "--preview" in hint
+
+
+def policy_hint():
+    """What alice's policy adds to her agent's prompt."""
+    return yaml.safe_load((host.POLICIES / "alice/config.yaml").read_text()).get("agent", {}).get("environment_hint")
+
+
+def test_an_older_himalaya_gets_the_pinned_one(alice, incus, purelymail):
+    incus.containers["alice"]["himalaya"] = "v1.1.0"
+    mail.connect(SITE, alice, "alice", ["anna@example.com"])
+    assert incus.containers["alice"]["himalaya"] == instances.HIMALAYA
+
+
+def test_without_a_himalaya_for_its_architecture_the_mailbox_waits(alice, incus, gateways, purelymail):
+    incus.containers["alice"]["arch"] = "riscv64"
+    with pytest.raises(CommandError, match="alice: himalaya has no release for riscv64"):
+        mail.connect(SITE, alice, "alice", ["anna@example.com"])
+    restarted, _ = gateways
+    assert restarted == []
 
 
 def test_running_it_again_changes_who_may_write_and_keeps_the_password(alice, incus, gateways, purelymail):

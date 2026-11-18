@@ -179,6 +179,12 @@ class Incus:
             return f" sip-reg/sip:sip.odorik.cz  sip-auth  {c.get('sip', 'Registered')}  (exp. 290s)\n", 0
         if cmd[:3] == ["timeout", "10", "getent"]:
             return "", 0 if c.get("internet", True) else 2
+        if cmd[:2] == ["uname", "-m"]:
+            return c.get("arch", "x86_64") + "\n", 0
+        if cmd[:2] == [instances.HIMALAYA_BIN, "--version"]:   # its first line, as the real one prints it
+            return (f"himalaya {c['himalaya']} +imap +smtp\n", 0) if c.get("himalaya") else ("", 127)
+        if cmd[:2] == ["sh", "-c"] and "sha256sum" in cmd[2]:   # himalaya's release, from its URL
+            c["himalaya"] = cmd[4].split("/download/")[1].split("/")[0]
         if cmd[0] == "useradd":
             c["account"] = True
         elif cmd[:2] == ["test", "-d"]:
@@ -208,6 +214,8 @@ class Incus:
             if isinstance(c.get("usage"), CommandError):
                 raise c["usage"]
             return c.get("usage", ""), 0 if c.get("usage") else 1
+        elif cmd[:3] == ["hermes", "sessions", "refresh-prompts"]:
+            return "", c.get("refresh_exit", 0)
         elif cmd[:3] == ["hermes", "auth", "status"]:
             return f"{cmd[3]}: {'logged in' if c.get('signed_in', True) else 'logged out'}\n", 0
         elif cmd[:2] == ["sh", "-c"] and instances.DEFAULT_MODEL in cmd:
@@ -976,6 +984,22 @@ def test_an_instance_switches_to_webui_and_back_on_its_port(incus):
     assert incus.where("systemctl --user disable --now hermes-webui") < incus.where("hermes gateway restart --yes")
     assert WEBUI_UNIT not in alice["files"]
     assert not incus.ran("restart hermes-webui")
+
+
+def test_chats_going_on_rebuild_their_prompts_after_a_restart(incus):
+    alice = Instance("alice", 9120, "local", state="active")
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {}, "unit": True}
+    instances.start_or_restart_gateway(S, alice)
+    assert incus.where("hermes gateway restart --yes") < incus.where("hermes sessions refresh-prompts")
+
+
+def test_a_failed_refresh_of_the_chats_prompts_leaves_the_restart_done(incus, capsys):
+    alice = Instance("alice", 9120, "local", state="active")
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {}, "unit": True, "refresh_exit": 1}
+    instances.mark_restart(["alice"])
+    instances.start_or_restart_gateway(S, alice)
+    assert not instances.RESTART_PENDING.exists()
+    assert "alice: chats going on keep their prompts: " in capsys.readouterr().err
 
 
 def test_a_switch_to_webui_that_cannot_fetch_it_leaves_the_webapp_on(incus):

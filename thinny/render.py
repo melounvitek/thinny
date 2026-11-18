@@ -7,6 +7,7 @@ import ipaddress
 import json
 from urllib.parse import urlsplit
 
+from .purelymail import IMAP_HOST, SMTP_HOST
 from .registry import SUBNET
 from .settings import Settings
 
@@ -91,6 +92,52 @@ def managed_config(s: Settings) -> str:
     }
     config = merged(s.hermes, config)   # the instance's group's settings, under thinny's own
     return f"# {HEADER}\n# Hermes managed scope: these values win over every instance's own config.\n{to_yaml(config)}\n"
+
+
+HIMALAYA_ACCOUNT = r"""
+# thinny's: the instance's mailbox, which Hermes's email gateway reads too.
+[accounts."{address}"]
+{default}email = "{address}"
+backend.type = "imap"
+backend.host = "{imap}"
+backend.port = 993
+backend.encryption.type = "tls"
+backend.login = "{address}"
+backend.auth.type = "password"
+backend.auth.cmd = {password}
+message.send.backend.type = "smtp"
+message.send.backend.host = "{smtp}"
+message.send.backend.port = 587
+message.send.backend.encryption.type = "start-tls"
+message.send.backend.login = "{address}"
+message.send.backend.auth.type = "password"
+message.send.backend.auth.cmd = {password}
+# Else a copy to a Sent folder that fails after the mail went out has the agent send it again.
+message.send.save-copy = false
+"""
+
+
+def himalaya_account(address: str, env: str, default: bool) -> str:
+    """thinny's account in an instance's himalaya config. The password comes from the instance's .env, as set_env
+    writes it, at every use: a new one needs no change here."""
+    password = rf"""'''sed -n 's/^EMAIL_PASSWORD="\(.*\)"$/\1/p' {env}'''"""
+    return HIMALAYA_ACCOUNT.format(default="default = true\n" if default else "", address=address, imap=IMAP_HOST,
+                                   smtp=SMTP_HOST, password=password)
+
+
+def mail_hint(address: str, client: str) -> str:
+    """For the prompt of an instance's agent: Hermes has no tool that sends mail, and outside mail chats it does not
+    tell the agent about its mailbox."""
+    return (f"This instance has a mailbox of its own, {address}. Hermes's email gateway answers the mail its allowed "
+            "senders write to it. To send mail from it, attachments too (e.g. when the user asks you to email them "
+            f"something), or to read it, use the himalaya skill with {client}, the version it needs (another himalaya "
+            f"on PATH may not be), and the account {address}, which is set up: put `-a {address}` after the last "
+            f"subcommand, as in `{client} template send -a {address}`. Attach files with MML, "
+            "`<#part filename=/path/to/file><#/part>`. The user's own address is EMAIL_HOME_ADDRESS in ~/.hermes/.env "
+            "(`grep ^EMAIL_HOME_ADDRESS= ~/.hermes/.env`). No copy of sent mail is kept. Read mail with "
+            f"`{client} message read -a {address} --preview`: without --preview, and with `message export`, "
+            "`attachment download`, `template reply` or `template forward`, unread mail becomes read, and the gateway "
+            "answers only unread mail.")
 
 
 def managed_env() -> str:
