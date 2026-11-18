@@ -228,7 +228,8 @@ def test_mailboxes_from_before_get_the_email_client(server, incus):
 
     apply.apply(S)
     assert incus.containers["alice"]["himalaya"] == instances.HIMALAYA
-    assert "himalaya" not in incus.containers["bob"]
+    assert "[accounts.mailbox]" in incus.containers["alice"]["files"]["/home/alice/.config/himalaya/config.toml"]
+    assert "himalaya" not in incus.containers["bob"] and "files" not in incus.containers["bob"]
 
 
 def test_members_of_a_group_get_its_settings_after_losing_their_own(server, incus):

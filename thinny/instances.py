@@ -16,6 +16,7 @@ import shutil
 import sys
 import textwrap
 import time
+import tomllib
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
@@ -316,7 +317,8 @@ def ensure_account(name: str) -> None:
 
 
 def ensure_mail_client(inst: Instance) -> None:
-    """For an instance with a mailbox: the pinned himalaya, which its agent uses through Hermes's himalaya skill."""
+    """For an instance with a mailbox: the pinned himalaya, which its agent uses through Hermes's himalaya skill, with
+    the mailbox as its account `mailbox`. A user's own himalaya accounts stay."""
     if not inst.mailbox:
         return
     name = inst.name
@@ -329,6 +331,19 @@ def ensure_mail_client(inst: Instance) -> None:
                             'echo "$2  $d/h.tgz" | sha256sum -c --quiet; tar -xzf "$d/h.tgz" -C "$d" himalaya; '
                             'install -m 755 "$d/himalaya" "$3"; rm -r "$d"', "sh", url, HIMALAYA_SHA256[arch],
                             HIMALAYA_BIN], timeout=600)
+    path = f"/home/{name}/.config/himalaya/config.toml"
+    config = read_user_file(name, path)
+    account = render.himalaya_account(inst.mailbox, str(home(name) / ".env"), default=not config.strip())
+    try:
+        accounts = tomllib.loads(config).get("accounts", {})
+        if "mailbox" not in accounts:
+            tomllib.loads(config + account)   # fails e.g. after `accounts = {...}`
+            as_user(name, ["mkdir", "-p", str(PurePosixPath(path).parent)])
+            write_user_file(name, path, config + account)
+        elif accounts["mailbox"].get("email") != inst.mailbox:
+            raise ValueError(f"its account mailbox is {accounts['mailbox'].get('email')}'s")
+    except ValueError as e:   # TOMLDecodeError too
+        log(f"{name}: {path} gets no account for {inst.mailbox}, which its agent sends mail with: {e}")
 
 
 def install_hermes(s: Settings, name: str, commit: str, enable: bool) -> None:

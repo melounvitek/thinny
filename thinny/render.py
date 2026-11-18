@@ -7,6 +7,7 @@ import ipaddress
 import json
 from urllib.parse import urlsplit
 
+from .purelymail import IMAP_HOST, SMTP_HOST
 from .registry import SUBNET
 from .settings import Settings
 
@@ -91,6 +92,37 @@ def managed_config(s: Settings) -> str:
     }
     config = merged(s.hermes, config)   # the instance's group's settings, under thinny's own
     return f"# {HEADER}\n# Hermes managed scope: these values win over every instance's own config.\n{to_yaml(config)}\n"
+
+
+HIMALAYA_ACCOUNT = r"""
+# thinny's: the instance's mailbox, which Hermes's email gateway reads too.
+[accounts.mailbox]
+{default}email = "{address}"
+backend.type = "imap"
+backend.host = "{imap}"
+backend.port = 993
+backend.encryption.type = "tls"
+backend.login = "{address}"
+backend.auth.type = "password"
+backend.auth.cmd = {password}
+message.send.backend.type = "smtp"
+message.send.backend.host = "{smtp}"
+message.send.backend.port = 587
+message.send.backend.encryption.type = "start-tls"
+message.send.backend.login = "{address}"
+message.send.backend.auth.type = "password"
+message.send.backend.auth.cmd = {password}
+# Else a copy to a Sent folder that fails after the mail went out has the agent send it again.
+message.send.save-copy = false
+"""
+
+
+def himalaya_account(address: str, env: str, default: bool) -> str:
+    """thinny's account in an instance's himalaya config. The password comes from the instance's .env, as set_env
+    writes it, at every use: a new one needs no change here."""
+    password = rf"""'''sed -n 's/^EMAIL_PASSWORD="\(.*\)"$/\1/p' {env}'''"""
+    return HIMALAYA_ACCOUNT.format(default="default = true\n" if default else "", address=address, imap=IMAP_HOST,
+                                   smtp=SMTP_HOST, password=password)
 
 
 def managed_env() -> str:

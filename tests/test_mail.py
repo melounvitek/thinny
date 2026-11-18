@@ -2,6 +2,8 @@ import dataclasses
 import io
 import json
 import socket
+import subprocess
+import tomllib
 import urllib.request
 
 import pytest
@@ -15,6 +17,7 @@ TOKEN = "pm-live-" + "t" * 32
 SITE = dataclasses.replace(S, email_domain="example.org")
 NO_TOKEN = "set THINNY_PURELYMAIL_API_TOKEN first: thinny config edit --secrets \\(see README, Email\\)"
 ENV = "/home/alice/.hermes/.env"
+HIMALAYA_CONFIG = "/home/alice/.config/himalaya/config.toml"
 
 
 class Purelymail:
@@ -138,6 +141,55 @@ def test_a_mailbox_comes_with_the_email_client_of_hermess_himalaya_skill(alice, 
     incus.calls.clear()
     mail.connect(SITE, alice, "alice", [])
     assert not incus.ran("sha256sum")
+
+
+def test_himalayas_account_for_the_mailbox_reads_the_password_from_the_env_at_every_use(alice, incus, purelymail,
+                                                                                      tmp_path):
+    mail.connect(SITE, alice, "alice", ["anna@example.com"])
+    account = tomllib.loads(incus.containers["alice"]["files"][HIMALAYA_CONFIG])["accounts"]["mailbox"]
+    cmd = account["backend"]["auth"].pop("cmd")
+    assert account == {
+        "default": True, "email": "alice@example.org",
+        "backend": {"type": "imap", "host": "imap.purelymail.com", "port": 993, "encryption": {"type": "tls"},
+                    "login": "alice@example.org", "auth": {"type": "password"}},
+        "message": {"send": {"backend": {"type": "smtp", "host": "smtp.purelymail.com", "port": 587,
+                                         "encryption": {"type": "start-tls"}, "login": "alice@example.org",
+                                         "auth": {"type": "password", "cmd": cmd}},
+                             "save-copy": False}}}
+
+    def password():   # as himalaya gets it
+        (tmp_path / ".env").write_text(incus.containers["alice"]["files"][ENV])
+        return subprocess.run(["sh", "-c", cmd.replace(ENV, str(tmp_path / ".env"))], capture_output=True,
+                              text=True, check=True).stdout.strip()
+    assert password() == purelymail.users["alice@example.org"]
+    mail.connect(SITE, alice, "alice", [], new_password=True)
+    assert password() == purelymail.users["alice@example.org"]
+
+
+def test_a_users_own_himalaya_accounts_stay(alice, incus, purelymail):
+    own = '[accounts.gmail]\nemail = "anna@gmail.com"\ndefault = true\nbackend.type = "none"'
+    incus.containers["alice"]["files"][HIMALAYA_CONFIG] = own
+    mail.connect(SITE, alice, "alice", ["anna@example.com"])
+    config = incus.containers["alice"]["files"][HIMALAYA_CONFIG]
+    accounts = tomllib.loads(config)["accounts"]
+    assert config.startswith(own) and accounts["gmail"]["default"] and "default" not in accounts["mailbox"]
+
+    mail.connect(SITE, alice, "alice", [])
+    assert incus.containers["alice"]["files"][HIMALAYA_CONFIG] == config
+
+
+@pytest.mark.parametrize("own, reason", [
+    ("[accounts", ""),   # Python's own words
+    ('accounts = { gmail = { email = "anna@gmail.com" } }', ""),
+    ('[accounts.mailbox]\nemail = "anna@gmail.com"', "its account mailbox is anna@gmail.com's"),
+])
+def test_a_himalaya_config_thinny_cannot_add_its_account_to_stays_as_it_is(alice, incus, purelymail, capsys, own,
+                                                                           reason):
+    incus.containers["alice"]["files"][HIMALAYA_CONFIG] = own
+    mail.connect(SITE, alice, "alice", ["anna@example.com"])
+    assert incus.containers["alice"]["files"][HIMALAYA_CONFIG] == own
+    assert f"alice: {HIMALAYA_CONFIG} gets no account for alice@example.org, which its agent sends mail with: " \
+        f"{reason}" in capsys.readouterr().err
 
 
 def test_an_older_himalaya_gets_the_pinned_one(alice, incus, purelymail):
