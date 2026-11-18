@@ -445,7 +445,7 @@ def test_instance_resize_changes_only_the_given_limits(server, monkeypatch):
 
 def test_instance_usage_takes_every_active_instance_or_one_named(server, capsys):
     assert cli.main(["instance", "usage"]) == 0
-    assert capsys.readouterr().out == "NAME  PROVIDER  5H  WEEK\n"   # none yet
+    assert capsys.readouterr().out == "NAME  PROVIDER  ACCOUNT  5H  WEEK\n"   # none yet
     assert cli.main(["instance", "usage", "nobody"]) == 1
     assert "no instance named 'nobody'" in capsys.readouterr().err
 
