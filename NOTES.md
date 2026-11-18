@@ -430,6 +430,10 @@ noted **[tested]**.
   rebuild it once, on its next turn, its history kept, also with the gateway running **[src]**.
 - thinny's account in the v1.2.0 binary: it read the password from a `.env` as `set_env` writes it and
   reached `imap.purelymail.com`, which refused the made-up password **[tested]**.
+- On the test server (2026-11-18, Hermes v0.23.2) **[tested]**: a new Purelymail mailbox has Archive, Drafts,
+  INBOX, Junk, Sent and Trash. Asked in the Webapp for a short PDF by mail, the agent loaded the himalaya
+  skill, read the user's address from `.env` with Python, and sent the PDF once with `/usr/local/bin/himalaya
+  template send -a <address>` and an MML part; it arrived at Gmail.
 
 ### Export (2026-11-16)
 Hermes v0.23.1 (3b42157) **[src]**, hermes-webui 0.52 and hermes-3310 **[src]**; run only where **[tested]**.
@@ -590,8 +594,8 @@ own), through `sudo -n` there. The instance: Webapp, local access, no group, loc
   untested with the installed service.
 - Mailboxes: not yet tried are a scheduled job's mail, mail from another Purelymail mailbox (dropped?),
   `move` and `uninstall` with a mailbox.
-- Mail from the agent is untried on a server: a mail with an attachment, the agent reading its users'
-  address with `grep`, the gateway answering mail while the agent reads INBOX, `--new-password`.
+- Mail from the agent is untried on a server outside the Webapp (Telegram, a mail chat), and so are the
+  gateway answering mail while the agent reads INBOX, and `--new-password`.
 - Export: not tried are its time on a large `state.db` (2 s with 1.4 MB) and `hermes import` into a Hermes
   outside thinny. It follows Hermes's list of credentials, but mirrors its private any-depth names: check
   them when Hermes changes.
