@@ -179,6 +179,12 @@ class Incus:
             return f" sip-reg/sip:sip.odorik.cz  sip-auth  {c.get('sip', 'Registered')}  (exp. 290s)\n", 0
         if cmd[:3] == ["timeout", "10", "getent"]:
             return "", 0 if c.get("internet", True) else 2
+        if cmd[:2] == ["uname", "-m"]:
+            return c.get("arch", "x86_64") + "\n", 0
+        if cmd[:2] == [instances.HIMALAYA_BIN, "--version"]:   # its first line, as the real one prints it
+            return (f"himalaya {c['himalaya']} +imap +smtp\n", 0) if c.get("himalaya") else ("", 127)
+        if cmd[:2] == ["sh", "-c"] and "sha256sum" in cmd[2]:   # himalaya's release, from its URL
+            c["himalaya"] = cmd[4].split("/download/")[1].split("/")[0]
         if cmd[0] == "useradd":
             c["account"] = True
         elif cmd[:2] == ["test", "-d"]:

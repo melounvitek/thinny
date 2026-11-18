@@ -63,5 +63,6 @@ def connect(s: Settings, reg: Registry, name: str, senders: list[str], new_passw
             enablePasswordReset=False, sendWelcomeEmail=False)
         inst.mailbox = address
         reg.save()   # only now: a refusal may mean that someone else created it meanwhile
+    instances.ensure_mail_client(inst)
     instances.start_or_restart_gateway(s, inst)
     print(f"{name} reads and sends mail as {address}. {', '.join(senders)} may write to it.")

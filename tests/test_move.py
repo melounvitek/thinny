@@ -340,9 +340,10 @@ def test_a_failed_move_keeps_the_mailbox_here(source, incus, failure):
             "thinny instance remove alice --keep-mailbox" in str(e.value)) == (failure == "lost")
 
 
-def test_a_moved_instance_brings_its_mailbox(target):
+def test_a_moved_instance_brings_its_mailbox(target, incus):
     move.receive(S, target, "alice", "local", "", RELEASE, render.BUILT_INS, archive(), mailbox="alice@example.org")
     assert target.get("alice").mailbox == "alice@example.org"
+    assert incus.containers["alice"]["himalaya"] == instances.HIMALAYA   # from an older thinny, with none
 
 
 def test_only_active_instances_move_and_not_during_an_unfinished_update(source, incus, tmp_path):

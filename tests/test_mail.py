@@ -126,6 +126,34 @@ def test_an_instance_gets_a_mailbox_that_only_named_addresses_may_write_to(alice
         in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("arch, sha", list(instances.HIMALAYA_SHA256.items()))
+def test_a_mailbox_comes_with_the_email_client_of_hermess_himalaya_skill(alice, incus, purelymail, arch, sha):
+    incus.containers["alice"]["arch"] = arch
+    mail.connect(SITE, alice, "alice", ["anna@example.com"])
+    # the pinned release for its architecture, checked before it is unpacked
+    url = f"https://github.com/pimalaya/himalaya/releases/download/{instances.HIMALAYA}/himalaya.{arch}-linux.tgz"
+    assert incus.ran(f"{url} {sha} /usr/local/bin/himalaya")
+    assert incus.containers["alice"]["himalaya"] == instances.HIMALAYA
+
+    incus.calls.clear()
+    mail.connect(SITE, alice, "alice", [])
+    assert not incus.ran("sha256sum")
+
+
+def test_an_older_himalaya_gets_the_pinned_one(alice, incus, purelymail):
+    incus.containers["alice"]["himalaya"] = "v1.1.0"
+    mail.connect(SITE, alice, "alice", ["anna@example.com"])
+    assert incus.containers["alice"]["himalaya"] == instances.HIMALAYA
+
+
+def test_without_a_himalaya_for_its_architecture_the_mailbox_waits(alice, incus, gateways, purelymail):
+    incus.containers["alice"]["arch"] = "riscv64"
+    with pytest.raises(CommandError, match="alice: himalaya has no release for riscv64"):
+        mail.connect(SITE, alice, "alice", ["anna@example.com"])
+    restarted, _ = gateways
+    assert restarted == []
+
+
 def test_running_it_again_changes_who_may_write_and_keeps_the_password(alice, incus, gateways, purelymail):
     mail.connect(SITE, alice, "alice", ["anna@example.com"])
     password = env(incus)["EMAIL_PASSWORD"]

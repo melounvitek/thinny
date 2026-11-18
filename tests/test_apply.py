@@ -219,6 +219,18 @@ def test_running_instances_get_their_trace(server, incus):
     assert incus.containers["bob"]["devices"] == {}
 
 
+def test_mailboxes_from_before_get_the_email_client(server, incus):
+    reg, _ = server
+    reg.instances.update(alice=Instance("alice", 9120, "local", state="active", mailbox="alice@example.org"),
+                         bob=Instance("bob", 9121, "local", state="active"))
+    for name in reg.instances:
+        incus.containers[name] = {"state": "RUNNING", "devices": {}}
+
+    apply.apply(S)
+    assert incus.containers["alice"]["himalaya"] == instances.HIMALAYA
+    assert "himalaya" not in incus.containers["bob"]
+
+
 def test_members_of_a_group_get_its_settings_after_losing_their_own(server, incus):
     reg, restarted = server
     reg.instances.update(alice=Instance("alice", 9120, "local", state="active", group="sales"),
