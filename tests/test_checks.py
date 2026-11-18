@@ -34,6 +34,7 @@ LISTED = """table inet thinny {
 		iifname "thinny-*" oifname != "eth0" drop
 		iifname "thinny-*" ip daddr @blocked_v4 drop
 		iifname "thinny-*" meta nfproto ipv6 drop
+		iifname "thinny-*" tcp dport 25 drop
 		oifname "thinny-*" ct state != { established, related } drop
 	}
 
