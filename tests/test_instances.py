@@ -99,7 +99,8 @@ class Incus:
 
     def run_bytes(self, cmd, **kw):
         res = self.run(cmd, check=False)
-        return res.returncode, res.stdout.encode(), b""
+        out = res.stdout
+        return res.returncode, out if isinstance(out, bytes) else out.encode(), b""
 
     def answer(self, cmd, input=None):
         if cmd[0] == "curl":
@@ -218,6 +219,8 @@ class Incus:
             return "", c.get("refresh_exit", 0)
         elif cmd[:3] == ["hermes", "auth", "status"]:
             return f"{cmd[3]}: {'logged in' if c.get('signed_in', True) else 'logged out'}\n", 0
+        elif cmd[:3] == ["claude", "auth", "status"]:   # its JSON
+            return c.get("claude_status", '{"loggedIn": false}'), 0
         elif cmd[:2] == ["sh", "-c"] and instances.DEFAULT_MODEL in cmd:
             model = self.default_models.get(input)
             return (f"{model}\n", 0) if model else ("\n", 1)
@@ -518,13 +521,15 @@ def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_
         return wrapper
     monkeypatch.setattr(instances, "gateway_active", watched(instances.gateway_active))
     monkeypatch.setattr(instances, "disk_used", watched(instances.disk_used))
+    monkeypatch.setattr(instances, "env_values", watched(instances.env_values))
+    unreadable = {"/home/dave/.hermes/.env": b"\xff"}   # its users' .env, not text
 
     def sleep(seconds):
         with sampling:   # the gateways and disks of the containers there are read during the CPU sample
             assert sampling.wait_for(lambda: expected <= read, timeout=5)
         clock[0] += seconds
         incus.containers["alice"]["incus_state"]["cpu"]["usage"] += 10**9   # one of its two CPUs busy
-        incus.containers["dave"] = {"state": "RUNNING", "used": 4 * 2**30,   # its container started meanwhile
+        incus.containers["dave"] = {"state": "RUNNING", "used": 4 * 2**30, "files": unreadable,   # started meanwhile
                                     "incus_state": {"memory": {"usage": 2**29, "total": 4 * 2**30}, "disk": disk}}
     monkeypatch.setattr(instances, "time", types.SimpleNamespace(sleep=sleep, monotonic=lambda: clock[0]))
     # Of alice's 3 GiB, 2 GiB are file cache. dave has no cgroup there: Incus's usage.
@@ -534,20 +539,27 @@ def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_
     (alice / "memory.current").write_text(f"{3 * 2**30}\n")
     (alice / "memory.stat").write_text(f"anon {2**30 - 4096}\nactive_file {2**30}\ninactive_file {2**30}\nshmem 4096\n")
     reg.get("bob").group = reg.get("dave").group = "sales"
-    expected.update((reader, name) for reader in ("gateway_active", "disk_used") for name in ("alice", "bob"))
+    reg.get("alice").mailbox = "alice@example.com"
+    incus.containers["alice"]["files"] = {"/home/alice/.hermes/.env": 'SIP_SERVER="sip.odorik.cz"\nSIP_USER="123456"\n'}
+    reg.get("alice").url, reg.get("dave").url = "https://192.0.2.10:9120/", "https://192.0.2.10:9123/"
+    readers = ("gateway_active", "disk_used", "env_values")
+    expected.update((reader, name) for reader in readers for name in ("alice", "bob"))
     instances.list_instances(reg)
     assert capsys.readouterr().out.splitlines() == [
-        "NAME   STATE   GROUP  ACCESS  FRONTEND  PORT  GATEWAY   CPU  RAM          DISK          URL",
-        "alice  active  -      lan     webapp    9120  active    50%  1.0/4.0 GiB  3.0/30.0 GiB",
-        "bob    active  sales  lan     webapp    9121  INACTIVE  -    -            1.0/30.0 GiB",
-        "carol  active  -      lan     webapp    9122  -         -    -            -",
-        "dave   active  sales  lan     webui     9123  active    -    0.5/4.0 GiB  1.0/30.0 GiB",
+        "NAME   STATE   GROUP  ACCESS  FRONTEND  GATEWAY   CPU  RAM     DISK     MAIL  PHONE  URL",
+        "alice  active  -      lan     webapp    active    50%  1.0/4G  3.0/30G  yes   yes    192.0.2.10:9120",
+        "bob    active  sales  lan     webapp    INACTIVE  -    -       1.0/30G  -     -",
+        "carol  active  -      lan     webapp    -         -    -       -        -     -",
+        "dave   active  sales  lan     webui     active    -    0.5/4G  1.0/30G  -     ?      192.0.2.10:9123",
     ]
     del incus.containers["dave"]   # started again during the next list
     read.clear()
-    expected -= {("gateway_active", "alice"), ("disk_used", "alice")}   # not in the group
+    expected -= {(reader, "alice") for reader in readers}   # not in the group
     instances.list_instances(reg, "sales")
-    assert [line.split()[0] for line in capsys.readouterr().out.splitlines()] == ["NAME", "bob", "dave"]
+    lines = capsys.readouterr().out.splitlines()
+    assert [line.split()[0] for line in lines] == ["NAME", "bob", "dave"]
+    # Neither had CPU use measured, nor has a mailbox.
+    assert lines[0].split() == ["NAME", "STATE", "GROUP", "ACCESS", "FRONTEND", "GATEWAY", "RAM", "DISK", "PHONE", "URL"]
 
 
 @pytest.fixture
@@ -568,6 +580,14 @@ def usage_json(*windows, reason=None):
                        "details": [], "unavailable_reason": reason})
 
 
+def chatgpt_auth(*emails):
+    """Hermes's auth.json, signed in to ChatGPT with an account of each email: in its tokens' claims."""
+    def token(email):
+        claims = json.dumps({"https://api.openai.com/profile": {"email": email, "email_verified": True}})
+        return f"header.{base64.urlsafe_b64encode(claims.encode()).decode().rstrip('=')}.signature"
+    return json.dumps({"credential_pool": {"openai-codex": [{"access_token": token(email)} for email in emails]}})
+
+
 def test_usage_shows_each_active_instances_subscription_limits_in_the_servers_time(incus, capsys, prague):
     names = ["alice", "bob", "carol", "dave", "erin", "frank", "gina", "hank"]
     reg = Registry({n: Instance(n, 9120 + i, "lan", state="active") for i, n in enumerate(names)})
@@ -577,6 +597,8 @@ def test_usage_shows_each_active_instances_subscription_limits_in_the_servers_ti
     incus.containers = {name: {"state": "RUNNING"} for name in names}
     incus.containers["alice"]["usage"] = usage_json(("Session", 37.0, "2026-11-19T20:00:00+00:00"),
                                                    ("Weekly", 12.4, "2026-11-26T08:00:00+00:00"))
+    incus.containers["alice"]["files"] = {"/home/alice/.hermes/auth.json": chatgpt_auth("alice@example.com")}
+    incus.containers["bob"]["claude_status"] = json.dumps({"loggedIn": True, "email": "bob@example.com"})
     incus.containers["bob"]["usage"] = usage_json(("Current session", 81, "2026-11-19T17:40:00Z"),
                                                  ("Opus week", 90, "2026-11-20T06:00:00Z"),
                                                  ("Current week", 64, "2026-11-23T06:00:00Z"))
@@ -584,43 +606,52 @@ def test_usage_shows_each_active_instances_subscription_limits_in_the_servers_ti
         reason="no Claude subscription login found (run `claude` and log in)")}
     incus.containers["dave"]["signed_in"] = False   # Hermes got nothing: no credential
     # erin: Hermes got nothing, but she is signed in
-    incus.containers["frank"] |= {"hermes_config": claude, "usage": usage_json(reason="Claude Code did not answer in time")}
+    incus.containers["erin"]["files"] = {"/home/erin/.hermes/auth.json": chatgpt_auth("erin@example.com")}
+    incus.containers["frank"] |= {"hermes_config": claude, "usage": usage_json(reason="Claude Code did not answer in time"),
+                                  "claude_status": json.dumps({"loggedIn": True, "email": "frank@example.com"})}
     incus.containers["gina"]["usage"] = CommandError("hermes usage: timed out after 20 s")
     instances.usage(S, reg)
     assert capsys.readouterr().out.splitlines() == [
-        "NAME   PROVIDER  5H           WEEK",
-        "alice  ChatGPT   37% → 21:00  12% → Thu 09:00",
-        "bob    Claude    81% → 18:40  64% → Mon 07:00",
-        "carol  Claude    not signed in",
-        "dave   ChatGPT   not signed in",
-        "erin   ChatGPT   ?",
-        "frank  Claude    Claude Code did not answer in time",
-        "gina   ChatGPT   ?",
+        "NAME   PROVIDER  ACCOUNT            5H           WEEK",
+        "alice  ChatGPT   alice@example.com  37% → 21:00  12% → Thu 09:00",
+        "bob    Claude    bob@example.com    81% → 18:40  64% → Mon 07:00",
+        "carol  Claude    -                  not signed in",
+        "dave   ChatGPT   -                  not signed in",
+        "erin   ChatGPT   erin@example.com   ?",
+        "frank  Claude    frank@example.com  Claude Code did not answer in time",
+        "gina   ChatGPT   -                  ?",
     ]
     assert incus.ran(f"hermes usage --json --provider {instances.CLAUDE_PROVIDER}")
     assert not incus.ran("exec hank")
     assert not incus.ran("hermes config get model.default")   # only the provider counts
 
     instances.usage(S, reg, "alice")
-    assert capsys.readouterr().out.splitlines()[1:] == ["alice  ChatGPT   37% → 21:00  12% → Thu 09:00"]
+    assert capsys.readouterr().out.splitlines()[1:] == ["alice  ChatGPT   alice@example.com  37% → 21:00  12% → Thu 09:00"]
     for name in ("hank", "nobody"):
         with pytest.raises(RegistryError):
             instances.usage(S, reg, name)
 
 
 def test_usage_takes_what_an_instances_users_make_hermes_say_as_text_or_a_failure(incus, capsys, prague):
-    reg = Registry({n: Instance(n, 9120 + i, "lan", state="active") for i, n in enumerate(["alice", "bob", "carol"])})
+    names = ["alice", "bob", "carol", "dave"]
+    reg = Registry({n: Instance(n, 9120 + i, "lan", state="active") for i, n in enumerate(names)})
+    nested = "[" * 100_000   # deeper than Python's JSON parser goes
     incus.containers = {
         "alice": {"state": "RUNNING", "hermes_config": {"model.provider": "own\x1b[2J\nINJECTED"},
                   "usage": usage_json(reason="Claude Code did not answer in time\x1b[2J")},
-        "bob": {"state": "RUNNING", "usage": usage_json(("Session", 37, "9999-12-31T23:59:59+00:00"))},   # 10000 here
-        "carol": {"state": "RUNNING", "usage": usage_json(("Session", 37, "2026-11-19T20:00:00+00:00"))},
+        "bob": {"state": "RUNNING", "usage": usage_json(("Session", 37, "9999-12-31T23:59:59+00:00")),   # 10000 here
+                "files": {"/home/bob/.hermes/auth.json": nested}},
+        "carol": {"state": "RUNNING", "usage": usage_json(("Session", 37, "2026-11-19T20:00:00+00:00")),
+                  "files": {"/home/carol/.hermes/auth.json": chatgpt_auth("carol\x1b[2J@example.com")}},
+        "dave": {"state": "RUNNING", "usage": nested,   # two accounts, one signed in twice
+                 "files": {"/home/dave/.hermes/auth.json": chatgpt_auth("d@example.com", "d@example.org", "d@example.com")}},
     }
     instances.usage(S, reg)
     assert capsys.readouterr().out.splitlines()[1:] == [
-        "alice  own[2JINJECTED  Claude Code did not answer in time[2J",   # without control characters
-        "bob    ChatGPT         ?",
-        "carol  ChatGPT         37% → 21:00  -",
+        "alice  own[2JINJECTED  -                             Claude Code did not answer in time[2J",   # without control characters
+        "bob    ChatGPT         ?                             ?",
+        "carol  ChatGPT         carol[2J@example.com          37% → 21:00  -",
+        "dave   ChatGPT         d@example.com, d@example.org  ?",
     ]
 
 

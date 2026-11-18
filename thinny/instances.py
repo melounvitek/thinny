@@ -1078,14 +1078,20 @@ def list_groups(s: Settings, reg: Registry) -> None:
 
 
 def list_instances(reg: Registry, group: str | None = None) -> None:
-    """CPU is the use over a second, as a share of the instance's own CPU limit; each instance's gateway and disk use
-    are read meanwhile. `group`: its members only."""
+    """CPU is the use over a second, as a share of the instance's own CPU limit; each instance's gateway, disk use
+    and phone line are read meanwhile. `group`: its members only. A column with nothing in it (only -) is left out."""
     shown = [inst for inst in sorted(reg.instances.values(), key=lambda inst: inst.port)
              if group is None or inst.group == group]
 
-    def probe(inst: Instance) -> tuple[bool | None, int]:
-        """Whether its gateway is active (None: a disabled or removed instance shows none), and its disk use."""
-        return None if inst.state in ("disabled", "removed") else gateway_active(inst.name), disk_used(inst.name)
+    def probe(inst: Instance) -> tuple[bool | None, int, str]:
+        """Whether its gateway is active (None: a disabled or removed instance shows none), its disk use, and
+        whether it has a phone line (as add or the Webapp sets one up)."""
+        try:
+            phone = "yes" if env_values(inst.name).get("SIP_USER") else "-"
+        except CommandError:   # its users' .env, too large or not text
+            phone = "?"
+        return (None if inst.state in ("disabled", "removed") else gateway_active(inst.name), disk_used(inst.name),
+                phone)
 
     before = _containers()
     start = time.monotonic()
@@ -1094,13 +1100,13 @@ def list_instances(reg: Registry, group: str | None = None) -> None:
         time.sleep(1)
         containers = _containers()
         seconds = time.monotonic() - start
-    rows = [("NAME", "STATE", "GROUP", "ACCESS", "FRONTEND", "PORT", "GATEWAY", "CPU", "RAM", "DISK", "URL")]
+    rows = [("NAME", "STATE", "GROUP", "ACCESS", "FRONTEND", "GATEWAY", "CPU", "RAM", "DISK", "MAIL", "PHONE", "URL")]
     for inst in shown:
         c = containers.get(inst.name)
-        gateway = cpu = ram = disk = "-"
+        gateway = cpu = ram = disk = phone = "-"
         if c:
             # A container started during the second is read now.
-            active, used = probes[inst.name].result() if inst.name in probes else probe(inst)
+            active, used, phone = probes[inst.name].result() if inst.name in probes else probe(inst)
             if active is not None:
                 gateway = "active" if active else "INACTIVE"
             state = c["state"]
@@ -1110,10 +1116,11 @@ def list_instances(reg: Registry, group: str | None = None) -> None:
                 if before.get(inst.name, {}).get("status") == "Running":   # not started in between
                     used = state["cpu"]["usage"] - before[inst.name]["state"]["cpu"]["usage"]   # in ns
                     cpu = f"{used / 1e9 / seconds / int(c['expanded_config']['limits.cpu']):.0%}"
-        rows.append((inst.name, inst.state, inst.group or "-", inst.access, inst.frontend, str(inst.port), gateway,
-                     cpu, ram, disk, inst.url))
-    widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
-    for r in rows:
+        rows.append((inst.name, inst.state, inst.group or "-", inst.access, inst.frontend, gateway, cpu, ram, disk,
+                     "yes" if inst.mailbox else "-", phone, inst.url.partition("://")[2].rstrip("/")))   # no scheme
+    columns = [column for column in zip(*rows) if set(column[1:]) != {"-"}]
+    widths = [max(map(len, column)) for column in columns]
+    for r in zip(*columns):
         print("  ".join(c.ljust(w) for c, w in zip(r, widths)).rstrip())
 
 
@@ -1122,32 +1129,56 @@ def usage(s: Settings, reg: Registry, name: str | None = None) -> None:
     Hermes asks the provider now. All at once: one after another, they would add up to minutes."""
     targets = [_active(reg, name)] if name else [inst for inst in reg.current() if inst.state == "active"]
     with ThreadPoolExecutor() as pool:
-        rows = [("NAME", "PROVIDER", "5H", "WEEK"), *pool.map(lambda inst: _usage_row(s, reg, inst.name), targets)]
-    # With its users' texts (a provider, a reason): without control characters, for the admin's terminal.
+        rows = [("NAME", "PROVIDER", "ACCOUNT", "5H", "WEEK"),
+                *pool.map(lambda inst: _usage_row(s, reg, inst.name), targets)]
+    # With its users' texts (a provider, an account, a reason): without control characters, for the admin's terminal.
     rows = [[printable(c) for c in r] for r in rows]
     # A row's last text sets no column's width: a note (not signed in, ?) spans 5H and WEEK.
-    widths = [max(len(r[i]) for r in rows if len(r) > i + 1) for i in range(3)]
+    widths = [max(len(r[i]) for r in rows if len(r) > i + 1) for i in range(4)]
     for r in rows:
         print("  ".join(c.ljust(w) for c, w in zip(r, [*widths, 0])).rstrip())
 
 
 def _usage_row(s: Settings, reg: Registry, name: str) -> tuple[str, ...]:
-    shown = "?"
+    shown = account = "?"
     try:
         provider = provider_of(s, reg, name, timeout=USAGE_TIMEOUT)
-        shown = _provider_name(provider)
+        shown, account = _provider_name(provider), _account(name, provider)
         res = hermes(name, ["usage", "--json", "--provider", provider], check=False, timeout=USAGE_TIMEOUT)
         if res.returncode:   # Hermes got nothing: without a credential, or the provider did not answer
             status = hermes(name, ["auth", "status", provider], check=False, timeout=USAGE_TIMEOUT).stdout
-            return name, shown, "not signed in" if ": logged out" in status else "?"
+            return name, shown, account, "not signed in" if ": logged out" in status else "?"
         doc = json.loads(res.stdout)
         if reason := doc["unavailable_reason"]:   # the Claude plugin's way of saying it got nothing
-            return name, shown, "not signed in" if reason.startswith("no Claude subscription login") else reason
+            return (name, shown, account,
+                    "not signed in" if reason.startswith("no Claude subscription login") else reason)
         windows = {w["label"]: w for w in doc["windows"]}
-        return name, shown, *(_window(windows, labels, form) for labels, form in ((FIVE_HOURS, "%H:%M"),
-                                                                                   (WEEK, "%a %H:%M")))
-    except (CommandError, ValueError, TypeError, KeyError, AttributeError, OverflowError):   # or what its users made Hermes say
-        return name, shown, "?"
+        return name, shown, account, _window(windows, FIVE_HOURS, "%H:%M"), _window(windows, WEEK, "%a %H:%M")
+    except (CommandError, ValueError, TypeError, KeyError, AttributeError, OverflowError,
+            RecursionError):   # or what its users made Hermes say
+        return name, shown, account, "?"
+
+
+def _account(name: str, provider: str) -> str:
+    """The email of the account the instance is signed in to the provider with; - when there is none, ? when it
+    is unknown. Claude Code tells it; Hermes keeps ChatGPT's in its tokens, but does not show it. Hermes may hold
+    several, and picks one per request: each of their emails."""
+    try:
+        if provider == CLAUDE_PROVIDER:
+            status = as_user(name, ["claude", "auth", "status"], check=False, timeout=USAGE_TIMEOUT).stdout
+            return str(json.loads(status).get("email") or "-")
+        if provider == "openai-codex":
+            auth = json.loads(read_user_file(name, str(home(name) / "auth.json")) or "{}")
+            emails = []
+            for credential in auth.get("credential_pool", {}).get(provider, []):
+                payload = credential["access_token"].split(".")[1]   # of a JWT
+                claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+                emails.append(str(claims["https://api.openai.com/profile"]["email"]))
+            return ", ".join(dict.fromkeys(emails)) or "-"
+        return "-"
+    except (CommandError, ValueError, TypeError, KeyError, IndexError, AttributeError,
+            RecursionError):   # or what its users wrote
+        return "?"
 
 
 def _window(windows: dict[str, dict], labels: tuple[str, ...], form: str) -> str:
@@ -1180,7 +1211,9 @@ def _memory_used(name: str, usage: int) -> int:
 
 
 def _gib(used: int, total: int) -> str:
-    return f"{used / 2**30:.1f}/{total / 2**30:.1f} GiB"
+    """Used and total GiB, as `0.7/4G`."""
+    total_gib = f"{total / 2**30:.1f}".removesuffix(".0")
+    return f"{used / 2**30:.1f}/{total_gib}G"
 
 
 def _active(reg: Registry, name: str) -> Instance:

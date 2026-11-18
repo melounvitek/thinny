@@ -116,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg.add_parser("apply", help="bring the server in line with config.toml after editing it")
     inst = sub.add_parser("instance", help="instances, one container each")
     inst = inst.add_subparsers(dest="action", required=True, metavar="action")
-    inst.add_parser("list", help="instances, ports, URLs, gateway state, CPU, RAM and disk use") \
+    inst.add_parser("list", help="instances, URLs, gateway state, CPU, RAM and disk use, mailboxes and phone lines") \
         .add_argument("--group", help="its instances only")
     inst.add_parser("usage", help="how much of their 5-hour and weekly subscription limits instances used, and the resets") \
         .add_argument("name", nargs="?", help="(default: every active instance)")
