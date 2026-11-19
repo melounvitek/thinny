@@ -25,7 +25,7 @@ if [ -n "$TTY" ] && [ ! -f /etc/thinny/config.toml ]; then
 	cat <<-EOF
 	thinny is meant for a dedicated server, not a desktop or a shared machine. It sets up:
 	  - Incus containers, with their own firewall table and IP forwarding
-	  - a storage pool of up to 80% of the free disk space
+	  - a storage pool per instance, together up to 80% of the disk
 	  - user namespaces for every account (Ubuntu restricts them by default)
 	  - a nightly update that runs as root
 	EOF

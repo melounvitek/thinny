@@ -270,11 +270,10 @@ def trusted() -> set[str]:
 
 
 def write_disk_metrics() -> None:
-    """Each instance's disk use and quota, for every instance with a container, into the node exporter's file
+    """Each instance's disk use and size, for every instance with a container, into the node exporter's file
     (thinny metrics, every 5 minutes)."""
-    containers = {c["name"]: c for c in json.loads(run(["incus", "list", "--format", "json"]).stdout)}
-    rows = [(name, instances.disk_used(name), containers[name]["state"]["disk"]["root"]["total"])
-            for name in sorted(Registry.load().instances) if name in containers]
+    containers = {c["name"] for c in json.loads(run(["incus", "list", "--format", "json"]).stdout)}
+    rows = [(name, *instances.disk_use(name)) for name in sorted(Registry.load().instances) if name in containers]
     write_file(DISK_METRICS, render.disk_metrics(rows))
     DISK_METRICS.touch()   # fresh for doctor also when the numbers stay the same
 

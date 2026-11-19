@@ -4,14 +4,13 @@ file only root reads, without the files that hold sign-ins or passwords."""
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import shutil
 import time
 
 from . import instances
 from .registry import Registry, RegistryError
-from .system import STATE_DIR, CommandError, as_user, printable, run, run_bytes, step
+from .system import STATE_DIR, CommandError, as_user, printable, run_bytes, step
 
 EXPORTS = STATE_DIR / "exports"
 TIMEOUT = 3600       # for each of the backup and its copy: Hermes's database may be large
@@ -62,20 +61,20 @@ with archive, zipfile.ZipFile(home.parent / ".thinny-export/hermes.zip") as sour
 def export(reg: Registry, name: str) -> None:
     """Export the instance's Hermes data to a file only root reads, without the files that hold sign-ins or passwords.
     Only an active instance: a disabled one's container stays stopped. What comes from the container is untrusted,
-    so the host only writes it, within the instance's disk quota and never into the last tenth of its own disk."""
+    so the host only writes it, within the size of the instance's disk and never into the last tenth of its own."""
     inst = reg.get(name)
     if inst.state != "active":
         raise RegistryError(f"{name} is {inst.state}")
     if instances.container_state(name) != "RUNNING":
         raise CommandError(f"{name}'s container is not running (see thinny doctor)")
-    quota = json.loads(run(["incus", "query", f"/1.0/instances/{name}/state"]).stdout)["disk"]["root"]["total"]
+    _, size = instances.disk_use(name)
     EXPORTS.mkdir(mode=0o700, exist_ok=True)
     EXPORTS.chmod(0o700)
     total, _, free = shutil.disk_usage(EXPORTS)
-    # Hermes makes the archive in the container first, which takes from the same disk (the storage pool is a file
-    # on it) up to the quota.
-    if free - total * KEEP_FREE < quota:
-        raise CommandError(f"the server needs {quota / 2**30:.1f} GiB free on top of 10% of its disk to export {name} "
+    # Hermes makes the archive in the container first, which takes from the same disk (its pool is a file on it)
+    # up to its size.
+    if free - total * KEEP_FREE < size:
+        raise CommandError(f"the server needs {size / 2**30:.1f} GiB free on top of 10% of its disk to export {name} "
                            f"(Hermes makes the archive in its container first); it has "
                            f"{max(0, free - total * KEEP_FREE) / 2**30:.1f} GiB")
 
@@ -89,8 +88,8 @@ def export(reg: Registry, name: str) -> None:
         with step(f"{name}: its copy without sign-ins"), \
                 os.fdopen(os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "wb") as f:
             def write(chunk: bytes) -> None:
-                if f.tell() + len(chunk) > quota:
-                    raise CommandError(f"{name}'s archive is larger than its disk quota ({quota / 2**30:.1f} GiB); "
+                if f.tell() + len(chunk) > size:
+                    raise CommandError(f"{name}'s archive is larger than its disk ({size / 2**30:.1f} GiB); "
                                        "it is not kept")
                 total, _, free = shutil.disk_usage(EXPORTS)
                 if free - len(chunk) < total * KEEP_FREE:

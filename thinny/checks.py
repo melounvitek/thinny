@@ -51,9 +51,9 @@ def active(reg: Registry) -> list[Instance]:
 
 def install(s: Settings, reg: Registry):
     fix = "thinny setup"
-    for kind, name in (("storage", render.POOL), ("profile", render.PROFILE)):
-        found = system.run(["incus", kind, "show", name], check=False).returncode == 0
-        yield ok(f"Incus {kind} {name} present") if found else fail(f"Incus {kind} {name} missing", fix)
+    found = system.run(["incus", "profile", "show", render.PROFILE], check=False).returncode == 0
+    yield (ok(f"Incus profile {render.PROFILE} present") if found
+           else fail(f"Incus profile {render.PROFILE} missing", fix))
     yield (ok("incus.service starts only behind the firewall") if INCUS_DROPIN.exists()
            else fail(f"{INCUS_DROPIN} missing: containers could start without their firewall", fix))
     forwarding = Path("/proc/sys/net/ipv4/ip_forward").read_text().strip()

@@ -1,5 +1,4 @@
 import io
-import json
 import os
 import shutil
 import subprocess
@@ -109,24 +108,22 @@ ARCHIVE = os.urandom(300_000)   # what alice's container sends as its archive: t
 
 @pytest.fixture
 def alice(incus, tmp_path, monkeypatch):
-    """alice, active, with a 30 GiB disk quota and a running container, on a server with 50 of 100 GiB free. Its
+    """alice, active, with a 30 GiB disk and a running container, on a server with 50 of 100 GiB free. Its
     Hermes's backup takes `backup_takes` from the server's disk; the copy without secrets sends `archive` in pieces of
     64 KiB, while other containers take `others_take` for each, exits with `code`, and says `stderr`, its users' and
     Hermes's words."""
-    container = {"state": "RUNNING", "devices": {}, "account": True, "hermes": True, "unit": True, "quota": 30 * GIB,
+    container = {"state": "RUNNING", "devices": {}, "account": True, "hermes": True, "unit": True,
                  "backup_takes": 0, "backup_code": 0, "archive": ARCHIVE, "others_take": 0, "code": 0,
                  "cleanup": None,   # what removing its folder raises (its users' rm may hang or talk)
                  "stderr": b"left out: .env\nleft out: auth.json\nleft out: mcp-tokens/github.json\n"}
     incus.containers["alice"] = container
+    incus.pools["thinny-alice"] = {"size": 30 * GIB, "used": 5 * GIB}
     disk = Disk(50 * GIB)
     monkeypatch.setattr(shutil, "disk_usage", disk.usage)
     monkeypatch.setattr(export, "EXPORTS", tmp_path / "exports")
     reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
 
     def run(cmd, **kw):
-        if cmd[:3] == ["incus", "query", "/1.0/instances/alice/state"]:
-            incus.calls.append(" ".join(cmd))
-            return subprocess.CompletedProcess(cmd, 0, json.dumps({"disk": {"root": {"total": container["quota"]}}}), "")
         if cmd[-3:] == ["rm", "-rf", "/home/alice/.thinny-export"] and container["cleanup"]:
             incus.calls.append(" ".join(cmd))
             raise container["cleanup"]
@@ -145,7 +142,6 @@ def alice(incus, tmp_path, monkeypatch):
             into(chunk)
             disk.free -= len(chunk) + container["others_take"]
         return container["code"], b"", container["stderr"]
-    monkeypatch.setattr(export, "run", run)
     monkeypatch.setattr(export, "as_user", lambda name, cmd, **kw: run(system.as_user_cmd(name, cmd), **kw))
     monkeypatch.setattr(export, "run_bytes", run_bytes)
     return reg, container, disk
@@ -210,9 +206,9 @@ def test_an_instance_whose_container_does_not_run_is_not_exported(alice, incus, 
     assert not incus.ran("incus exec") and kept(tmp_path) == []
 
 
-def test_a_server_without_room_for_the_instances_disk_quota_is_refused_before_the_backup(alice, incus, tmp_path):
+def test_a_server_without_room_for_the_instances_disk_is_refused_before_the_backup(alice, incus, tmp_path):
     reg, _, disk = alice
-    disk.free = 39 * GIB   # 10 GiB to keep, 30 for alice's quota
+    disk.free = 39 * GIB   # 10 GiB to keep, 30 for alice's disk
     with pytest.raises(CommandError, match=r"the server needs 30.0 GiB free on top of 10% of its disk to export alice "
                                            r"\(Hermes makes the archive in its container first\); it has 29.0 GiB"):
         export.export(reg, "alice")
@@ -224,7 +220,7 @@ def test_a_server_without_room_for_the_instances_disk_quota_is_refused_before_th
 def test_an_export_never_leaves_less_than_a_tenth_of_the_servers_disk_free(alice, incus, tmp_path, backup_takes,
                                                                           others_take):
     reg, container, disk = alice
-    disk.free = 40 * GIB + 100_000   # the tenth to keep and alice's quota, and a little
+    disk.free = 40 * GIB + 100_000   # the tenth to keep and alice's disk, and a little
     container["backup_takes"], container["others_take"] = backup_takes, others_take
     with pytest.raises(CommandError, match="the server's disk would have less than 10% free; alice's archive is not "
                                            "kept"):
@@ -232,10 +228,10 @@ def test_an_export_never_leaves_less_than_a_tenth_of_the_servers_disk_free(alice
     assert kept(tmp_path) == [] and cleaned_up(incus)
 
 
-def test_an_archive_larger_than_the_instances_disk_quota_is_not_kept(alice, incus, tmp_path):
-    reg, container, _ = alice
-    container["quota"] = 200_000
-    with pytest.raises(CommandError, match=r"alice's archive is larger than its disk quota \(0.0 GiB\); it is not kept"):
+def test_an_archive_larger_than_the_instances_disk_is_not_kept(alice, incus, tmp_path):
+    reg, _, _ = alice
+    incus.pools["thinny-alice"]["size"] = 200_000
+    with pytest.raises(CommandError, match=r"alice's archive is larger than its disk \(0.0 GiB\); it is not kept"):
         export.export(reg, "alice")
     assert kept(tmp_path) == [] and cleaned_up(incus)
 

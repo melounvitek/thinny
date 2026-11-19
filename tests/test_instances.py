@@ -5,6 +5,7 @@ import itertools
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -85,6 +86,7 @@ class Incus:
         # name -> {"state", "config", "devices" (name -> properties), "account", "hermes", "unit",
         #          "files" (path -> text)}
         self.containers = {}
+        self.pools = {}   # name -> {"size", "used"} in bytes
         self.graceful_stop_fails = False
         self.imported_mode = self.exported_mode = None   # of the last archive imported, or the directory exported to
         # provider -> its Hermes's default model (DEFAULT_MODEL)
@@ -111,18 +113,36 @@ class Incus:
         if cmd[:2] == ["incus", "list"]:
             c = self.containers.get(cmd[-1].strip("^$"))
             return (c["state"] + "\n" if c else ""), 0
+        if cmd[:3] == ["incus", "storage", "list"]:   # every pool, as JSON
+            return json.dumps([{"name": name, "config": {"size": f"{p['size'] // 2**30}GiB"}}
+                               for name, p in self.pools.items()]), 0
         if cmd[:2] == ["incus", "init"]:
             self.containers[cmd[3]] = {"state": "STOPPED", "devices": {}, "account": False, "hermes": False,
-                                       "unit": False}
+                                       "unit": False, "pool": cmd[cmd.index("--storage") + 1]}
+        elif cmd[:3] == ["incus", "storage", "create"]:   # NAME btrfs size=NGiB ...
+            self.pools[cmd[3]] = {"size": int(cmd[5].removeprefix("size=").removesuffix("GiB")) * 2**30, "used": 0}
+        elif cmd[:3] == ["incus", "storage", "set"]:   # NAME size=NGiB
+            self.pools[cmd[3]]["size"] = int(cmd[4].removeprefix("size=").removesuffix("GiB")) * 2**30
+        elif cmd[:3] == ["incus", "storage", "delete"]:
+            if any(c.get("pool") == cmd[3] for c in self.containers.values()):
+                return "Error: The storage pool is currently in use", 1
+            del self.pools[cmd[3]]
         elif cmd[:3] == ["incus", "config", "set"]:
             self.containers[cmd[3]].setdefault("config", {}).update(p.split("=", 1) for p in cmd[4:])
         elif cmd[:3] == ["incus", "config", "unset"]:
             if self.containers[cmd[3]].get("config", {}).pop(cmd[4], None) is None:
                 return f"Error: Can't unset key '{cmd[4]}', it's not currently set", 1
+        elif cmd[:2] == ["incus", "query"] and cmd[2].startswith("/1.0/storage-pools/"):   # .../NAME/resources
+            p = self.pools.get(cmd[2].split("/")[3])
+            if p is None:
+                return "Error: Storage pool not found", 1
+            return json.dumps({"inodes": {"total": 0, "used": 0}, "space": {"used": p["used"], "total": p["size"]}}), 0
         elif cmd[:2] == ["incus", "query"]:   # /1.0/instances/NAME
             return json.dumps({"devices": self.containers[cmd[2].rsplit("/", 1)[1]]["devices"]}), 0
         elif cmd[:4] == ["incus", "config", "device", "add"]:
             self.containers[cmd[4]]["devices"][cmd[5]] = {"type": cmd[6], **dict(p.split("=", 1) for p in cmd[7:])}
+        elif cmd[:4] == ["incus", "config", "device", "unset"]:
+            del self.containers[cmd[4]]["devices"][cmd[5]][cmd[6]]
         elif cmd[:4] in (["incus", "config", "device", "set"], ["incus", "config", "device", "override"]):
             self.containers[cmd[4]]["devices"].setdefault(cmd[5], {}).update(p.split("=", 1) for p in cmd[6:])
         elif cmd[:2] == ["incus", "export"]:   # the fake's archives are the container as JSON
@@ -139,9 +159,10 @@ class Incus:
             except ValueError:
                 return "Error: not a backup", 1
             for device, d in container["devices"].items():
-                if d["type"] == "disk" and d.get("required") != "false" and not Path(d["source"]).exists():
+                if d["type"] == "disk" and "source" in d and d.get("required") != "false" \
+                        and not Path(d["source"]).exists():
                     return f'Error: Missing source path "{d["source"]}" for disk "{device}"', 1
-            self.containers[cmd[3]] = container
+            self.containers[cmd[3]] = container | {"pool": cmd[cmd.index("--storage") + 1]}
         elif cmd[:2] == ["incus", "start"]:
             self.containers[cmd[2]]["state"] = "RUNNING"
         elif cmd[:2] == ["incus", "delete"]:
@@ -154,11 +175,6 @@ class Incus:
             if self.containers[cmd[2]]["state"] != "RUNNING":
                 return "Error: Instance is not running", 1
             return self.inside(self.containers[cmd[2]], cmd[cmd.index("--") + 1:], input)
-        elif cmd[:3] == ["btrfs", "qgroup", "show"]:   # what the instance's disk quota counts
-            name = cmd[-1].rsplit("/", 1)[1]
-            used = self.containers[name].get("used", 2**29) // (1 if "--sync" in cmd else 4)   # or stale
-            return ("Qgroupid    Referenced    Exclusive   Path \n--------    ----------    ---------   ---- \n"
-                    f"0/257       {used}   {used // 2}   containers/{name}\n"), 0
         return "", 0
 
     def inside(self, c, cmd, input=None):
@@ -258,6 +274,7 @@ def incus(tmp_path, monkeypatch):
     monkeypatch.setattr(host, "installer", lambda: "#!/bin/sh\n")
     monkeypatch.setattr(host, "reconcile_access", lambda s, reg: None)
     monkeypatch.setattr(host, "ufw_lacks_forward", lambda: False)   # whatever this machine's ufw does
+    server_disk(monkeypatch, 1000 * 2**30)
     monkeypatch.setattr(host, "POLICIES", tmp_path / "policies")
     monkeypatch.setattr(Registry, "save", lambda self, path=None: None)
     monkeypatch.setattr(instances, "RESTART_PENDING", tmp_path / "restart-pending")
@@ -272,7 +289,11 @@ def test_a_new_instance_gets_its_own_container_with_hermes(incus):
     instances.add(S, reg, "alice", "local")
     assert reg.get("alice").state == "active" and reg.get("alice").url == "http://alice.localhost:9120/"
     assert reg.get("alice").built_ins == render.BUILT_INS
-    assert incus.ran("incus init images:debian/13 alice --profile thinny-instance")   # nothing from the default profile
+    # its own pool, sized to its disk, so df in it shows its disk and not the server's; compressed (about half)
+    assert incus.ran("incus storage create thinny-alice btrfs size=30GiB "
+                     "btrfs.mount_options=user_subvol_rm_allowed,compress-force=zstd:1")
+    # nothing from the default profile
+    assert incus.ran("incus init images:debian/13 alice --profile thinny-instance --storage thinny-alice")
     assert incus.ran("incus config device add alice eth0 nic nictype=routed ipv4.address=10.78.0.1 host_name=thinny-9120")
     # its own policy, read-only, before the container first starts
     assert incus.ran(f"incus config device add alice policy disk source={host.POLICIES}/alice path=/etc/hermes "
@@ -469,49 +490,76 @@ def test_a_host_has_one_instance(incus):
 def test_an_instance_can_get_its_own_limits_instead_of_the_sites(incus):
     reg = Registry()
     instances.add(S, reg, "alice", "local", cpu=4, memory_mb=8192, disk_gb=50)
+    assert incus.ran("incus storage create thinny-alice btrfs size=50GiB")   # its disk from the start
     assert incus.ran("incus config set alice limits.cpu=4 limits.memory=8192MiB")
-    assert incus.ran("incus config device override alice root size=50GiB")   # the profile's root, resized
-    assert incus.index("incus config device override alice root") \
-        < incus.index(f"incus exec alice -- {MARK} sh -c export DEBIAN_FRONTEND")   # before the packages fill it
+    assert not incus.ran("incus storage set") and not incus.ran("alice root")
 
     instances.add(S, reg, "bob", "local")
-    assert not any(c.startswith(("incus config set bob", "incus config device override bob")) for c in incus.calls)
+    assert incus.ran("incus storage create thinny-bob btrfs size=30GiB")
+    assert not incus.ran("incus config set bob")
 
 
 def test_the_limits_of_a_running_instance_change_without_a_restart(incus):
     reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
-    incus.containers["alice"] = {"state": "RUNNING", "devices": {"eth0": {}, "policy": {}, "webapp": {}}}
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {"eth0": {}, "policy": {}, "webapp": {}},
+                                 "pool": "thinny-alice"}
+    incus.pools["thinny-alice"] = {"size": 30 * 2**30, "used": 0}
     instances.limits(reg, "alice", None, 2048, 40)
     instances.limits(reg, "alice", 3, None, 60)
-    assert [c for c in incus.calls if c.startswith(("incus config set", "incus config device o", "incus config device s"))] \
-        == ["incus config set alice limits.memory=2048MiB", "incus config device override alice root size=40GiB",
-            "incus config set alice limits.cpu=3", "incus config device set alice root size=60GiB"]
-    assert incus.containers["alice"]["state"] == "RUNNING"
+    assert [c for c in incus.calls if c.startswith(("incus config set", "incus storage set"))] \
+        == ["incus config set alice limits.memory=2048MiB", "incus storage set thinny-alice size=40GiB",
+            "incus config set alice limits.cpu=3", "incus storage set thinny-alice size=60GiB"]
+    assert incus.containers["alice"]["state"] == "RUNNING" and incus.pools["thinny-alice"]["size"] == 60 * 2**30
     with pytest.raises(CommandError, match="--cpu, --memory-mb or --disk-gb"):
         instances.limits(reg, "alice", None, None, None)
 
 
-def test_a_disk_limit_too_close_to_what_the_instance_uses_is_refused(incus):
-    # btrfs would set the quota, fail halfway, and leave the instance unable to write for good. Its
-    # quota counts data shared with the image or a snapshot too, which Incus's usage figure leaves out.
+def test_a_disk_can_grow_but_not_shrink(incus):
+    # Incus cannot shrink a pool.
     reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
-    incus.containers["alice"] = {"state": "RUNNING", "devices": {"eth0": {}}, "used": int(5.7 * 2**30)}
-    with pytest.raises(CommandError, match="alice uses 5.7 GiB of disk; give it at least 7 GiB"):
-        instances.limits(reg, "alice", 4, None, 6)
-    assert not incus.ran("incus config set") and not incus.ran("incus config device override")
-    instances.limits(reg, "alice", None, None, 7)
-    assert incus.ran("incus config device override alice root size=7GiB")
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {"eth0": {}}, "pool": "thinny-alice"}
+    incus.pools["thinny-alice"] = {"size": 30 * 2**30, "used": 0}
+    with pytest.raises(CommandError, match="alice has 30 GiB of disk; a disk can grow but not shrink"):
+        instances.limits(reg, "alice", 4, None, 20)
+    assert not incus.ran("incus config set")   # nothing half done
+    instances.limits(reg, "alice", None, None, 30)   # its size already
+    assert not incus.ran("incus storage set")
+
+
+def test_the_instances_disks_together_take_at_most_80_percent_of_the_servers(incus, monkeypatch):
+    # Each pool is a file on the server's disk, which grows as its instance writes: full, they would leave the
+    # server no room for itself.
+    server_disk(monkeypatch, 100 * 2**30)
+    incus.pools = {"thinny-bob": {"size": 30 * 2**30, "used": 0},
+                   "thinny-carol": {"size": 20 * 2**30, "used": 0}}   # e.g. left by a move here that failed
+    reg = Registry()
+    with pytest.raises(CommandError, match=r"alice cannot have 40 GiB of disk: the instances' disks would take "
+                                           r"90 GiB together, more than 80% of the server's disk \(80 GiB\)"):
+        instances.add(S, reg, "alice", "local", disk_gb=40)
+    assert "thinny-alice" not in incus.pools and not incus.ran("incus init")
+    instances.add(S, reg, "alice", "local")   # its 30 GiB fit
+    with pytest.raises(CommandError, match="alice cannot have 31 GiB of disk"):
+        instances.limits(reg, "alice", None, None, 31)
+    assert incus.pools["thinny-alice"]["size"] == 30 * 2**30
+
+
+def server_disk(monkeypatch, total):
+    """The size of the server's disk, where Incus keeps the pools' files."""
+    monkeypatch.setattr(shutil, "disk_usage", lambda path: types.SimpleNamespace(
+        total=total, used=0, free=total) if str(path) == "/var/lib/incus" else pytest.fail(f"disk_usage({path})"))
 
 
 def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_path):
     reg = registry()
     reg.instances["dave"] = Instance("dave", 9123, "lan", state="active", frontend="webui")
-    disk = {"root": {"total": 30 * 2**30}}
     incus.containers = {
-        "alice": {"state": "RUNNING", "config": {"limits.cpu": "2"}, "used": 4 * 3 * 2**30,   # btrfs's stale count: 3 GiB
-                  "incus_state": {"cpu": {"usage": 0}, "memory": {"usage": 3 * 2**30, "total": 4 * 2**30}, "disk": disk}},
-        "bob": {"state": "STOPPED", "used": 4 * 2**30, "incus_state": {"disk": disk}},
+        "alice": {"state": "RUNNING", "config": {"limits.cpu": "2"},
+                  "incus_state": {"cpu": {"usage": 0}, "memory": {"usage": 3 * 2**30, "total": 4 * 2**30}}},
+        "bob": {"state": "STOPPED", "incus_state": {}},
     }   # carol has no container
+    # what df shows in each container: its own pool's use and size
+    incus.pools = {f"thinny-{name}": {"size": 30 * 2**30, "used": used * 2**30}
+                   for name, used in (("alice", 3), ("bob", 1), ("dave", 1))}
     clock = [0.0]
     read, expected, sampling = set(), set(), threading.Condition()
 
@@ -524,7 +572,7 @@ def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_
             return result
         return wrapper
     monkeypatch.setattr(instances, "gateway_active", watched(instances.gateway_active))
-    monkeypatch.setattr(instances, "disk_used", watched(instances.disk_used))
+    monkeypatch.setattr(instances, "disk_use", watched(instances.disk_use))
     monkeypatch.setattr(instances, "env_values", watched(instances.env_values))
     unreadable = {"/home/dave/.hermes/.env": b"\xff"}   # its users' .env, not text
 
@@ -533,8 +581,8 @@ def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_
             assert sampling.wait_for(lambda: expected <= read, timeout=5)
         clock[0] += seconds
         incus.containers["alice"]["incus_state"]["cpu"]["usage"] += 10**9   # one of its two CPUs busy
-        incus.containers["dave"] = {"state": "RUNNING", "used": 4 * 2**30, "files": unreadable,   # started meanwhile
-                                    "incus_state": {"memory": {"usage": 2**29, "total": 4 * 2**30}, "disk": disk}}
+        incus.containers["dave"] = {"state": "RUNNING", "files": unreadable,   # started meanwhile
+                                    "incus_state": {"memory": {"usage": 2**29, "total": 4 * 2**30}}}
     monkeypatch.setattr(instances, "time", types.SimpleNamespace(sleep=sleep, monotonic=lambda: clock[0]))
     # Of alice's 3 GiB, 2 GiB are file cache. dave has no cgroup there: Incus's usage.
     monkeypatch.setattr(instances, "CGROUPS", tmp_path / "cgroup")
@@ -546,7 +594,7 @@ def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_
     reg.get("alice").mailbox = "alice@example.com"
     incus.containers["alice"]["files"] = {"/home/alice/.hermes/.env": 'SIP_SERVER="sip.odorik.cz"\nSIP_USER="123456"\n'}
     reg.get("alice").url, reg.get("dave").url = "https://192.0.2.10:9120/", "https://192.0.2.10:9123/"
-    readers = ("gateway_active", "disk_used", "env_values")
+    readers = ("gateway_active", "disk_use", "env_values")
     expected.update((reader, name) for reader in readers for name in ("alice", "bob"))
     instances.list_instances(reg)
     assert capsys.readouterr().out.splitlines() == [
@@ -1133,6 +1181,22 @@ def test_an_interrupted_add_resumes_where_it_stopped(incus):
     assert incus.ran("hermes webapp --build-only")   # the install may have stopped before it
 
 
+def test_an_add_that_stopped_before_its_container_keeps_the_pool_it_has(incus):
+    reg = Registry()
+    reg.add("alice", "local", (9120, 9199))
+    incus.pools["thinny-alice"] = {"size": 50 * 2**30, "used": 0}
+    instances.add(S, reg, "alice", "local")
+    assert not incus.ran("incus storage create") and incus.pools["thinny-alice"]["size"] == 50 * 2**30
+    assert incus.ran("incus init images:debian/13 alice --profile thinny-instance --storage thinny-alice")
+
+
+def test_a_new_instance_does_not_take_a_pool_that_exists(incus):
+    incus.pools["thinny-alice"] = {"size": 30 * 2**30, "used": 0}   # e.g. a move here that failed halfway
+    with pytest.raises(CommandError, match="an Incus storage pool 'thinny-alice' already exists; choose another name"):
+        instances.add(S, Registry(), "alice", "local")
+    assert not incus.ran("incus init")
+
+
 def test_a_container_without_internet_fails_fast_with_the_fix(incus, monkeypatch):
     monkeypatch.setattr(instances.time, "sleep", lambda s: None)
     incus.containers["alice"] = {"state": "RUNNING", "devices": {d: {} for d in ("eth0", "policy", "webapp")},
@@ -1188,13 +1252,15 @@ def typed(monkeypatch):
 
 def test_removing_a_disabled_instance_deletes_its_container_but_keeps_its_name_and_trace(incus, typed, capsys):
     reg = Registry({"alice": Instance("alice", 9120, "local", address="10.78.0.1", state="disabled")})
-    incus.containers["alice"] = {"state": "STOPPED"}
+    incus.containers["alice"] = {"state": "STOPPED", "pool": "thinny-alice"}
+    incus.pools = {"thinny-alice": {"size": 30 * 2**30, "used": 0}, "thinny-bob": {"size": 30 * 2**30, "used": 0}}
     host.write_policy(S, "alice")
     (trace.DIR / "alice").mkdir(parents=True)
     (trace.DIR / "alice/admin-access.log").write_text("2026-11-15T10:00:00+01:00 incus exec alice -- bash\n")
     typed("alice")
     instances.remove(S, reg, "alice")
     assert incus.ran("incus delete --force alice") and "alice" not in incus.containers
+    assert list(incus.pools) == ["thinny-bob"]   # its pool, with its disk, goes too
     assert not (host.POLICIES / "alice").exists()
     assert (trace.DIR / "alice/admin-access.log").exists()
     assert str(trace.DIR / "alice") in capsys.readouterr().out
@@ -1244,6 +1310,14 @@ def test_removing_a_pending_instance_withdraws_its_access(incus, typed, monkeypa
     typed("alice")
     instances.remove(S, reg, "alice")
     assert "alice" not in incus.containers and published == [[]]
+
+
+def test_removing_an_instance_whose_add_stopped_before_its_container_deletes_its_pool(incus, typed):
+    reg = Registry({"alice": Instance("alice", 9120, "local", address="10.78.0.1", state="pending")})
+    incus.pools["thinny-alice"] = {"size": 30 * 2**30, "used": 0}
+    typed("alice")
+    instances.remove(S, reg, "alice")
+    assert not incus.pools and reg.get("alice").state == "removed"
 
 
 def test_a_remove_whose_access_change_failed_runs_again(incus, typed, monkeypatch):

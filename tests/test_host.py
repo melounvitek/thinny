@@ -16,12 +16,11 @@ S = Settings(model="m1", allowed_models=("m1",), access_default="local", network
 @pytest.fixture
 def commands(tmp_path, monkeypatch):
     """Records host commands; `missing` lists the Incus objects that `show` does not find."""
-    calls, missing = [], {"storage", "profile"}
+    calls, missing = [], {"profile"}
 
     def run(cmd, *, check=True, input=None, **kw):
         calls.append((" ".join(cmd), input))
-        code = 1 if cmd[:2] in (["incus", "storage"], ["incus", "profile"]) and cmd[2] == "show" \
-            and cmd[1] in missing else 0
+        code = 1 if cmd[:2] == ["incus", "profile"] and cmd[2] == "show" and cmd[1] in missing else 0
         return subprocess.CompletedProcess(cmd, code, "", "")
     monkeypatch.setattr(host, "run", run)
     monkeypatch.setattr(host, "FIREWALL_FILE", tmp_path / "thinny.nft")
@@ -29,18 +28,6 @@ def commands(tmp_path, monkeypatch):
     monkeypatch.setattr(host, "SYSTEMD", tmp_path / "systemd")
     monkeypatch.setattr(system, "LOG_FILE", tmp_path / "log")
     return calls, missing
-
-
-def test_the_storage_pool_is_created_once_and_compressed(commands):
-    calls, missing = commands
-    compress = "incus storage set default btrfs.mount_options=user_subvol_rm_allowed,compress-force=zstd:1"
-    host.init_incus()
-    assert any(c.startswith("incus storage create default btrfs size=") for c, _ in calls)
-    assert calls[-1][0] == compress
-    calls.clear()
-    missing.discard("storage")
-    host.init_incus()
-    assert [c for c, _ in calls] == ["incus storage show default", compress]
 
 
 def test_the_profile_follows_the_settings(commands):

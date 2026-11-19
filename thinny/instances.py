@@ -8,7 +8,6 @@ import dataclasses
 import datetime as dt
 import hashlib
 import json
-import math
 import os
 import re
 import secrets
@@ -33,6 +32,7 @@ AUTH_PREFIX = "HERMES_DASHBOARD_BASIC_AUTH_"
 RESTART_TIMEOUT = 45 * 60  # a restart waits for a running reply (up to 30 min by default)
 RESTART_PENDING = STATE_DIR / "restart-pending"
 IMAGE = "images:debian/13"
+SERVER_DISK = "/var/lib/incus"   # where Incus keeps the instances' pools, each a file
 URL_RE = re.compile(r"https?://[a-z0-9.-]+(:\d+)?/?")
 CLAUDE_INSTALLER = "https://claude.ai/install.sh"
 # The email client of Hermes's himalaya skill, for a mailbox. v2 dropped the commands the skill uses (template,
@@ -118,6 +118,46 @@ def container_states() -> dict[str, str]:
     """Every container's state (RUNNING, STOPPED, ...) by its name, in one incus list."""
     out = run(["incus", "list", "--format", "csv", "--columns", "ns"]).stdout
     return dict(line.split(",", 1) for line in out.splitlines() if line)
+
+
+def pool_of(name: str) -> str:
+    """The instance's own Incus storage pool, sized to its disk: df in its container shows that, not the
+    server's disk."""
+    return f"thinny-{name}"
+
+
+def pool_sizes() -> dict[str, int]:
+    """The size in bytes of each instance's pool by the pool's name, also of one whose instance is gone."""
+    pools = json.loads(run(["incus", "storage", "list", "--format", "json"]).stdout)
+    return {p["name"]: int(p["config"]["size"].removesuffix("GiB")) * 2**30
+            for p in pools if p["name"].startswith(pool_of(""))}
+
+
+def check_room(name: str, disk_gb: int) -> None:
+    """Refuse `disk_gb` GiB of disk for the instance when the instances' disks would take more than 80% of the
+    server's together: each is a file on it, which grows as its instance writes, and full they would leave the
+    server no room for itself."""
+    total = sum((pool_sizes() | {pool_of(name): disk_gb * 2**30}).values())
+    most = shutil.disk_usage(SERVER_DISK).total * 0.8
+    if total > most:
+        raise CommandError(f"{name} cannot have {disk_gb} GiB of disk: the instances' disks would take "
+                           f"{total / 2**30:.0f} GiB together, more than 80% of the server's disk "
+                           f"({most / 2**30:.0f} GiB)")
+
+
+def create_pool(name: str, disk_gb: int) -> None:
+    """The instance's pool: a btrfs file on the server's disk that grows as the instance writes, up to its size."""
+    check_room(name, disk_gb)
+    # Compressed, which about halves an instance's disk use (its size counts the compressed size). Forced: btrfs's
+    # own guess left most of Chromium and Claude Code uncompressed. Incus's default option first.
+    run(["incus", "storage", "create", pool_of(name), "btrfs", f"size={disk_gb}GiB",
+         "btrfs.mount_options=user_subvol_rm_allowed,compress-force=zstd:1"], timeout=600)
+
+
+def delete_pool(name: str) -> None:
+    """The instance's pool, if it has one, once its container is gone (Incus deletes the image it unpacked there)."""
+    if pool_of(name) in pool_sizes():
+        run(["incus", "storage", "delete", pool_of(name)])
 
 
 def devices(name: str) -> dict[str, dict[str, str]]:
@@ -226,38 +266,41 @@ def ensure_device(name: str, device: str, kind: str, *props: str) -> None:
         run(["incus", "config", "device", "set", name, device, *changed])
 
 
-def disk_used(name: str, sync: bool = False) -> int:
-    """Bytes the instance's disk quota counts. btrfs's quota counts data shared with the image or a
-    snapshot too, unlike Incus's usage, and its counters lag behind writes until synced."""
-    out = run(["btrfs", "qgroup", "show", *(["--sync"] if sync else []), "--raw", "-f",
-               f"/var/lib/incus/storage-pools/{render.POOL}/containers/{name}"]).stdout
-    return int(out.splitlines()[-1].split()[1])   # the Referenced column
+def disk_use(name: str) -> tuple[int, int]:
+    """Bytes the instance's disk uses (compressed) and its size: its pool's, as df in its container shows them."""
+    space = json.loads(run(["incus", "query", f"/1.0/storage-pools/{pool_of(name)}/resources"]).stdout)["space"]
+    return space["used"], space["total"]
 
 
 def set_limits(name: str, cpu: int | None, memory_mb: int | None, disk_gb: int | None) -> None:
-    """The instance's own limits instead of the profile's (config.toml's [container]); None keeps
-    the current one. A running container gets them at once."""
+    """The instance's own CPU and memory limits instead of the profile's (config.toml's [container]), and a larger
+    disk; None keeps the current one. A running container gets them at once."""
+    grow = False
     if disk_gb:
-        # A quota below what it counts half-applies and leaves the instance unable to write, even to
-        # raise the quota again.
-        used = disk_used(name, sync=True)
-        needed = math.ceil(used / 2**30 + 1)   # and a GiB of room to work in
-        if disk_gb < needed:
-            raise CommandError(f"{name} uses {used / 2**30:.1f} GiB of disk; give it at least {needed} GiB")
+        size = pool_sizes()[pool_of(name)] // 2**30
+        if disk_gb < size:   # Incus cannot shrink a pool
+            raise CommandError(f"{name} has {size} GiB of disk; a disk can grow but not shrink")
+        grow = disk_gb > size
+        if grow:
+            check_room(name, disk_gb)
     config = ([f"limits.cpu={cpu}"] if cpu else []) + ([f"limits.memory={memory_mb}MiB"] if memory_mb else [])
     if config:
         run(["incus", "config", "set", name, *config])
-    if disk_gb:
-        # The root disk is the profile's until the instance gets its own copy of it.
-        action = "set" if "root" in devices(name) else "override"
-        run(["incus", "config", "device", action, name, "root", f"size={disk_gb}GiB"])
+    if grow:
+        run(["incus", "storage", "set", pool_of(name), f"size={disk_gb}GiB"])
 
 
-def ensure_container(s: Settings, inst: Instance) -> None:
-    """The instance's container from the plain Debian image (or moved here), running, with its network,
-    the read-only policy and the Webapp published on the host's loopback (each step repeatable)."""
+def ensure_container(s: Settings, inst: Instance, disk_gb: int | None = None) -> None:
+    """The instance's container from the plain Debian image (or moved here) in its own pool, of `disk_gb` GiB (or
+    config.toml's) when new, running, with its network, the read-only policy and the Webapp published on the host's
+    loopback (each step repeatable)."""
     if container_state(inst.name) is None:
-        run(["incus", "init", IMAGE, inst.name, "--profile", render.PROFILE], timeout=1800)
+        if pool_of(inst.name) not in pool_sizes():   # an add that stopped after it keeps it
+            create_pool(inst.name, disk_gb or s.container_disk_gb)
+        run(["incus", "init", IMAGE, inst.name, "--profile", render.PROFILE, "--storage", pool_of(inst.name)],
+            timeout=1800)
+    elif "size" in devices(inst.name).get("root", {}):   # moved from a server with one pool, where it was a quota
+        run(["incus", "config", "device", "unset", inst.name, "root", "size"])
     ensure_device(inst.name, "eth0", "nic", "nictype=routed", f"ipv4.address={inst.address}",
                   f"host_name=thinny-{inst.port}")
     ensure_policy(s, inst)
@@ -695,7 +738,7 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     reg.save()
 
     with step(f"{name}: container {inst.address}"):
-        ensure_container(s, inst)
+        ensure_container(s, inst, disk_gb)
         set_limits(name, cpu, memory_mb, disk_gb)
     with step(f"{name}: system packages"):
         ensure_packages(name, f"thinny instance add {name}")
@@ -807,6 +850,8 @@ def check_free_name(name: str) -> None:
         raise CommandError(f"{name!r} is a system account name; choose another name")
     if container_state(name) is not None:
         raise CommandError(f"an Incus container {name!r} already exists; choose another name")
+    if pool_of(name) in pool_sizes():
+        raise CommandError(f"an Incus storage pool {pool_of(name)!r} already exists; choose another name")
 
 
 def starting_model(s: Settings) -> dict[str, str]:
@@ -1036,6 +1081,7 @@ def remove(s: Settings, reg: Registry, name: str, purge: bool = False, keep_mail
         reg.save()   # at once: a mailbox created at its address later is not thinny's to delete
     if container_state(name) is not None:
         run(["incus", "delete", "--force", name])
+    delete_pool(name)
     if (host.POLICIES / name).exists():
         shutil.rmtree(host.POLICIES / name)
     kept = trace.DIR / name
@@ -1092,14 +1138,14 @@ def list_instances(reg: Registry, group: str | None = None) -> None:
     shown = [inst for inst in sorted(reg.instances.values(), key=lambda inst: inst.port)
              if group is None or inst.group == group]
 
-    def probe(inst: Instance) -> tuple[bool | None, int, str]:
-        """Whether its gateway is active (None: a disabled or removed instance shows none), its disk use, and
-        whether it has a phone line (as add or the Webapp sets one up)."""
+    def probe(inst: Instance) -> tuple[bool | None, tuple[int, int], str]:
+        """Whether its gateway is active (None: a disabled or removed instance shows none), its disk use and size,
+        and whether it has a phone line (as add or the Webapp sets one up)."""
         try:
             phone = "yes" if env_values(inst.name).get("SIP_USER") else "-"
         except CommandError:   # its users' .env, too large or not text
             phone = "?"
-        return (None if inst.state in ("disabled", "removed") else gateway_active(inst.name), disk_used(inst.name),
+        return (None if inst.state in ("disabled", "removed") else gateway_active(inst.name), disk_use(inst.name),
                 phone)
 
     before = _containers()
@@ -1115,11 +1161,11 @@ def list_instances(reg: Registry, group: str | None = None) -> None:
         gateway = cpu = ram = disk = phone = "-"
         if c:
             # A container started during the second is read now.
-            active, used, phone = probes[inst.name].result() if inst.name in probes else probe(inst)
+            active, (used, size), phone = probes[inst.name].result() if inst.name in probes else probe(inst)
             if active is not None:
                 gateway = "active" if active else "INACTIVE"
             state = c["state"]
-            disk = _gib(used, state["disk"]["root"]["total"])
+            disk = _gib(used, size)
             if c["status"] == "Running":
                 ram = _gib(_memory_used(inst.name, state["memory"]["usage"]), state["memory"]["total"])
                 if before.get(inst.name, {}).get("status") == "Running":   # not started in between

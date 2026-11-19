@@ -25,7 +25,7 @@ model_guard_message = "Model {model} is not allowed on this server. Allowed: {al
 [container]                     # limits of instances without their own (instance add/resize)
 cpu = 2
 memory_mb = 4096
-disk_gb = 30
+disk_gb = 30                    # a new instance's disk; resize grows an instance's
 
 [webapp]
 port_range = [9120, 9199]       # one local port per instance

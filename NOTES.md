@@ -187,6 +187,20 @@ Debian 13, kernel 6.12, Incus 6.0.4 (`incus-base`), Hermes v0.23.0 -> v0.23.1. A
   uncompressed) and 2.8 GB with `compress-force=zstd:1`; the quota counts the compressed size.
   `incus storage set default btrfs.mount_options=...` remounted the pool at once with containers
   running, and the option was back after a reboot.
+- One pool per instance (2026-11-19, the workstation's Incus 6.0.5 and the test server's 6.0.4 on
+  Debian 13's kernel 6.12): in the shared pool, `df` and statfs in a container showed the whole pool
+  (481G), not its quota. btrfs reports no qgroup in statfs, Incus intercepts no statfs (only bpf,
+  mknod, mount, sched_setscheduler, setxattr and sysinfo) and LXCFS covers /proc, /sys and cgroups
+  only. In a btrfs pool of its own (`size=3GiB`, thinny's mount options) both showed 3.0G. Filling it
+  gave "No space left on device", the container went on, and deleting freed it.
+  `incus storage set <pool> size=4GiB` grew it at once with the container running, its `df` too;
+  shrinking: "Pool cannot be shrunk". Docker inside ran `hello-world` (workstation).
+  `incus move <name> --storage <pool>` of a stopped fresh container took 3-7 s and kept its files.
+  It took the profile's root `size` along into the container's own root disk, a qgroup quota then,
+  as did `incus import --storage` of an archive whose root disk was the profile's; `incus init
+  --storage` gives a root disk without one. A pool unpacks the image again (about 190 MB), and
+  Incus deletes that with the pool. `/1.0/storage-pools/<pool>/resources` has the used and total
+  bytes `df` shows in the container, also while it is stopped.
 - With the admin's forward-chain lines removed, `instance add` hung in apt for over 15 minutes
   (apt neither fails nor gives up without a network): now a DNS probe fails it in 40 s.
 - A running gateway got the `docker` group only after `incus restart` of its container.
@@ -598,6 +612,11 @@ own), through `sudo -n` there. The instance: Webapp, local access, no group, loc
 - Mail from the agent through `hermes send`: plain text only. himalaya v2: the skill's commands are gone.
   The user's address in the policy: thinny would have to keep it, e.g. in the registry; the agent greps it.
   Copies to Sent: one that fails after sending has the agent send the mail again.
+- `df` in a container showing its disk, other than with a pool each: ZFS, whose quota statfs shows,
+  is DKMS on Debian (rebuilt at each kernel update; a failed build leaves every instance down after a
+  reboot) and needs a signed module under Secure Boot. LVM thin gives each container a filesystem of
+  its own, but without compression (about 6 GB instead of 3 GB for an idle instance), and a full
+  thin pool can damage every one of them. A `df` wrapper in the containers: only `df` would see it.
 - Mail: a mail server on the host (inbound port 25, and mail from a VPS address lands in spam), Migadu
   (daily sending caps per account), Cloudflare's Email Routing and agent inbox (no mailboxes or IMAP,
   which Hermes needs). DNS records through Cloudflare's API in thinny: a one-time step, and sites use
@@ -631,7 +650,8 @@ own), through `sudo -n` there. The instance: Webapp, local access, no group, loc
 - Per-instance SSH and Tailscale are left to the users; SSH needs the host as jump host.
 - The firewall check: a flush with Tailscale's tables around is untried (the VM had no Tailscale, and nothing
   was flushed on the workstation).
-- The storage pool is sized once at install; growing it is manual.
+- A disk cannot shrink (nor can a pool): a smaller one means moving the container into a new pool by
+  hand.
 - Alerting from the server itself: the dashboard sends none, and the watchdog runs off-server.
 - The dashboard on Debian 13 and Ubuntu 24.04, and a Grafana upgrade by unattended upgrades.
 - Subscription usage on the dashboard is untested on a server: a day with a ChatGPT and a Claude instance

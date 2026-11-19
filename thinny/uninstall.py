@@ -4,7 +4,6 @@ what is already gone, so a rerun after a failure continues."""
 from __future__ import annotations
 
 import contextlib
-import json
 import shutil
 import socket
 import sys
@@ -31,8 +30,8 @@ def run() -> None:
     print("This deletes every instance, with all its data:")
     print("\n".join(f"  {inst.name} ({inst.state}{', mailbox ' + inst.mailbox if inst.mailbox else ''})"
                     for inst in reg.instances.values()) or "  (none)")
-    print("It also removes what thinny set up: the Incus profile and storage pool (unless something else\n"
-          "uses the pool), the firewall table and its check, the nightly update, the access trace, the\n"
+    print("It also removes what thinny set up: the Incus profile and the instances' storage pools, the\n"
+          "firewall table and its check, the nightly update, the access trace, the\n"
           f"Webapps' Caddy and Tailscale sites, the dashboard, {settings.CONFIG_TOML.parent}, {host.MANAGED},\n"
           f"{system.STATE_DIR} and thinny itself.")
     hostname = socket.gethostname()
@@ -75,15 +74,8 @@ def run() -> None:
     profiles = system.run(["incus", "profile", "list", "--format", "csv", "--columns", "n"]).stdout.splitlines()
     if render.PROFILE in profiles:
         system.run(["incus", "profile", "delete", render.PROFILE])
-    # The pool may be older than thinny (init_incus keeps one), so it goes only if nothing else uses it. The
-    # images Incus cached for the containers keep it busy; Incus downloads them again when needed.
-    pool_kept = False
-    pools = system.run(["incus", "storage", "list", "--format", "csv", "--columns", "n"]).stdout.splitlines()
-    if render.POOL in pools:
-        for image in json.loads(system.run(["incus", "image", "list", "--format", "json"]).stdout):
-            if image["cached"]:
-                system.run(["incus", "image", "delete", image["fingerprint"]], check=False)
-        pool_kept = system.run(["incus", "storage", "delete", render.POOL], check=False).returncode != 0
+    for pool in instances.pool_sizes():   # also one an add or a move here left without its instance
+        system.run(["incus", "storage", "delete", pool])
     for unit in ("thinny-update.service", "thinny-update.timer", "thinny-trace.service", "thinny-firewall.service",
                  "thinny-firewall.timer", "incus.service.d/thinny.conf"):
         (host.SYSTEMD / unit).unlink(missing_ok=True)
@@ -117,9 +109,6 @@ def run() -> None:
           "  IP forwarding and user namespaces stay on until the next reboot.")
     if had_dashboard:
         print("  The dashboard's Prometheus and Grafana stay installed, masked, with their history.")
-    if pool_kept:
-        print(f"  The Incus storage pool {render.POOL} stays (up to 80% of the disk): something else uses it.\n"
-              f"  See: incus storage volume list {render.POOL}")
     if clone and clone != str(CLONE):
         print(f"  The clone {clone} stays.")
     if left:

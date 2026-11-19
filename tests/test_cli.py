@@ -16,7 +16,7 @@ VALID = '[policy]\nmodel = "m1"\nallowed_models = ["m1"]\n\n[access]\nlan_addres
 @pytest.fixture
 def server(tmp_path, monkeypatch):
     """A root run against config.toml in tmp_path; records the applies and updates it starts. thinny
-    itself has nothing new, and no account or Incus container has an instance's name."""
+    itself has nothing new, and no account, Incus container or pool has an instance's name."""
     site = tmp_path / "config.toml"
     site.write_text(VALID)
     monkeypatch.setattr(settings, "CONFIG_TOML", site)
@@ -26,6 +26,7 @@ def server(tmp_path, monkeypatch):
     monkeypatch.setattr(system, "LOCK_FILE", tmp_path / "lock")
     monkeypatch.setattr(instances, "uid_of", lambda name: None)
     monkeypatch.setattr(instances, "container_state", lambda name: None)
+    monkeypatch.setattr(instances, "pool_sizes", lambda: {})
     calls = []
     monkeypatch.setattr(apply, "apply", lambda s: calls.append(("apply", s.model)))
     monkeypatch.setattr(update, "run", lambda s, reg, **kw: calls.append(("update", kw)) or 0)
@@ -292,6 +293,7 @@ def test_instance_add_asks_no_frontend_when_given_one_or_when_resuming(server, t
     ("vitek_test", "invalid name 'vitek_test': 2-32 characters"),
     ("vitek", "'vitek' is a system account name; choose another name"),
     ("taken", "an Incus container 'taken' already exists; choose another name"),
+    ("pooled", "an Incus storage pool 'thinny-pooled' already exists; choose another name"),
     ("alice", "alice already exists (use: thinny instance access alice ...)"),
     ("bob", "bob was disabled; to reuse its name: thinny instance remove bob --purge"),
 ])
@@ -302,6 +304,7 @@ def test_instance_add_refuses_a_name_it_cannot_take_before_asking_anything(serve
          "bob": Instance("bob", 9121, "local", state="disabled")})))
     monkeypatch.setattr(instances, "uid_of", lambda name: 1000 if name == "vitek" else None)
     monkeypatch.setattr(instances, "container_state", lambda name: "RUNNING" if name == "taken" else None)
+    monkeypatch.setattr(instances, "pool_sizes", lambda: {"thinny-pooled": 30 * 2**30})
     asked = []
     monkeypatch.setattr("builtins.input", lambda prompt="": asked.append(prompt) or "")
     assert cli.main(["instance", "add", name]) == 1
@@ -513,12 +516,12 @@ def test_the_other_server_takes_the_archive_from_stdin_or_only_checks(server, mo
                         received.append((*args, frontend, mailbox)))
     monkeypatch.setattr(cli.sys, "stdin", type("Pipe", (), {"buffer": "the archive"})())
     args = ["instance", "receive", "bob", "--access", "url", "--url", "https://bob.example.org/",
-            "--release", "v2", "c0ffee", "--built-ins", ""]   # added by a thinny without built-ins
+            "--release", "v2", "c0ffee", "--built-ins", "", "--disk-gb", "30"]   # added by a thinny without built-ins
     assert cli.main(args) == 0
     assert cli.main([*args, "--check", "--frontend", "webui", "--mailbox", "bob@example.org"]) == 0
     assert received == [
-        ("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", "the archive", "webapp", ""),
-        ("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", None, "webui", "bob@example.org")]
+        ("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", 30, "the archive", "webapp", ""),
+        ("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", 30, None, "webui", "bob@example.org")]
 
 
 def test_the_trace_runs_even_with_a_broken_site_toml(server, monkeypatch):

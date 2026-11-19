@@ -161,7 +161,7 @@ bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/melounvitek/th
 6. On the first run, `thinny init` asks for the settings below and writes them into
    `/etc/thinny/config.toml`, a copy of the commented example. Without a terminal, it copies the
    example and stops.
-7. Once `config.toml` exists, it runs `thinny setup`: the Incus storage pool, the firewall and its
+7. Once `config.toml` exists, it runs `thinny setup`: the Incus profile, the firewall and its
    check, the update timer and the shared policy.
 
 It does not add any instances.
@@ -296,10 +296,13 @@ thinny instance restart --group sales   # instead of names: resize, login, model
 - Without a line, the phone plugin stays idle until it is set up in the Webapp (Messaging →
   Hermes 3310), then with `~/.hermes/plugins/hermes-3310/install-asterisk.sh` and a gateway
   restart. See its README.
-- `add` takes the same `--cpu`, `--memory-mb` and `--disk-gb`. Limits an instance was not given
-  follow `[container]` in `config.toml`, also when it changes. `resize` applies at once, even to a
-  running instance. The storage is compressed, and disk use and its limit count the compressed
-  size (about half of what the files take).
+- `add` takes the same `--cpu`, `--memory-mb` and `--disk-gb`. CPU and memory limits an instance was
+  not given follow `[container]` in `config.toml`, also when it changes; its disk gets `disk_gb` when
+  it is added. `resize` applies at once, even to a running instance. A disk can grow but not shrink.
+- Each instance's disk is a storage pool of its own, a file on the server's disk that grows as the
+  instance writes, so `df` in the container shows its size. `add` and `resize` refuse a disk that
+  would make the instances' disks together larger than 80% of the server's disk. The storage is
+  compressed, and disk use and its size count the compressed size (about half of what the files take).
 - `lock` keeps the provider `alice` uses and allows the models given, the first by default; it
   pins effort and plugins as the server's lock does. `unlock` leaves `alice` on the model it was
   locked to, for its users to change. Either stays whatever `policy.model_lock` says. The model
@@ -335,8 +338,8 @@ thinny instance restart --group sales   # instead of names: resize, login, model
   and delete both copies once it is handed over. `remove` leaves it, `uninstall` deletes it.
 - Export before `disable`: only an active instance's container runs. Hermes makes the archive in the
   container first, so it needs room there (`resize --disk-gb`). Before that, the server needs the
-  instance's disk quota free on top of a tenth of its disk: the archive takes from the same disk. Its copy
-  stops at the quota, or before it would leave the server's disk less than 10% free. Files the agent made
+  size of the instance's disk free on top of a tenth of its disk: the archive takes from the same disk. Its
+  copy stops at that size, or before it would leave the server's disk less than 10% free. Files the agent made
   outside Hermes's home (`~/.hermes`) are not in it.
   The [access trace](#access-trace) notes `thinny instance export alice ran its commands in alice`.
 - Shell in a container: `sudo incus exec alice -- runuser -l alice` (or `-- bash` for root).
@@ -351,7 +354,8 @@ thinny instance restart --group sales   # instead of names: resize, login, model
   instances get a new address; for `url` ones, point your DNS or tunnel at the new server. The
   old copy stays here, disabled.
 - Before a move, run `thinny update --all` on both servers: they need the same Hermes release. Each
-  needs room for one container archive. SSH must reach the new server as root, or as an account
+  needs room for one container archive. The new server takes them only while its instances' disks stay
+  within 80% of its own. SSH must reach the new server as root, or as an account
   with sudo without a password. It asks nothing, so connect once as root by hand to accept the
   host key (`sudo ssh admin@new-server true`). sudo hides your SSH agent: thinny uses root's key
   unless you run `sudo --preserve-env=SSH_AUTH_SOCK thinny instance move ...`.
@@ -608,8 +612,8 @@ so allow exactly these two without a password, with `sudo visudo -f /etc/sudoers
 ## Dashboard
 
 An optional history, kept for `retention_days`, of each instance's CPU (as a share of its limit), memory
-without file cache, disk use against its quota, disk reads and writes, network, processes and
-out-of-memory kills, and of the server's CPU, memory, disk and storage pool. It sends no alerts.
+without file cache, disk use against its size, disk reads and writes, network, processes and
+out-of-memory kills, and of the server's CPU, memory and disk. It sends no alerts.
 
 ```toml
 [dashboard]
@@ -746,14 +750,14 @@ thinny uninstall
 It lists the instances and asks you to type the server's hostname. Then it deletes every
 instance's container with all its data, and everything thinny set up: the update timer, the
 access trace, `tailscale serve` of the instances' ports, thinny's Caddyfile (Caddy is disabled),
-the dashboard's settings, the Incus profile and storage pool, the firewall table and its check,
-`/etc/thinny`, `/etc/hermes`, `/var/lib/thinny`, the log, `/etc/sudoers.d/thinny-checks`, the clone
-in `/usr/local/src/thinny` and thinny itself. **There is no undo.** If a step fails, fix the cause
-and run it again: it continues.
+the dashboard's settings, the Incus profile and the instances' storage pools, the firewall table and
+its check, `/etc/thinny`, `/etc/hermes`, `/var/lib/thinny`, the log, `/etc/sudoers.d/thinny-checks`,
+the clone in `/usr/local/src/thinny` and thinny itself. **There is no undo.** If a step fails, fix the
+cause and run it again: it continues.
 
-A storage pool that something else uses stays; the output says so. The packages stay installed (the
-dashboard's with their services masked, and their history): `apt purge` removes those nothing else
-uses. IP forwarding and user namespaces stay on until the next reboot.
+Storage pools that are not thinny's stay. The packages stay installed (the dashboard's with their
+services masked, and their history): `apt purge` removes those nothing else uses. IP forwarding and
+user namespaces stay on until the next reboot.
 
 ## Extras
 

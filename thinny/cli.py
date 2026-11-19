@@ -121,7 +121,8 @@ def main(argv: list[str] | None = None) -> int:
     inst.add_parser("usage", help="how much of their 5-hour and weekly subscription limits instances used, and the resets") \
         .add_argument("name", nargs="?", help="(default: every active instance)")
     add = inst.add_parser("add", help="add an instance (or finish an interrupted add)",
-                          description="Limits not given follow [container] in config.toml.")
+                          description="CPU and memory not given follow [container] in config.toml; "
+                                      "a disk not given gets its disk_gb.")
     add.add_argument("name")
     add.add_argument("--access", help="lan | tailscale | url=<URL> | local (default: asked)")
     add.add_argument("--frontend", choices=settings.FRONTENDS, help="(default: asked)")
@@ -133,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     gset.add_argument("name")
     gset.add_argument("group", metavar="GROUP|none")
     lim = inst.add_parser("resize", help="change an instance's CPU, memory or disk limits",
-                          description="Limits not given stay as they are.")
+                          description="Limits not given stay as they are. A disk can grow but not shrink.")
     lim.add_argument("name", nargs="?")
     for parser in (add, lim):
         parser.add_argument("--cpu", type=at_least_1, help="CPUs")
@@ -196,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
     rcv.add_argument("--frontend", choices=settings.FRONTENDS, default="webapp")
     rcv.add_argument("--release", nargs=2, required=True, metavar=("TAG", "COMMIT"))
     rcv.add_argument("--built-ins", required=True)
+    rcv.add_argument("--disk-gb", type=at_least_1, required=True)
     rcv.add_argument("--mailbox", default="")
     rcv.add_argument("--check", action="store_true")
     sub.add_parser("uninstall", help="remove thinny and every instance, with all their data")
@@ -363,7 +365,7 @@ def main(argv: list[str] | None = None) -> int:
                     raise CommandError("name the instances to move, or give --all or --group")
                 move.move(s, reg, [] if a.all else chosen(reg, a.names, a.group), a.to)
             elif command == "instance receive":
-                move.receive(s, reg, a.name, a.access, a.url, tuple(a.release), a.built_ins,
+                move.receive(s, reg, a.name, a.access, a.url, tuple(a.release), a.built_ins, a.disk_gb,
                              None if a.check else sys.stdin.buffer, frontend=a.frontend, mailbox=a.mailbox)
         return 0
     except (SettingsError, RegistryError, CommandError) as e:

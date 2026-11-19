@@ -32,15 +32,15 @@ def thinny_files():
 
 class Server:
     """Plays Incus, Tailscale and nft; records every command and thinny's files that were there when it ran.
-    A command starting with a key of `fails` gets its (output, exit code); deleting the storage pool fails while
-    it holds an image."""
+    A command starting with a key of `fails` gets its (output, exit code)."""
 
     def __init__(self):
         self.calls, self.files = [], []
         self.fails = {}
         self.containers = {"alice": "RUNNING", "bob": "STOPPED", "carol": "RUNNING"}
-        self.profile = self.pool = self.table = True
-        self.images = [{"fingerprint": "f00d", "cached": True}]   # Debian, downloaded for the containers
+        self.profile = self.table = True
+        # The admin's own, and each instance's: dave's add stopped after it.
+        self.pools = {"default", "thinny-alice", "thinny-bob", "thinny-carol", "thinny-dave"}
         self.tailscale = {"BackendState": "Running"}
         self.served = {9120, 9121}
         self.answers = ["office-server"]
@@ -64,16 +64,10 @@ class Server:
             return "default\n" + "thinny-instance\n" * self.profile, 0
         elif cmd[:3] == ["incus", "profile", "delete"]:
             self.profile = False
-        elif cmd[:3] == ["incus", "storage", "list"]:
-            return "default\n" * self.pool, 0
-        elif cmd[:3] == ["incus", "image", "list"]:
-            return json.dumps(self.images), 0
-        elif cmd[:3] == ["incus", "image", "delete"]:
-            self.images = [image for image in self.images if image["fingerprint"] != cmd[3]]
+        elif cmd[:3] == ["incus", "storage", "list"]:   # as JSON
+            return json.dumps([{"name": pool, "config": {"size": "30GiB"}} for pool in sorted(self.pools)]), 0
         elif cmd[:3] == ["incus", "storage", "delete"]:
-            if self.images:
-                return "", 1
-            self.pool = False
+            self.pools.remove(cmd[3])
         elif cmd[:3] == ["tailscale", "serve", "status"]:
             if not self.served:
                 return "{}\n", 0
@@ -156,9 +150,9 @@ def test_uninstall_deletes_every_instance_and_everything_thinny_set_up(server, c
                             "systemctl disable --now thinny-firewall.timer", "systemctl stop thinny-firewall.service"]
     assert [c for c in srv.calls if c.startswith("incus delete")] == \
         ["incus delete --force alice", "incus delete --force bob", "incus delete --force carol"]
-    assert srv.index("incus delete --force carol") < srv.index("incus profile delete thinny-instance") \
-        < srv.index("incus image delete f00d") < srv.index("incus storage delete default")
-    assert not srv.containers and not srv.profile and not srv.pool and not srv.images and not srv.table
+    assert srv.index("incus delete --force carol") < srv.index("incus storage delete thinny-alice")
+    assert not srv.containers and not srv.profile and not srv.table
+    assert srv.pools == {"default"}   # thinny's go, dave's too; the admin's stays
     assert not srv.served
     assert "systemctl disable --now caddy" in srv.calls
     # incus.service no longer loads the table when it goes
@@ -221,10 +215,10 @@ def test_an_install_that_stopped_before_setup_is_removed(server):
     for path in (settings.CONFIG_TOML, system.STATE_DIR / "instances.json", host.CADDYFILE,
                  *(host.SYSTEMD / unit for unit in UNITS)):
         path.unlink()
-    srv.containers, srv.served, srv.table, srv.profile, srv.pool = {}, set(), False, False, False
+    srv.containers, srv.served, srv.table, srv.profile, srv.pools = {}, set(), False, False, set()
     assert cli.main(["uninstall"]) == 0
     assert srv.calls == ["tailscale serve status --json", "incus profile list --format csv --columns n",
-                         "incus storage list --format csv --columns n", "systemctl daemon-reload", "nft list tables"]
+                         "incus storage list --format json", "systemctl daemon-reload", "nft list tables"]
     assert thinny_files() == []
 
 
@@ -236,15 +230,6 @@ def test_what_thinny_did_not_set_up_stays(server):
     assert cli.main(["uninstall"]) == 0
     assert host.CADDYFILE.exists() and (host.SYSTEMD / "incus.service.d/admin.conf").exists()
     assert not any("caddy" in c or c.startswith("tailscale") for c in srv.calls)
-
-
-def test_a_storage_pool_something_else_uses_is_kept_and_reported(server, capsys):
-    srv = server
-    srv.images.append({"fingerprint": "beef", "cached": False})   # the admin's own image
-    assert cli.main(["uninstall"]) == 0
-    assert srv.pool and srv.images == [{"fingerprint": "beef", "cached": False}]
-    assert "incus storage volume list default" in capsys.readouterr().out
-    assert thinny_files() == []
 
 
 def test_a_clone_in_another_place_is_kept(server, tmp_path, capsys):
