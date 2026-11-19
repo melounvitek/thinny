@@ -310,6 +310,12 @@ hermes-3310 on the test server **[tested]**.
   Piper's replies. Piper's own speed (`length_scale` 1.0) was too slow.
 - netcup's firewall policies are stateless: the test server's dropped the replies to SIP until it
   accepted UDP from Odorik (`81.31.45.0/24`, any port).
+- Keypad approvals (hermes-3310 38c638e) **[src]**: the plugin waits `approval_timeout` (120 s)
+  for a key once the approval was said, but Hermes's `approvals.timeout` (300 s, left as it is)
+  counts from the request and still wins. One approval needs about 140 s; a later one in a queue
+  may expire before its turn, and a group with `approvals.timeout` under about 140 s shortens the
+  caller's time. The plugin needs Hermes v0.23.1 or later (v0.23.0 lacks
+  `restrict_gateway_approval_card_to_deny`, so the plugin would not load).
 
 ### Telegram (2026-11-15)
 Hermes v0.23.1 **[src]**; managed bots tried with a real manager bot and phone **[tested]**.

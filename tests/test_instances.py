@@ -416,6 +416,8 @@ def test_a_new_instance_can_get_a_phone_line(incus, capsys, language, czech):
         assert incus.ran(f"hermes config set {setting}")
     # in the language of the site, else the plugin's English and Hermes's English voice
     assert incus.ran("hermes config set plugins.entries.hermes-3310.settings.phrase_pin Zadej kód a mřížku.") == czech
+    assert incus.ran("hermes config set plugins.entries.hermes-3310.settings.phrase_approval_keys "
+                     "Jedničkou to jednou povolíš, dvojkou odmítneš.") == czech
     assert incus.ran("hermes config set tts.piper.voice cs_CZ-jirka-medium") == czech
     # Asterisk, as alice, reads the line from .env, and the gateway starts with it
     assert incus.containers["alice"]["asterisk_read"] == env

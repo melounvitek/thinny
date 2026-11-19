@@ -287,6 +287,9 @@ thinny instance restart --group sales   # instead of names: resize, login, model
   and an OpenAI API key for speech recognition, then starts Asterisk in the container. With
   `policy.language = "cs"` the phone speaks Czech. Every new instance gets a faster Piper voice
   (`tts.piper.length_scale` 0.65).
+- On a call, a command that needs approval is described and answered on the keypad: `1` allows it
+  once, `2` refuses it. A group turns that off with `approvals = "deny"` under
+  `[plugins.entries.hermes-3310.settings]`.
 - If the line does not register, a stateless firewall at the hosting provider (such as a netcup
   firewall policy) may drop the SIP provider's replies: let UDP from it in, from any port to any
   port (Odorik: `81.31.45.0/24`).
