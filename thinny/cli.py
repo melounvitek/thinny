@@ -121,7 +121,8 @@ def main(argv: list[str] | None = None) -> int:
     inst.add_parser("usage", help="how much of their 5-hour and weekly subscription limits instances used, and the resets") \
         .add_argument("name", nargs="?", help="(default: every active instance)")
     add = inst.add_parser("add", help="add an instance (or finish an interrupted add)",
-                          description="Limits not given follow [container] in config.toml.")
+                          description="CPU and memory not given follow [container] in config.toml; "
+                                      "a disk not given gets its disk_gb.")
     add.add_argument("name")
     add.add_argument("--access", help="lan | tailscale | url=<URL> | local (default: asked)")
     add.add_argument("--frontend", choices=settings.FRONTENDS, help="(default: asked)")
@@ -133,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     gset.add_argument("name")
     gset.add_argument("group", metavar="GROUP|none")
     lim = inst.add_parser("resize", help="change an instance's CPU, memory or disk limits",
-                          description="Limits not given stay as they are.")
+                          description="Limits not given stay as they are. A disk can grow but not shrink.")
     lim.add_argument("name", nargs="?")
     for parser in (add, lim):
         parser.add_argument("--cpu", type=at_least_1, help="CPUs")
