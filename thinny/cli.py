@@ -196,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
     rcv.add_argument("--frontend", choices=settings.FRONTENDS, default="webapp")
     rcv.add_argument("--release", nargs=2, required=True, metavar=("TAG", "COMMIT"))
     rcv.add_argument("--built-ins", required=True)
+    rcv.add_argument("--disk-gb", type=at_least_1, required=True)
     rcv.add_argument("--mailbox", default="")
     rcv.add_argument("--check", action="store_true")
     sub.add_parser("uninstall", help="remove thinny and every instance, with all their data")
@@ -363,7 +364,7 @@ def main(argv: list[str] | None = None) -> int:
                     raise CommandError("name the instances to move, or give --all or --group")
                 move.move(s, reg, [] if a.all else chosen(reg, a.names, a.group), a.to)
             elif command == "instance receive":
-                move.receive(s, reg, a.name, a.access, a.url, tuple(a.release), a.built_ins,
+                move.receive(s, reg, a.name, a.access, a.url, tuple(a.release), a.built_ins, a.disk_gb,
                              None if a.check else sys.stdin.buffer, frontend=a.frontend, mailbox=a.mailbox)
         return 0
     except (SettingsError, RegistryError, CommandError) as e:

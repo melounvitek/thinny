@@ -141,6 +141,8 @@ class Incus:
             return json.dumps({"devices": self.containers[cmd[2].rsplit("/", 1)[1]]["devices"]}), 0
         elif cmd[:4] == ["incus", "config", "device", "add"]:
             self.containers[cmd[4]]["devices"][cmd[5]] = {"type": cmd[6], **dict(p.split("=", 1) for p in cmd[7:])}
+        elif cmd[:4] == ["incus", "config", "device", "unset"]:
+            del self.containers[cmd[4]]["devices"][cmd[5]][cmd[6]]
         elif cmd[:4] in (["incus", "config", "device", "set"], ["incus", "config", "device", "override"]):
             self.containers[cmd[4]]["devices"].setdefault(cmd[5], {}).update(p.split("=", 1) for p in cmd[6:])
         elif cmd[:2] == ["incus", "export"]:   # the fake's archives are the container as JSON
@@ -157,9 +159,10 @@ class Incus:
             except ValueError:
                 return "Error: not a backup", 1
             for device, d in container["devices"].items():
-                if d["type"] == "disk" and d.get("required") != "false" and not Path(d["source"]).exists():
+                if d["type"] == "disk" and "source" in d and d.get("required") != "false" \
+                        and not Path(d["source"]).exists():
                     return f'Error: Missing source path "{d["source"]}" for disk "{device}"', 1
-            self.containers[cmd[3]] = container
+            self.containers[cmd[3]] = container | {"pool": cmd[cmd.index("--storage") + 1]}
         elif cmd[:2] == ["incus", "start"]:
             self.containers[cmd[2]]["state"] = "RUNNING"
         elif cmd[:2] == ["incus", "delete"]:

@@ -516,12 +516,12 @@ def test_the_other_server_takes_the_archive_from_stdin_or_only_checks(server, mo
                         received.append((*args, frontend, mailbox)))
     monkeypatch.setattr(cli.sys, "stdin", type("Pipe", (), {"buffer": "the archive"})())
     args = ["instance", "receive", "bob", "--access", "url", "--url", "https://bob.example.org/",
-            "--release", "v2", "c0ffee", "--built-ins", ""]   # added by a thinny without built-ins
+            "--release", "v2", "c0ffee", "--built-ins", "", "--disk-gb", "30"]   # added by a thinny without built-ins
     assert cli.main(args) == 0
     assert cli.main([*args, "--check", "--frontend", "webui", "--mailbox", "bob@example.org"]) == 0
     assert received == [
-        ("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", "the archive", "webapp", ""),
-        ("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", None, "webui", "bob@example.org")]
+        ("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", 30, "the archive", "webapp", ""),
+        ("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", 30, None, "webui", "bob@example.org")]
 
 
 def test_the_trace_runs_even_with_a_broken_site_toml(server, monkeypatch):

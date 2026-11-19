@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from test_instances import LOCKED, MARK, S, incus  # noqa: F401 - incus: the fake Incus fixture
+from test_instances import LOCKED, MARK, S, incus, server_disk  # noqa: F401 - incus: the fake Incus fixture
 
 from thinny import host, instances, move, render, update
 from thinny.registry import Instance, Registry, RegistryError
@@ -48,22 +48,24 @@ def target(incus, tmp_path, monkeypatch):
     return Registry({"bob": Instance("bob", 9120, "local", address="10.78.0.1", state="active")})
 
 
-def refused(reg, message, s=S, access="local", release=RELEASE):
+def refused(reg, message, s=S, access="local", release=RELEASE, disk_gb=30):
     """Both the check and the move itself refuse alice, and register nothing."""
     names = set(reg.instances)
     for data in (None, archive()):
         with pytest.raises((CommandError, RegistryError), match=message):
-            move.receive(s, reg, "alice", access, "", release, render.BUILT_INS, data)
+            move.receive(s, reg, "alice", access, "", release, render.BUILT_INS, disk_gb, data)
     assert set(reg.instances) == names
 
 
 def test_a_moved_instance_keeps_its_users_settings_and_gets_this_servers_port_and_address(target, incus, tmp_path,
                                                                                           capsys):
-    move.receive(S, target, "alice", "local", "", RELEASE, render.BUILT_INS, archive())
+    move.receive(S, target, "alice", "local", "", RELEASE, render.BUILT_INS, 30, archive())
     alice = target.get("alice")
     assert (alice.state, alice.moved, alice.port, alice.address, alice.url, alice.built_ins) == \
         ("active", True, 9121, "10.78.0.2", "http://alice.localhost:9121/", render.BUILT_INS)
-    assert incus.ran(f"incus import {tmp_path}/alice.tar.gz alice --storage default")
+    # into a pool of its own, of its disk's size there
+    assert incus.index("incus storage create thinny-alice btrfs size=30GiB") \
+        < incus.index(f"incus import {tmp_path}/alice.tar.gz alice --storage thinny-alice")
     assert incus.imported_mode == 0o600 and not (tmp_path / "alice.tar.gz").exists()   # it holds alice's secrets
     # the old server turned autostart off for the move; the profile's applies again
     assert incus.index("incus import") < incus.index("incus config unset alice boot.autostart") \
@@ -86,8 +88,19 @@ def test_a_moved_instance_keeps_its_users_settings_and_gets_this_servers_port_an
     assert "if alice did not use openai-codex on its old server, sign it in: thinny instance login alice" in out
 
 
+def test_a_moved_instance_loses_the_disk_quota_of_a_server_with_one_shared_pool(target, incus):
+    # Imported into its own pool, its root disk keeps the old size, now a btrfs quota df there does not show.
+    old_root = {"type": "disk", "path": "/", "pool": "default", "size": "30GiB"}
+    data = archive()
+    container = json.load(data)
+    move.receive(S, target, "alice", "local", "", RELEASE, render.BUILT_INS, 30,
+                 io.BytesIO(json.dumps(container | {"devices": container["devices"] | {"root": old_root}}).encode()))
+    assert "size" not in incus.containers["alice"]["devices"]["root"]
+    assert incus.index("incus config device unset alice root size") < incus.index("incus start alice")
+
+
 def test_a_moved_instance_keeps_webui_at_the_webui_release_of_this_server(target, incus):
-    move.receive(S, target, "alice", "local", "", RELEASE, render.BUILT_INS, archive(), frontend="webui")
+    move.receive(S, target, "alice", "local", "", RELEASE, render.BUILT_INS, 30, archive(), frontend="webui")
     assert target.get("alice").frontend == "webui"
     assert incus.ran("/home/alice/hermes-webui https://github.com/nesquena/hermes-webui beef")
     assert incus.containers["alice"]["hermes_config"]["webapp.enabled"] == "false"
@@ -101,7 +114,7 @@ def test_on_a_server_with_the_model_lock_the_model_it_had_goes_at_once(target, i
     wait = f"incus exec alice -- {MARK} systemctl is-system-running --wait"
     monkeypatch.setattr(instances.time, "sleep", lambda s: None)
     with pytest.raises(CommandError, match="cannot reach the internet"):
-        move.receive(LOCKED, target, "alice", "local", "", RELEASE, render.BUILT_INS, archive(internet=False))
+        move.receive(LOCKED, target, "alice", "local", "", RELEASE, render.BUILT_INS, 30, archive(internet=False))
     assert [incus.calls[i].rsplit(" ", 1)[1] for i in unsets()] == \
         ["model.provider", "model.default", "agent.reasoning_effort"]
     assert incus.index("incus start alice") < unsets()[0] < unsets()[-1] < incus.index(wait)
@@ -119,7 +132,7 @@ def test_a_server_without_hermes_yet_takes_the_release_and_gives_new_built_ins(t
     monkeypatch.setattr(host, "release", lambda: released[-1] if released else None)
     monkeypatch.setattr(host, "write_release", lambda tag, commit: released.append((tag, commit)))
     reg = Registry()
-    move.receive(S, reg, "alice", "local", "", ("v1", "c1"), "older", archive())
+    move.receive(S, reg, "alice", "local", "", ("v1", "c1"), "older", 30, archive())
     assert released == [("v1", "c1")]
     # like an update: the built-ins it lacks, turned on
     assert incus.ran("bash /tmp/hermes-install.sh --channel stable --commit c1 --non-interactive")
@@ -132,7 +145,7 @@ def test_a_server_without_hermes_yet_takes_the_release_and_gives_new_built_ins(t
 def test_instance_add_finishes_a_moved_instance_whose_setup_failed_here(target, incus, monkeypatch):
     monkeypatch.setattr(instances.time, "sleep", lambda s: None)
     with pytest.raises(CommandError, match="cannot reach the internet"):
-        move.receive(S, target, "alice", "local", "", RELEASE, render.BUILT_INS, archive(internet=False))
+        move.receive(S, target, "alice", "local", "", RELEASE, render.BUILT_INS, 30, archive(internet=False))
     alice = target.get("alice")
     assert (alice.state, alice.moved, alice.built_ins) == ("pending", True, render.BUILT_INS)
 
@@ -155,16 +168,17 @@ def test_a_container_imported_here_is_registered_before_anything_else_can_fail(t
     monkeypatch.setattr(host, "write_release", disk_full)
     reg = Registry()
     with pytest.raises(OSError):
-        move.receive(S, reg, "alice", "local", "", ("v1", "c1"), render.BUILT_INS, archive())
+        move.receive(S, reg, "alice", "local", "", ("v1", "c1"), render.BUILT_INS, 30, archive())
     assert "alice" in incus.containers
     assert (reg.get("alice").state, reg.get("alice").moved) == ("pending", True)   # instance add finishes it
 
 
 def test_a_failed_import_leaves_nothing_here_so_the_move_can_be_tried_again(target, incus, tmp_path):
     with pytest.raises(CommandError, match="incus import"):
-        move.receive(S, target, "alice", "local", "", RELEASE, render.BUILT_INS, io.BytesIO(b"\x1f\x8b cut off"))
+        move.receive(S, target, "alice", "local", "", RELEASE, render.BUILT_INS, 30, io.BytesIO(b"\x1f\x8b cut off"))
     assert "alice" not in target.instances and not (tmp_path / "alice.tar.gz").exists()
-    move.receive(S, target, "alice", "local", "", RELEASE, render.BUILT_INS, archive())
+    assert "thinny-alice" not in incus.pools
+    move.receive(S, target, "alice", "local", "", RELEASE, render.BUILT_INS, 30, archive())
     assert target.get("alice").state == "active"
 
 
@@ -175,6 +189,9 @@ def test_a_name_this_server_has_or_had_is_refused(target, incus, monkeypatch):
     incus.containers["alice"] = {"state": "STOPPED"}
     refused(target, "an Incus container 'alice' already exists")
     del incus.containers["alice"]
+    incus.pools["thinny-alice"] = {"size": 30 * 2**30, "used": 0}   # e.g. left by a failed move
+    refused(target, "an Incus storage pool 'thinny-alice' already exists")
+    del incus.pools["thinny-alice"]
     monkeypatch.setattr(instances, "uid_of", lambda name: 100)
     refused(target, "'alice' is a system account name")
     assert not incus.ran("incus import")
@@ -187,7 +204,11 @@ def test_another_release_or_an_unfinished_update_is_refused(target, incus, tmp_p
     assert not incus.ran("incus import")
 
 
-def test_what_this_server_cannot_give_is_refused(target, incus):
+def test_what_this_server_cannot_give_is_refused(target, incus, monkeypatch):
+    server_disk(monkeypatch, 100 * 2**30)
+    incus.pools["thinny-bob"] = {"size": 60 * 2**30, "used": 0}
+    refused(target, r"alice cannot have 30 GiB of disk: .* more than 80% of the server's disk \(80 GiB\)")
+    assert "thinny-alice" not in incus.pools
     refused(target, "set access.lan_address in config.toml first", access="lan")
     refused(target, "Tailscale is not running on this server", access="tailscale")
     refused(target, "no free Webapp port left", s=dataclasses.replace(S, port_range=(9120, 9120)))
@@ -225,7 +246,8 @@ def source(incus, tmp_path, monkeypatch):
     other = Other()
     monkeypatch.setattr(move, "remote", other.remote)
     for name, state in (("alice", "RUNNING"), ("bob", "RUNNING"), ("carol", "STOPPED"), ("dave", "RUNNING")):
-        incus.containers[name] = {"state": state, "devices": {}}
+        incus.containers[name] = {"state": state, "devices": {}, "pool": f"thinny-{name}"}
+        incus.pools[f"thinny-{name}"] = {"size": (50 if name == "bob" else 30) * 2**30, "used": 0}
     reg = Registry({"alice": Instance("alice", 9120, "local", state="active", built_ins="b1"),
                     "bob": Instance("bob", 9121, "url", url="https://bob.example.org/", state="active", built_ins="b1",
                                     frontend="webui"),
@@ -244,9 +266,10 @@ def test_every_active_instance_moves_one_at_a_time_and_stays_here_disabled(sourc
     alice = ["--access", "local", "--release", "v2", "c0ffee", "--built-ins", "b1"]
     bob = ["--access", "url", "--url", "https://bob.example.org/", "--frontend", "webui", "--release", "v2", "c0ffee",
            "--built-ins", "b1"]
-    # the other server checks both before either stops
-    assert [args for _, args in other.calls] == [receive("alice", *alice, "--check"), receive("bob", *bob, "--check"),
-                                                 receive("alice", *alice), receive("bob", *bob)]
+    # The other server checks both before either stops, bob for the room of both disks: it would get them both.
+    assert [args for _, args in other.calls] == [
+        receive("alice", *alice, "--disk-gb", "30", "--check"), receive("bob", *bob, "--disk-gb", "80", "--check"),
+        receive("alice", *alice, "--disk-gb", "30"), receive("bob", *bob, "--disk-gb", "50")]
     assert {to for to, _ in other.calls} == {"admin@new"}
     assert other.received["alice"]["state"] == other.received["bob"]["state"] == "STOPPED"
     assert incus.index("incus config set alice boot.autostart=false") < incus.index("incus stop alice") \
@@ -295,7 +318,8 @@ def test_an_instance_that_may_have_reached_the_other_server_stays_stopped_with_w
         move.move(S, reg, ["alice", "bob"], "admin@new")
     # also when the other server has the container but did not register it
     for hint in ("thinny instance list", "thinny instance add alice", "thinny instance disable alice",
-                 "incus delete alice", "incus config unset alice boot.autostart && incus start alice"):
+                 "incus delete alice", "incus storage delete thinny-alice",
+                 "incus config unset alice boot.autostart && incus start alice"):
         assert hint in str(e.value)
     assert incus.containers["alice"]["state"] == "STOPPED" and reg.get("alice").state == "active"
     assert not incus.ran("incus start") and not incus.ran("incus stop bob")
@@ -341,7 +365,7 @@ def test_a_failed_move_keeps_the_mailbox_here(source, incus, failure):
 
 
 def test_a_moved_instance_brings_its_mailbox(target, incus):
-    move.receive(S, target, "alice", "local", "", RELEASE, render.BUILT_INS, archive(), mailbox="alice@example.org")
+    move.receive(S, target, "alice", "local", "", RELEASE, render.BUILT_INS, 30, archive(), mailbox="alice@example.org")
     assert target.get("alice").mailbox == "alice@example.org"
     assert incus.containers["alice"]["himalaya"] == instances.HIMALAYA   # from an older thinny, with none
 

@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 from typing import BinaryIO
 
-from . import host, instances, render, update
+from . import host, instances, update
 from .registry import Instance, Registry, RegistryError
 from .settings import Settings
 from .system import STATE_DIR, CommandError, log, run
@@ -29,8 +29,12 @@ def move(s: Settings, reg: Registry, names: list[str], to: str) -> None:
     if update.UNFINISHED.exists():
         raise CommandError("an update is unfinished on this server; run thinny update --all on both servers first")
     release = host.release()
+    sizes = instances.pool_sizes()
+    disks = {inst.name: sizes[instances.pool_of(inst.name)] // 2**30 for inst in targets}
+    needed = 0
     for inst in targets:
-        if remote(to, receive_args(inst, release, check=True)):
+        needed += disks[inst.name]   # with room for the disks before it: that server would get them all
+        if remote(to, receive_args(inst, release, needed, check=True)):
             raise CommandError(f"{to} cannot take {inst.name} (see above); nothing moved")
     for inst in targets:
         if inst.mailbox:
@@ -46,7 +50,7 @@ def move(s: Settings, reg: Registry, names: list[str], to: str) -> None:
                 path = Path(private) / f"{name}.tar.gz"
                 run(["incus", "export", name, str(path), "--instance-only", "--quiet"], timeout=ARCHIVE_TIMEOUT)
                 with path.open("rb") as f:
-                    code = remote(to, receive_args(inst, release), stdin=f)
+                    code = remote(to, receive_args(inst, release, disks[name]), stdin=f)
         except (CommandError, OSError, KeyboardInterrupt) as e:
             log(str(e) or "interrupted")
             code = 1
@@ -54,7 +58,7 @@ def move(s: Settings, reg: Registry, names: list[str], to: str) -> None:
             inst.mailbox = ""   # the other server's now: a remove here must not delete it
             reg.save()
             instances.disable(s, reg, name)
-        elif remote(to, receive_args(inst, release, check=True)) == 0:   # it did not get there
+        elif remote(to, receive_args(inst, release, disks[name], check=True)) == 0:   # it did not get there
             run(["incus", "config", "unset", name, "boot.autostart"])
             run(["incus", "start", name])
             raise CommandError(f"moving {name} failed; it runs here again")
@@ -63,19 +67,22 @@ def move(s: Settings, reg: Registry, names: list[str], to: str) -> None:
                 f"moving {name} failed, and it may have reached {to}; it stays stopped here. On {to}:\n"
                 f"  - if thinny instance list shows {name}, finish it there if pending (thinny instance add {name}), "
                 f"then here: thinny instance disable {name}\n"
-                f"  - if not, delete any container {name} there (incus delete {name}), then here: "
+                f"  - if not, delete any container {name} there (incus delete {name}) and its pool (incus storage "
+                f"delete {instances.pool_of(name)}), then here: "
                 f"incus config unset {name} boot.autostart && incus start {name}" +
                 (f"\nif {name} is there, its mailbox {inst.mailbox} is that server's: remove {name} here with "
                  f"thinny instance remove {name} --keep-mailbox" if inst.mailbox else ""))
 
 
-def receive_args(inst: Instance, release: tuple[str, str], check: bool = False) -> list[str]:
-    """The other server's `thinny instance receive` for the instance."""
+def receive_args(inst: Instance, release: tuple[str, str], disk_gb: int, check: bool = False) -> list[str]:
+    """The other server's `thinny instance receive` for the instance, whose disk is `disk_gb` GiB (or in a check,
+    the disks that server would get with it)."""
     return ["instance", "receive", inst.name, "--access", inst.access,
             *(["--url", inst.url] if inst.access == "url" else []),
             *(["--frontend", inst.frontend] if inst.frontend != "webapp" else []),   # an older thinny knows none
             *(["--mailbox", inst.mailbox] if inst.mailbox else []),   # nor this: it would not delete the mailbox
-            "--release", *release, "--built-ins", inst.built_ins, *(["--check"] if check else [])]
+            "--release", *release, "--built-ins", inst.built_ins, "--disk-gb", str(disk_gb),
+            *(["--check"] if check else [])]
 
 
 def remote(to: str, args: list[str], stdin: BinaryIO | None = None) -> int:
@@ -91,10 +98,10 @@ def remote(to: str, args: list[str], stdin: BinaryIO | None = None) -> int:
 
 
 def receive(s: Settings, reg: Registry, name: str, access: str, url: str, release: tuple[str, str], built_ins: str,
-            archive: BinaryIO | None, frontend: str = "webapp", mailbox: str = "") -> None:
+            disk_gb: int, archive: BinaryIO | None, frontend: str = "webapp", mailbox: str = "") -> None:
     """Take an instance another server moves here: `archive` is its `incus export`, which comes with
-    the Hermes `release` and `built_ins` it has, and the `mailbox` thinny created for it. Without an archive, only
-    check that it could."""
+    the Hermes `release` and `built_ins` it has, the size of its disk, and the `mailbox` thinny created for it.
+    Without an archive, only check that it could (with room for `disk_gb` GiB of disks)."""
     if name in reg.instances:
         raise CommandError(f"{name} exists on this server too; names are not reused")
     instances.check_free_name(name)
@@ -108,6 +115,7 @@ def receive(s: Settings, reg: Registry, name: str, access: str, url: str, releas
     reg.next_port(s.port_range)   # raise when none is left
     reg.next_address()
     if archive is None:
+        instances.check_room(name, disk_gb)
         return
 
     path = STATE_DIR / f"{name}.tar.gz"
@@ -118,7 +126,13 @@ def receive(s: Settings, reg: Registry, name: str, access: str, url: str, releas
         host.write_policy(s, name)   # Incus refuses the container while its policy device's source is missing
         # Before registering: a failed import leaves only that policy folder here, which a retry reuses and uninstall
         # deletes, so the move can be tried again.
-        run(["incus", "import", str(path), name, "--storage", render.POOL, "--quiet"], timeout=ARCHIVE_TIMEOUT)
+        instances.create_pool(name, disk_gb)
+        try:
+            run(["incus", "import", str(path), name, "--storage", instances.pool_of(name), "--quiet"],
+                timeout=ARCHIVE_TIMEOUT)
+        except CommandError:
+            instances.delete_pool(name)
+            raise
     finally:
         path.unlink(missing_ok=True)
     inst = reg.add(name, access, s.port_range)

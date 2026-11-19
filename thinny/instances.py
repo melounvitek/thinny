@@ -299,6 +299,8 @@ def ensure_container(s: Settings, inst: Instance, disk_gb: int | None = None) ->
             create_pool(inst.name, disk_gb or s.container_disk_gb)
         run(["incus", "init", IMAGE, inst.name, "--profile", render.PROFILE, "--storage", pool_of(inst.name)],
             timeout=1800)
+    elif "size" in devices(inst.name).get("root", {}):   # moved from a server with one pool, where it was a quota
+        run(["incus", "config", "device", "unset", inst.name, "root", "size"])
     ensure_device(inst.name, "eth0", "nic", "nictype=routed", f"ipv4.address={inst.address}",
                   f"host_name=thinny-{inst.port}")
     ensure_policy(s, inst)
