@@ -297,7 +297,8 @@ def firewall(interface: str, blocked_networks: list[str]) -> str:
 
 
 def profile(s: Settings) -> str:
-    """The Incus profile of every instance container, complete in itself (JSON is YAML)."""
+    """The Incus profile of every instance container, complete in itself but for the root disk, each container's
+    own in its own pool (JSON is YAML)."""
     return json.dumps({
         "description": "thinny instance container",
         "config": {
@@ -310,7 +311,6 @@ def profile(s: Settings) -> str:
             "security.privileged": "false",
         },
         "devices": {
-            "root": {"type": "disk", "path": "/", "pool": POOL, "size": f"{s.container_disk_gb}GiB"},
             "tun": {"type": "unix-char", "source": "/dev/net/tun", "path": "/dev/net/tun"},  # Tailscale inside
         },
     }, indent=1)

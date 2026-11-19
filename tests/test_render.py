@@ -197,9 +197,8 @@ def test_container_profile_limits_and_isolation():
     assert profile["config"] == {
         "boot.autostart": "true", "limits.cpu": "3", "limits.memory": "6144MiB", "limits.processes": "2000",
         "security.idmap.isolated": "true", "security.nesting": "true", "security.privileged": "false"}
-    assert profile["devices"] == {
-        "root": {"type": "disk", "path": "/", "pool": "default", "size": "40GiB"},
-        "tun": {"type": "unix-char", "source": "/dev/net/tun", "path": "/dev/net/tun"}}
+    # no root disk: each container's is its own pool's
+    assert profile["devices"] == {"tun": {"type": "unix-char", "source": "/dev/net/tun", "path": "/dev/net/tun"}}
 
 
 def test_container_network_is_static():

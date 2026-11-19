@@ -296,8 +296,7 @@ def test_without_a_terminal_apply_does_all_but_install_the_dashboard(server, inc
 
 @pytest.fixture
 def bare_setup(monkeypatch):
-    """setup without Incus, apply, instances or ufw."""
-    monkeypatch.setattr(host, "init_incus", lambda: None)
+    """setup without apply, instances or ufw."""
     monkeypatch.setattr(apply, "apply", lambda s: None)
     monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: Registry()))
     monkeypatch.setattr(host.shutil, "which", lambda cmd: None)

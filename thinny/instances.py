@@ -120,6 +120,33 @@ def container_states() -> dict[str, str]:
     return dict(line.split(",", 1) for line in out.splitlines() if line)
 
 
+def pool(name: str) -> str:
+    """The instance's own Incus storage pool, sized to its disk: df in its container shows that, not the
+    server's disk."""
+    return f"thinny-{name}"
+
+
+def pool_sizes() -> dict[str, int]:
+    """The size in bytes of each instance's pool by the pool's name, also of one whose instance is gone."""
+    pools = json.loads(run(["incus", "storage", "list", "--format", "json"]).stdout)
+    return {p["name"]: int(p["config"]["size"].removesuffix("GiB")) * 2**30
+            for p in pools if p["name"].startswith(pool(""))}
+
+
+def create_pool(name: str, disk_gb: int) -> None:
+    """The instance's pool: a btrfs file on the server's disk that grows as the instance writes, up to its size."""
+    # Compressed, which about halves an instance's disk use (its size counts the compressed size). Forced: btrfs's
+    # own guess left most of Chromium and Claude Code uncompressed. Incus's default option first.
+    run(["incus", "storage", "create", pool(name), "btrfs", f"size={disk_gb}GiB",
+         "btrfs.mount_options=user_subvol_rm_allowed,compress-force=zstd:1"], timeout=600)
+
+
+def delete_pool(name: str) -> None:
+    """The instance's pool, if it has one, once its container is gone (Incus deletes the image it unpacked there)."""
+    if pool(name) in pool_sizes():
+        run(["incus", "storage", "delete", pool(name)])
+
+
 def devices(name: str) -> dict[str, dict[str, str]]:
     """The container's own devices (not its profile's): name -> properties."""
     return json.loads(run(["incus", "query", f"/1.0/instances/{name}"]).stdout)["devices"]
@@ -253,11 +280,15 @@ def set_limits(name: str, cpu: int | None, memory_mb: int | None, disk_gb: int |
         run(["incus", "config", "device", action, name, "root", f"size={disk_gb}GiB"])
 
 
-def ensure_container(s: Settings, inst: Instance) -> None:
-    """The instance's container from the plain Debian image (or moved here), running, with its network,
-    the read-only policy and the Webapp published on the host's loopback (each step repeatable)."""
+def ensure_container(s: Settings, inst: Instance, disk_gb: int | None = None) -> None:
+    """The instance's container from the plain Debian image (or moved here) in its own pool, of `disk_gb` GiB (or
+    config.toml's) when new, running, with its network, the read-only policy and the Webapp published on the host's
+    loopback (each step repeatable)."""
     if container_state(inst.name) is None:
-        run(["incus", "init", IMAGE, inst.name, "--profile", render.PROFILE], timeout=1800)
+        if pool(inst.name) not in pool_sizes():   # an add that stopped after it keeps it
+            create_pool(inst.name, disk_gb or s.container_disk_gb)
+        run(["incus", "init", IMAGE, inst.name, "--profile", render.PROFILE, "--storage", pool(inst.name)],
+            timeout=1800)
     ensure_device(inst.name, "eth0", "nic", "nictype=routed", f"ipv4.address={inst.address}",
                   f"host_name=thinny-{inst.port}")
     ensure_policy(s, inst)
@@ -695,7 +726,7 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
     reg.save()
 
     with step(f"{name}: container {inst.address}"):
-        ensure_container(s, inst)
+        ensure_container(s, inst, disk_gb)
         set_limits(name, cpu, memory_mb, disk_gb)
     with step(f"{name}: system packages"):
         ensure_packages(name, f"thinny instance add {name}")
@@ -805,6 +836,8 @@ def check_free_name(name: str) -> None:
         raise CommandError(f"{name!r} is a system account name; choose another name")
     if container_state(name) is not None:
         raise CommandError(f"an Incus container {name!r} already exists; choose another name")
+    if pool(name) in pool_sizes():
+        raise CommandError(f"an Incus storage pool {pool(name)!r} already exists; choose another name")
 
 
 def starting_model(s: Settings) -> dict[str, str]:
@@ -1034,6 +1067,7 @@ def remove(s: Settings, reg: Registry, name: str, purge: bool = False, keep_mail
         reg.save()   # at once: a mailbox created at its address later is not thinny's to delete
     if container_state(name) is not None:
         run(["incus", "delete", "--force", name])
+    delete_pool(name)
     if (host.POLICIES / name).exists():
         shutil.rmtree(host.POLICIES / name)
     kept = trace.DIR / name
