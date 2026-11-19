@@ -5,6 +5,7 @@ import itertools
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -120,6 +121,8 @@ class Incus:
                                        "unit": False, "pool": cmd[cmd.index("--storage") + 1]}
         elif cmd[:3] == ["incus", "storage", "create"]:   # NAME btrfs size=NGiB ...
             self.pools[cmd[3]] = {"size": int(cmd[5].removeprefix("size=").removesuffix("GiB")) * 2**30, "used": 0}
+        elif cmd[:3] == ["incus", "storage", "set"]:   # NAME size=NGiB
+            self.pools[cmd[3]]["size"] = int(cmd[4].removeprefix("size=").removesuffix("GiB")) * 2**30
         elif cmd[:3] == ["incus", "storage", "delete"]:
             if any(c.get("pool") == cmd[3] for c in self.containers.values()):
                 return "Error: The storage pool is currently in use", 1
@@ -268,6 +271,7 @@ def incus(tmp_path, monkeypatch):
     monkeypatch.setattr(host, "installer", lambda: "#!/bin/sh\n")
     monkeypatch.setattr(host, "reconcile_access", lambda s, reg: None)
     monkeypatch.setattr(host, "ufw_lacks_forward", lambda: False)   # whatever this machine's ufw does
+    server_disk(monkeypatch, 1000 * 2**30)
     monkeypatch.setattr(host, "POLICIES", tmp_path / "policies")
     monkeypatch.setattr(Registry, "save", lambda self, path=None: None)
     monkeypatch.setattr(instances, "RESTART_PENDING", tmp_path / "restart-pending")
@@ -481,39 +485,63 @@ def test_a_host_has_one_instance(incus):
 def test_an_instance_can_get_its_own_limits_instead_of_the_sites(incus):
     reg = Registry()
     instances.add(S, reg, "alice", "local", cpu=4, memory_mb=8192, disk_gb=50)
-    assert incus.ran("incus storage create thinny-alice btrfs size=50GiB")
+    assert incus.ran("incus storage create thinny-alice btrfs size=50GiB")   # its disk from the start
     assert incus.ran("incus config set alice limits.cpu=4 limits.memory=8192MiB")
-    assert incus.ran("incus config device override alice root size=50GiB")   # the profile's root, resized
-    assert incus.index("incus config device override alice root") \
-        < incus.index(f"incus exec alice -- {MARK} sh -c export DEBIAN_FRONTEND")   # before the packages fill it
+    assert not incus.ran("incus storage set") and not incus.ran("alice root")
 
     instances.add(S, reg, "bob", "local")
-    assert not any(c.startswith(("incus config set bob", "incus config device override bob")) for c in incus.calls)
+    assert incus.ran("incus storage create thinny-bob btrfs size=30GiB")
+    assert not incus.ran("incus config set bob")
 
 
 def test_the_limits_of_a_running_instance_change_without_a_restart(incus):
     reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
-    incus.containers["alice"] = {"state": "RUNNING", "devices": {"eth0": {}, "policy": {}, "webapp": {}}}
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {"eth0": {}, "policy": {}, "webapp": {}},
+                                 "pool": "thinny-alice"}
+    incus.pools["thinny-alice"] = {"size": 30 * 2**30, "used": 0}
     instances.limits(reg, "alice", None, 2048, 40)
     instances.limits(reg, "alice", 3, None, 60)
-    assert [c for c in incus.calls if c.startswith(("incus config set", "incus config device o", "incus config device s"))] \
-        == ["incus config set alice limits.memory=2048MiB", "incus config device override alice root size=40GiB",
-            "incus config set alice limits.cpu=3", "incus config device set alice root size=60GiB"]
-    assert incus.containers["alice"]["state"] == "RUNNING"
+    assert [c for c in incus.calls if c.startswith(("incus config set", "incus storage set"))] \
+        == ["incus config set alice limits.memory=2048MiB", "incus storage set thinny-alice size=40GiB",
+            "incus config set alice limits.cpu=3", "incus storage set thinny-alice size=60GiB"]
+    assert incus.containers["alice"]["state"] == "RUNNING" and incus.pools["thinny-alice"]["size"] == 60 * 2**30
     with pytest.raises(CommandError, match="--cpu, --memory-mb or --disk-gb"):
         instances.limits(reg, "alice", None, None, None)
 
 
-def test_a_disk_limit_too_close_to_what_the_instance_uses_is_refused(incus):
-    # btrfs would set the quota, fail halfway, and leave the instance unable to write for good. Its
-    # quota counts data shared with the image or a snapshot too, which Incus's usage figure leaves out.
+def test_a_disk_can_grow_but_not_shrink(incus):
+    # Incus cannot shrink a pool.
     reg = Registry({"alice": Instance("alice", 9120, "local", state="active")})
-    incus.containers["alice"] = {"state": "RUNNING", "devices": {"eth0": {}}, "used": int(5.7 * 2**30)}
-    with pytest.raises(CommandError, match="alice uses 5.7 GiB of disk; give it at least 7 GiB"):
-        instances.limits(reg, "alice", 4, None, 6)
-    assert not incus.ran("incus config set") and not incus.ran("incus config device override")
-    instances.limits(reg, "alice", None, None, 7)
-    assert incus.ran("incus config device override alice root size=7GiB")
+    incus.containers["alice"] = {"state": "RUNNING", "devices": {"eth0": {}}, "pool": "thinny-alice"}
+    incus.pools["thinny-alice"] = {"size": 30 * 2**30, "used": 0}
+    with pytest.raises(CommandError, match="alice has 30 GiB of disk; a disk can grow but not shrink"):
+        instances.limits(reg, "alice", 4, None, 20)
+    assert not incus.ran("incus config set")   # nothing half done
+    instances.limits(reg, "alice", None, None, 30)   # its size already
+    assert not incus.ran("incus storage set")
+
+
+def test_the_instances_disks_together_take_at_most_80_percent_of_the_servers(incus, monkeypatch):
+    # Each pool is a file on the server's disk, which grows as its instance writes: full, they would leave the
+    # server no room for itself.
+    server_disk(monkeypatch, 100 * 2**30)
+    incus.pools = {"thinny-bob": {"size": 30 * 2**30, "used": 0},
+                   "thinny-carol": {"size": 20 * 2**30, "used": 0}}   # e.g. left by a move here that failed
+    reg = Registry()
+    with pytest.raises(CommandError, match=r"alice cannot have 40 GiB of disk: the instances' disks would take "
+                                           r"90 GiB together, more than 80% of the server's disk \(80 GiB\)"):
+        instances.add(S, reg, "alice", "local", disk_gb=40)
+    assert "thinny-alice" not in incus.pools and not incus.ran("incus init")
+    instances.add(S, reg, "alice", "local")   # its 30 GiB fit
+    with pytest.raises(CommandError, match="alice cannot have 31 GiB of disk"):
+        instances.limits(reg, "alice", None, None, 31)
+    assert incus.pools["thinny-alice"]["size"] == 30 * 2**30
+
+
+def server_disk(monkeypatch, total):
+    """The size of the server's disk, where Incus keeps the pools' files."""
+    monkeypatch.setattr(shutil, "disk_usage", lambda path: types.SimpleNamespace(
+        total=total, used=0, free=total) if str(path) == "/var/lib/incus" else pytest.fail(f"disk_usage({path})"))
 
 
 def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_path):

@@ -8,7 +8,6 @@ import dataclasses
 import datetime as dt
 import hashlib
 import json
-import math
 import os
 import re
 import secrets
@@ -33,6 +32,7 @@ AUTH_PREFIX = "HERMES_DASHBOARD_BASIC_AUTH_"
 RESTART_TIMEOUT = 45 * 60  # a restart waits for a running reply (up to 30 min by default)
 RESTART_PENDING = STATE_DIR / "restart-pending"
 IMAGE = "images:debian/13"
+SERVER_DISK = "/var/lib/incus"   # where Incus keeps the instances' pools, each a file
 URL_RE = re.compile(r"https?://[a-z0-9.-]+(:\d+)?/?")
 CLAUDE_INSTALLER = "https://claude.ai/install.sh"
 # The email client of Hermes's himalaya skill, for a mailbox. v2 dropped the commands the skill uses (template,
@@ -133,8 +133,21 @@ def pool_sizes() -> dict[str, int]:
             for p in pools if p["name"].startswith(pool(""))}
 
 
+def check_room(name: str, disk_gb: int) -> None:
+    """Refuse `disk_gb` GiB of disk for the instance when the instances' disks would take more than 80% of the
+    server's together: each is a file on it, which grows as its instance writes, and full they would leave the
+    server no room for itself."""
+    total = sum((pool_sizes() | {pool(name): disk_gb * 2**30}).values())
+    most = shutil.disk_usage(SERVER_DISK).total * 0.8
+    if total > most:
+        raise CommandError(f"{name} cannot have {disk_gb} GiB of disk: the instances' disks would take "
+                           f"{total / 2**30:.0f} GiB together, more than 80% of the server's disk "
+                           f"({most / 2**30:.0f} GiB)")
+
+
 def create_pool(name: str, disk_gb: int) -> None:
     """The instance's pool: a btrfs file on the server's disk that grows as the instance writes, up to its size."""
+    check_room(name, disk_gb)
     # Compressed, which about halves an instance's disk use (its size counts the compressed size). Forced: btrfs's
     # own guess left most of Chromium and Claude Code uncompressed. Incus's default option first.
     run(["incus", "storage", "create", pool(name), "btrfs", f"size={disk_gb}GiB",
@@ -262,22 +275,21 @@ def disk_used(name: str, sync: bool = False) -> int:
 
 
 def set_limits(name: str, cpu: int | None, memory_mb: int | None, disk_gb: int | None) -> None:
-    """The instance's own limits instead of the profile's (config.toml's [container]); None keeps
-    the current one. A running container gets them at once."""
+    """The instance's own CPU and memory limits instead of the profile's (config.toml's [container]), and a larger
+    disk; None keeps the current one. A running container gets them at once."""
+    grow = False
     if disk_gb:
-        # A quota below what it counts half-applies and leaves the instance unable to write, even to
-        # raise the quota again.
-        used = disk_used(name, sync=True)
-        needed = math.ceil(used / 2**30 + 1)   # and a GiB of room to work in
-        if disk_gb < needed:
-            raise CommandError(f"{name} uses {used / 2**30:.1f} GiB of disk; give it at least {needed} GiB")
+        size = pool_sizes()[pool(name)] // 2**30
+        if disk_gb < size:   # Incus cannot shrink a pool
+            raise CommandError(f"{name} has {size} GiB of disk; a disk can grow but not shrink")
+        grow = disk_gb > size
+        if grow:
+            check_room(name, disk_gb)
     config = ([f"limits.cpu={cpu}"] if cpu else []) + ([f"limits.memory={memory_mb}MiB"] if memory_mb else [])
     if config:
         run(["incus", "config", "set", name, *config])
-    if disk_gb:
-        # The root disk is the profile's until the instance gets its own copy of it.
-        action = "set" if "root" in devices(name) else "override"
-        run(["incus", "config", "device", action, name, "root", f"size={disk_gb}GiB"])
+    if grow:
+        run(["incus", "storage", "set", pool(name), f"size={disk_gb}GiB"])
 
 
 def ensure_container(s: Settings, inst: Instance, disk_gb: int | None = None) -> None:
