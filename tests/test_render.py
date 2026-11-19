@@ -194,6 +194,12 @@ def test_the_firewall_check_runs_every_minute_from_boot_on_and_logs_only_what_it
 def test_container_profile_limits_and_isolation():
     profile = json.loads(render.profile(Settings(model="m1", allowed_models=("m1",), lan_address="10.0.0.5",
                                                  container_cpu=3, container_memory_mb=6144, container_disk_gb=40)))
+    # What the kernel would show every container of the others and the server: the other instances' disks (their
+    # names, sizes, use, reads and writes), the server's memory and how busy it is. Reads only, and not logged.
+    hidden = profile["config"].pop("raw.apparmor").splitlines()
+    assert {"deny /sys/devices/**/block/** r,", "deny /sys/fs/btrfs/** r,", "deny /proc/partitions r,",
+            "deny /sys/devices/system/memory/** r,", "deny /proc/pressure/** r,", "deny /proc/vmstat r,"} <= set(hidden)
+    assert all(line.startswith("deny /") and line.endswith(" r,") for line in hidden)
     assert profile["config"] == {
         "boot.autostart": "true", "limits.cpu": "3", "limits.memory": "6144MiB", "limits.processes": "2000",
         "security.idmap.isolated": "true", "security.nesting": "true", "security.privileged": "false"}

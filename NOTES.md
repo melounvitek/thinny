@@ -201,6 +201,18 @@ Debian 13, kernel 6.12, Incus 6.0.4 (`incus-base`), Hermes v0.23.0 -> v0.23.1. A
   --storage` gives a root disk without one. A pool unpacks the image again (about 190 MB), and
   Incus deletes that with the pool. `/1.0/storage-pools/<pool>/resources` has the used and total
   bytes `df` shows in the container, also while it is stopped.
+- What a container still saw of the server and the others (2026-11-19, the test server, LXCFS on): its
+  own CPUs and memory in `/proc` (LXCFS), but the server's memory in `/sys/devices/system/node` and
+  `/sys/devices/system/memory`, its 16 CPU folders in `/sys/devices/system/cpu`, its pressure in
+  `/proc/pressure`, memory and CPU counters in `/proc/vmstat`, `zoneinfo`, `buddyinfo`, `schedstat`,
+  `interrupts` and `softirqs`, every disk's size in `/proc/partitions` and its reads and writes in
+  `/sys/block/*/stat`, and the root filesystem's writes in `/sys/fs/ext4`. With a pool each, also the
+  others': their pool files (`thinny-<name>.img`) in `/sys/block`, and the pools' names (their btrfs
+  labels) and use in `/sys/fs/btrfs`. `df` on `/etc/hermes` and `/var/log/thinny` showed the
+  server's disk. Not what is on the others' disks: there are no `/dev/loop*` nodes. `deny <path> r,`
+  lines in the profile's `raw.apparmor` hide those files, but the CPU folders and the server's disk
+  size: `incus profile edit` applied them to running containers, root in a container cannot lift
+  them, they log nothing, and Docker inside still ran `hello-world` (workstation).
 - With the admin's forward-chain lines removed, `instance add` hung in apt for over 15 minutes
   (apt neither fails nor gives up without a network): now a DNS probe fails it in 40 s.
 - A running gateway got the `docker` group only after `incus restart` of its container.
@@ -652,6 +664,8 @@ own), through `sudo -n` there. The instance: Webapp, local access, no group, loc
   was flushed on the workstation).
 - A disk cannot shrink (nor can a pool): a smaller one means moving the container into a new pool by
   hand.
+- Instances still see the server's number of CPUs, and the size and use of its disk through the
+  folders thinny mounts into them (the policy and the access trace).
 - Alerting from the server itself: the dashboard sends none, and the watchdog runs off-server.
 - The dashboard on Debian 13 and Ubuntu 24.04, and a Grafana upgrade by unattended upgrades.
 - Subscription usage on the dashboard is untested on a server: a day with a ChatGPT and a Claude instance
