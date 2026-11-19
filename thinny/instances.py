@@ -720,8 +720,10 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
             if not s.model_lock:   # else the lock's: its group's, or its Hermes's default for its provider
                 s = dataclasses.replace(s, model=str(s.hermes["model"]["default"]) if "model.default" in pinned_keys(s)
                                         else hermes_default_model(name, s.model_provider))
-            # Piper (the phone's voice) speaks slowly at its own speed; lower is faster.
+            # Piper (the phone's voice) speaks slowly at its own speed; lower is faster. In the Webapp's
+            # chats, the Claude plugin (0.4) uses Claude Code's login only from a directory its setting names.
             set_config(s, name, {"display.language": s.language, "tts.piper.length_scale": "0.65",
+                                 f"plugins.entries.{CLAUDE_PROVIDER}.settings.claude_config_dir": f"/home/{name}/.claude",
                                  **starting_model(s)})
             seed_ui(s, name)
         password = ensure_sign_in(inst)

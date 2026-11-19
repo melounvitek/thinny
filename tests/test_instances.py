@@ -303,6 +303,8 @@ def test_a_new_instance_gets_its_own_container_with_hermes(incus):
         assert incus.ran(f"hermes config set {setting}")
     assert incus.where(instances.DEFAULT_MODEL) > next(i for i, c in enumerate(incus.calls) if "hermes-install.sh" in c)
     assert incus.ran("hermes config set tts.piper.length_scale 0.65")   # Piper's normal speed is slow
+    assert incus.ran("hermes config set plugins.entries.claude-subscription-directsdk-experimental.settings"
+                     ".claude_config_dir /home/alice/.claude")   # where `login` signs Claude Code in
     # network before packages, packages before the account, model guard into the finished checkout
     assert incus.index(f"incus exec alice -- {MARK} sh -c cat > /etc/systemd/network/eth0.network") \
         < incus.index(f"incus exec alice -- {MARK} sh -c export DEBIAN_FRONTEND") \
