@@ -575,8 +575,10 @@ installed from (`git pull --ff-only`) and, on a new commit, runs its `install.sh
 applies `config.toml`. If that fails, the run stops there. A private clone needs read access
 without a password, such as a deploy key.
 
-Then it installs the latest stable Hermes release once it is `min_release_age_hours` old. It
-updates one instance at a time and stops at the first failure; the next run finishes the job.
+Then it installs the latest stable Hermes release once it is `min_release_age_hours` old, with
+the plugins from Hermes's catalog (the Claude plugin, the language pack) at the versions that
+release pins. It updates one instance at a time and stops at the first failure; the next run
+finishes the job.
 Then the same for WebUI's latest stable release, on the instances that use it. WebUI restarts
 with every gateway restart, which a new Hermes needs.
 With `auto_update = false` the nightly run leaves thinny as it is and only reports a new Hermes

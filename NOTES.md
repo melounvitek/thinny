@@ -310,6 +310,10 @@ Debian 13, Incus 6.0.4, from Incus's stable-6.0 source and **[tested]** on the t
   (hermes-3310) must be in `plugins.enabled`, and its adapter starts only once its env vars
   (`PHONE_PIN`, `PHONE_ALLOWED_CALLERS`) are set **[src]**.
 - hermes-3310 is not in the plugin catalog; the Claude subscription plugin is, pinned by sha.
+  `hermes plugins install <name>` takes the live catalog's sha (from Nous's docs site, built
+  from `main`), not the one in the release's `plugin-catalog/`. On 2026-11-19 (v0.23.2) that
+  was a Claude plugin committed the same day, 80 commits past the release's, which refused
+  every Webapp chat. thinny passes the release's sha with `--ref` **[src]**.
   Hermes's own plugin auto-update (`plugins.auto_apply`) is opt-in and skips `--ref` installs
   **[src]**.
 - Managed `model.*` keys: `hermes config set` and `unset` refuse them (exit 1); `/model` and the
