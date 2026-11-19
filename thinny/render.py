@@ -39,7 +39,7 @@ PLUGINS = (
     # A Claude subscription as model provider, through the Claude Code CLI; pinned by each release's catalog.
     ("claude-subscription-directsdk-experimental", ("claude-subscription-directsdk",)),
     # Calls over a phone line. Not in the catalog, so pinned here.
-    ("hermes-3310", ("https://github.com/melounvitek/hermes-3310", "--ref", "17bfb3f8e670c03a7e647cd1162d48a2570b7dc0")),
+    ("hermes-3310", ("https://github.com/melounvitek/hermes-3310", "--ref", "38c638eb09e7b5942fd954f9fc8c52a5923c0b09")),
 )
 # Changes with PACKAGES and PLUGINS; the next update gives them to every instance that has an older set.
 BUILT_INS = hashlib.sha256(repr((PACKAGES, PLUGINS)).encode()).hexdigest()[:12]
