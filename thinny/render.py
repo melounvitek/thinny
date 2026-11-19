@@ -555,11 +555,11 @@ WantedBy=timers.target
 
 
 def disk_metrics(rows: list[tuple[str, int, int]]) -> str:
-    """The node exporter's file of each instance's disk use: (name, bytes its quota counts, its quota in bytes)."""
-    lines = ["# HELP thinny_instance_disk_used_bytes Bytes the instance's disk quota counts.",
+    """The node exporter's file of each instance's disk use: (name, bytes its disk uses, its size in bytes)."""
+    lines = ["# HELP thinny_instance_disk_used_bytes Bytes the instance's disk uses, compressed.",
              "# TYPE thinny_instance_disk_used_bytes gauge",
              *(f'thinny_instance_disk_used_bytes{{name="{name}"}} {used}' for name, used, _ in rows),
-             "# HELP thinny_instance_disk_quota_bytes The instance's disk quota.",
+             "# HELP thinny_instance_disk_quota_bytes The size of the instance's disk.",
              "# TYPE thinny_instance_disk_quota_bytes gauge",
              *(f'thinny_instance_disk_quota_bytes{{name="{name}"}} {quota}' for name, _, quota in rows)]
     return "\n".join(lines) + "\n"

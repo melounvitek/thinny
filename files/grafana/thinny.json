@@ -55,7 +55,7 @@
    "gridPos": {
     "x": 0,
     "y": 1,
-    "w": 6,
+    "w": 8,
     "h": 7
    },
    "fieldConfig": {
@@ -98,9 +98,9 @@
     "uid": "thinny-prometheus"
    },
    "gridPos": {
-    "x": 6,
+    "x": 8,
     "y": 1,
-    "w": 6,
+    "w": 8,
     "h": 7
    },
    "fieldConfig": {
@@ -151,9 +151,9 @@
     "uid": "thinny-prometheus"
    },
    "gridPos": {
-    "x": 12,
+    "x": 16,
     "y": 1,
-    "w": 6,
+    "w": 8,
     "h": 7
    },
    "fieldConfig": {
@@ -204,51 +204,6 @@
     }
    },
    "id": 4
-  },
-  {
-   "type": "stat",
-   "title": "Storage pool free",
-   "datasource": {
-    "type": "prometheus",
-    "uid": "thinny-prometheus"
-   },
-   "gridPos": {
-    "x": 18,
-    "y": 1,
-    "w": 6,
-    "h": 7
-   },
-   "fieldConfig": {
-    "defaults": {
-     "unit": "bytes",
-     "min": 0
-    },
-    "overrides": []
-   },
-   "targets": [
-    {
-     "refId": "A",
-     "datasource": {
-      "type": "prometheus",
-      "uid": "thinny-prometheus"
-     },
-     "expr": "node_filesystem_avail_bytes{mountpoint=\"/var/lib/incus/storage-pools/default\"}",
-     "legendFormat": "",
-     "instant": true,
-     "range": false
-    }
-   ],
-   "description": "The instances' storage pool, a file on the disk of /: it can also run out when / does.",
-   "options": {
-    "graphMode": "none",
-    "colorMode": "none",
-    "reduceOptions": {
-     "calcs": [
-      "lastNotNull"
-     ]
-    }
-   },
-   "id": 5
   },
   {
    "type": "row",
@@ -353,7 +308,7 @@
   },
   {
    "type": "bargauge",
-   "title": "Disk, share of its quota",
+   "title": "Disk, share of its size",
    "datasource": {
     "type": "prometheus",
     "uid": "thinny-prometheus"
@@ -402,7 +357,7 @@
      "range": false
     }
    ],
-   "description": "The compressed size, which the quota counts.",
+   "description": "The compressed size, as df in it shows it.",
    "options": {
     "orientation": "horizontal",
     "displayMode": "gradient",
@@ -626,10 +581,10 @@
       "uid": "thinny-prometheus"
      },
      "expr": "max(thinny_instance_disk_quota_bytes{name=\"$instance\"})",
-     "legendFormat": "quota"
+     "legendFormat": "size"
     }
    ],
-   "description": "The compressed size, which the quota counts; every 5 minutes.",
+   "description": "The compressed size, as df in it shows it; every 5 minutes.",
    "options": {
     "legend": {
      "displayMode": "list",

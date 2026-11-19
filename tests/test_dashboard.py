@@ -36,7 +36,7 @@ class Server:
         self.masked, self.enabled = set(), set()
         self.served = set()
         self.tailscale = {"BackendState": "Running"}
-        self.containers = {"alice": 30 * 2**30}   # name -> its disk quota
+        self.containers = {"alice": 30 * 2**30}   # name -> the size of its disk
         self.stopped = set()   # containers not running
         # name -> its `hermes usage --json`; none: Hermes got nothing; an error: it did not finish
         self.usage = {}
@@ -91,17 +91,17 @@ class Server:
         elif cmd[:4] == ["incus", "config", "trust", "remove"]:
             self.trust = [entry for entry in self.trust if entry["fingerprint"] != cmd[4]]
         elif cmd[:2] == ["incus", "list"]:
-            return json.dumps([{"name": name, "status": "Stopped" if name in self.stopped else "Running",
-                                "state": {"disk": {"root": {"total": quota}}}}
-                               for name, quota in self.containers.items()]), 0
+            return json.dumps([{"name": name, "status": "Stopped" if name in self.stopped else "Running"}
+                               for name in self.containers]), 0
         elif cmd[:2] == ["incus", "exec"]:   # as the instance's account
             assert cmd[-3:] == ["hermes", "usage", "--json"] and cmd[2] not in self.stopped
             answer = self.usage.get(cmd[2], "")
             if isinstance(answer, CommandError):
                 raise answer
             return answer, 0 if answer else 1
-        elif cmd[:3] == ["btrfs", "qgroup", "show"]:
-            return f"Qgroupid Referenced Exclusive Path\n0/257 {2**30} {2**29} {cmd[-1]}\n", 0
+        elif cmd[:2] == ["incus", "query"]:   # /1.0/storage-pools/thinny-NAME/resources: its pool, as df in it
+            size = self.containers[cmd[2].split("/")[3].removeprefix("thinny-")]
+            return json.dumps({"space": {"used": 2**30, "total": size}}), 0
         elif cmd[:2] == ["systemctl", "mask"]:
             self.masked |= {unit for unit in cmd[2:] if unit != "--now"}
             self.enabled -= self.masked
@@ -368,7 +368,7 @@ def test_the_timer_writes_the_disk_use_of_every_instance_with_a_container(server
     assert dashboard.DISK_METRICS.read_text() == \
         render.disk_metrics([("alice", 2**30, 30 * 2**30), ("bob", 2**30, 10 * 2**30)])
 
-    srv.fails.add("btrfs qgroup show")
+    srv.fails.add("incus query /1.0/storage-pools/")
     assert cli.main(["metrics"]) == 1   # not a 0: the last file stays, and grows old
     assert "bob" in dashboard.DISK_METRICS.read_text()
 

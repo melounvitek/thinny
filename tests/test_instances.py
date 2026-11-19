@@ -132,6 +132,11 @@ class Incus:
         elif cmd[:3] == ["incus", "config", "unset"]:
             if self.containers[cmd[3]].get("config", {}).pop(cmd[4], None) is None:
                 return f"Error: Can't unset key '{cmd[4]}', it's not currently set", 1
+        elif cmd[:2] == ["incus", "query"] and cmd[2].startswith("/1.0/storage-pools/"):   # .../NAME/resources
+            p = self.pools.get(cmd[2].split("/")[3])
+            if p is None:
+                return "Error: Storage pool not found", 1
+            return json.dumps({"inodes": {"total": 0, "used": 0}, "space": {"used": p["used"], "total": p["size"]}}), 0
         elif cmd[:2] == ["incus", "query"]:   # /1.0/instances/NAME
             return json.dumps({"devices": self.containers[cmd[2].rsplit("/", 1)[1]]["devices"]}), 0
         elif cmd[:4] == ["incus", "config", "device", "add"]:
@@ -167,11 +172,6 @@ class Incus:
             if self.containers[cmd[2]]["state"] != "RUNNING":
                 return "Error: Instance is not running", 1
             return self.inside(self.containers[cmd[2]], cmd[cmd.index("--") + 1:], input)
-        elif cmd[:3] == ["btrfs", "qgroup", "show"]:   # what the instance's disk quota counts
-            name = cmd[-1].rsplit("/", 1)[1]
-            used = self.containers[name].get("used", 2**29) // (1 if "--sync" in cmd else 4)   # or stale
-            return ("Qgroupid    Referenced    Exclusive   Path \n--------    ----------    ---------   ---- \n"
-                    f"0/257       {used}   {used // 2}   containers/{name}\n"), 0
         return "", 0
 
     def inside(self, c, cmd, input=None):
@@ -547,12 +547,14 @@ def server_disk(monkeypatch, total):
 def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_path):
     reg = registry()
     reg.instances["dave"] = Instance("dave", 9123, "lan", state="active", frontend="webui")
-    disk = {"root": {"total": 30 * 2**30}}
     incus.containers = {
-        "alice": {"state": "RUNNING", "config": {"limits.cpu": "2"}, "used": 4 * 3 * 2**30,   # btrfs's stale count: 3 GiB
-                  "incus_state": {"cpu": {"usage": 0}, "memory": {"usage": 3 * 2**30, "total": 4 * 2**30}, "disk": disk}},
-        "bob": {"state": "STOPPED", "used": 4 * 2**30, "incus_state": {"disk": disk}},
+        "alice": {"state": "RUNNING", "config": {"limits.cpu": "2"},
+                  "incus_state": {"cpu": {"usage": 0}, "memory": {"usage": 3 * 2**30, "total": 4 * 2**30}}},
+        "bob": {"state": "STOPPED", "incus_state": {}},
     }   # carol has no container
+    # what df shows in each container: its own pool's use and size
+    incus.pools = {f"thinny-{name}": {"size": 30 * 2**30, "used": used * 2**30}
+                   for name, used in (("alice", 3), ("bob", 1), ("dave", 1))}
     clock = [0.0]
     read, expected, sampling = set(), set(), threading.Condition()
 
@@ -565,7 +567,7 @@ def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_
             return result
         return wrapper
     monkeypatch.setattr(instances, "gateway_active", watched(instances.gateway_active))
-    monkeypatch.setattr(instances, "disk_used", watched(instances.disk_used))
+    monkeypatch.setattr(instances, "disk_use", watched(instances.disk_use))
     monkeypatch.setattr(instances, "env_values", watched(instances.env_values))
     unreadable = {"/home/dave/.hermes/.env": b"\xff"}   # its users' .env, not text
 
@@ -574,8 +576,8 @@ def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_
             assert sampling.wait_for(lambda: expected <= read, timeout=5)
         clock[0] += seconds
         incus.containers["alice"]["incus_state"]["cpu"]["usage"] += 10**9   # one of its two CPUs busy
-        incus.containers["dave"] = {"state": "RUNNING", "used": 4 * 2**30, "files": unreadable,   # started meanwhile
-                                    "incus_state": {"memory": {"usage": 2**29, "total": 4 * 2**30}, "disk": disk}}
+        incus.containers["dave"] = {"state": "RUNNING", "files": unreadable,   # started meanwhile
+                                    "incus_state": {"memory": {"usage": 2**29, "total": 4 * 2**30}}}
     monkeypatch.setattr(instances, "time", types.SimpleNamespace(sleep=sleep, monotonic=lambda: clock[0]))
     # Of alice's 3 GiB, 2 GiB are file cache. dave has no cgroup there: Incus's usage.
     monkeypatch.setattr(instances, "CGROUPS", tmp_path / "cgroup")
@@ -587,7 +589,7 @@ def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_
     reg.get("alice").mailbox = "alice@example.com"
     incus.containers["alice"]["files"] = {"/home/alice/.hermes/.env": 'SIP_SERVER="sip.odorik.cz"\nSIP_USER="123456"\n'}
     reg.get("alice").url, reg.get("dave").url = "https://192.0.2.10:9120/", "https://192.0.2.10:9123/"
-    readers = ("gateway_active", "disk_used", "env_values")
+    readers = ("gateway_active", "disk_use", "env_values")
     expected.update((reader, name) for reader in readers for name in ("alice", "bob"))
     instances.list_instances(reg)
     assert capsys.readouterr().out.splitlines() == [
