@@ -184,6 +184,9 @@ class Incus:
             cmd = list(itertools.dropwhile(lambda a: "=" in a, cmd[cmd.index("-i") + 1:]))
         if cmd[:2] == ["id", "-u"]:
             return "", 0 if c["account"] else 1
+        if cmd[0] == "cat" and "/hermes-agent/plugin-catalog/" in cmd[1]:   # the release's catalog
+            plugin = cmd[1].rsplit("/", 1)[1].removesuffix(".yaml")
+            return (f"name: {plugin}\nsha: {PINS[plugin]}\n", 0) if plugin in PINS else ("", 1)
         if cmd[0] == "cat":
             return c.get("files", {}).get(cmd[1], ""), 0
         if cmd[:2] == ["sh", "-c"] and "git fetch" in cmd[2] and c.get("github_down"):
@@ -260,6 +263,7 @@ class Incus:
 S = Settings(model="m1", allowed_models=("m1",), access_default="local", language_pack="hermes-lang-cs")
 LOCKED = dataclasses.replace(S, model_lock=True)
 MARK = " ".join(system.INTERNAL)   # on thinny's commands in containers
+PINS = {"hermes-lang-cs": "1" * 40, "claude-subscription-directsdk": "2" * 40}   # of the release's catalog plugins
 
 
 @pytest.fixture
@@ -307,7 +311,8 @@ def test_a_new_instance_gets_its_own_container_with_hermes(incus):
     assert (trace.DIR / "alice").stat().st_mode & 0o777 == 0o755   # for its account too
     assert incus.ran("useradd --create-home --shell /bin/bash --uid 1000 --groups sudo alice")
     assert incus.ran("bash /tmp/hermes-install.sh --channel stable --commit c0ffee --non-interactive")
-    assert incus.ran("hermes plugins install hermes-lang-cs --force --yes-deps --enable")
+    # catalog plugins at the release's pins, not the live catalog's
+    assert incus.ran(f"hermes plugins install hermes-lang-cs --ref {PINS['hermes-lang-cs']} --force --yes-deps --enable")
     # the built-in plugins and what they need: Docker for the phone plugin, Claude Code for the subscription
     packages = incus.calls[incus.index(f"incus exec alice -- {MARK} sh -c export DEBIAN_FRONTEND")].split()
     assert {"docker.io", "docker-cli", "gettext-base"} <= set(packages)   # without recommends: no docker-cli
@@ -316,7 +321,8 @@ def test_a_new_instance_gets_its_own_container_with_hermes(incus):
     claude = next(i for i, c in enumerate(incus.calls) if "curl -fsSL https://claude.ai/install.sh | bash" in c)
     assert claude < next(i for i, c in enumerate(incus.calls) if c.endswith(" claude --version")) \
         < next(i for i, c in enumerate(incus.calls) if "hermes plugins install claude-subscription-directsdk " in c)
-    assert incus.ran("hermes plugins install claude-subscription-directsdk --force --yes-deps --enable")
+    assert incus.ran(f"hermes plugins install claude-subscription-directsdk --ref {PINS['claude-subscription-directsdk']} "
+                     "--force --yes-deps --enable")
     assert incus.ran("hermes pm install --extra piper")   # the phone plugin's packages, whatever is turned on
     assert incus.ran("hermes plugins install https://github.com/melounvitek/hermes-3310 --ref ")
     # without the model lock, it starts on its Hermes's default for its provider, not the server's model

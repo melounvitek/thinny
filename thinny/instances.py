@@ -420,6 +420,12 @@ def install_hermes(s: Settings, name: str, commit: str, enable: bool) -> None:
     plugins = ([(s.language_pack,)] if s.language_pack else []) + [args for _, args in render.PLUGINS]
     with step("  plugins"):
         for args in plugins:
+            if "--ref" not in args:   # a catalog plugin: at the commit this release pins, not the live catalog's latest
+                catalog = str(home(name) / "hermes-agent/plugin-catalog" / f"{args[0]}.yaml")
+                pin = re.search(r"^sha: *([0-9a-f]{40}) *$", read_user_file(name, catalog), re.MULTILINE)
+                if not pin:
+                    raise CommandError(f"{name}: its Hermes pins no commit of {args[0]} in {catalog}")
+                args = (*args, "--ref", pin[1])
             hermes(name, ["plugins", "install", *args, "--force", "--yes-deps", "--enable" if enable else "--no-enable"],
                    timeout=1800)
         hermes(name, ["pm", "gc"], check=False, timeout=600)
