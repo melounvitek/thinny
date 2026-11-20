@@ -795,7 +795,7 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
           else "  Password: unchanged (reset with: thinny instance reset-password " + name + ")")
     _print_access_hint(s, inst)
     if inst.moved:
-        print(f"Next: if {name} did not use {s.model_provider} on its old server, sign it in: "
+        print(f"Next: if {name} did not use {s.model_provider} before, sign it in: "
               f"thinny instance login {name}")
     else:
         print(f"Next: sign {name} in to {s.model_provider} before handing over: thinny instance login {name}")

@@ -446,10 +446,13 @@ def restore_all(s: Settings, reg: Registry, source: str | None = None) -> None:
         write_file(RESTORE, json.dumps(marker) + "\n", 0o600)
     run_name = marker["run"]
     s, reg = settings.load(settings.CONFIG_TOML), Registry.load()   # the old server's
+    fix = "in the restored config.toml): correct it with thinny config edit, then run thinny backup restore --all again"
     if not (NETWORK_INTERFACES / s.network_interface).exists():
-        raise CommandError(f"this server has no network interface {s.network_interface} (network.interface in the "
-                           "restored config.toml): correct it with thinny config edit, then run thinny backup "
-                           "restore --all again")
+        raise CommandError(f"this server has no network interface {s.network_interface} (network.interface {fix}")
+    # Caddy binds the LAN address, which a new server may not have.
+    if any(inst.access == "lan" for inst in reg.current()) and \
+            f" {s.lan_address}/" not in run(["ip", "-o", "address", "show"]).stdout:
+        raise CommandError(f"this server does not have the address {s.lan_address} (access.lan_address {fix}")
     apply.apply(s)   # firewall, profile and units as the restored config.toml says, before any container starts
     names = archives(s)
     for inst in sorted(reg.instances.values(), key=lambda inst: inst.port):
@@ -466,8 +469,7 @@ def restore_all(s: Settings, reg: Registry, source: str | None = None) -> None:
     with server_files(s, run_name) as root:
         restore_ca(s, reg, root)
     RESTORE.unlink()
-    print(f"This server is back as it was in {run_name}. Check access.lan_address in config.toml if its LAN "
-          "address changed (thinny config edit). On the backup machine, delete the old server's line in "
+    print(f"This server is back as it was in {run_name}. On the backup machine, delete the old server's line in "
           "~/.ssh/authorized_keys.")
 
 

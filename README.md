@@ -700,11 +700,11 @@ thinny backup restore alice --from 2026-11-18T03:00:12   # a run from thinny bac
 - It brings back `config.toml`, `secrets.env`, the groups, the access traces and the certificate
   authority, and every instance at its old port and address, with everything in it, at the Hermes
   release of the backup. Disabled instances stay disabled.
-- If it stops halfway, run it again. A `config.toml` that names a network interface the new server
-  lacks stops it before the instances: correct it with `thinny config edit`, then run it again.
-- Then check `access.lan_address` if the server's LAN address changed, point DNS or your tunnel at it
-  for `url` instances, and on the backup machine delete the old server's line in
-  `~/.ssh/authorized_keys` (ending in `thinny-backup@<old hostname>`).
+- If it stops halfway, run it again. A `config.toml` that names a network interface, or for `lan`
+  instances a LAN address, the new server lacks stops it before the instances: correct it with `thinny
+  config edit`, then run it again.
+- Then point DNS or your tunnel at the new server for `url` instances, and on the backup machine
+  delete the old server's line in `~/.ssh/authorized_keys` (ending in `thinny-backup@<old hostname>`).
 - Not in the backups: the dashboard's history and your tunnel's settings. Mailboxes and Telegram bots
   live outside the server and work on.
 

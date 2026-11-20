@@ -80,6 +80,8 @@ class Machine:
             res = self.server.run(["incus", "import", "-", cmd[-2], "--storage", cmd[-1], "--quiet"], check=False,
                                   input=self.archives[cmd[-3]]["data"].decode())
             return res.stdout, res.stderr, res.returncode
+        elif cmd[:3] == ["ip", "-o", "address"]:   # this server's
+            return "2: eth0    inet 192.168.1.20/24 brd 192.168.1.255 scope global eth0\n", "", 0
         elif cmd[0] == "du":
             return f"{self.sizes.get(Path(cmd[-1]).name, 2**20)}\t{cmd[-1]}\n", "", 0
         elif self.server:
@@ -730,3 +732,16 @@ def test_a_restored_config_naming_an_interface_this_server_lacks_stops_before_th
     (tmp_path / "net" / "eth0").mkdir()   # once thinny config edit corrected it
     backup.restore_all(S, Registry.load())
     assert Registry.load().get("alice").state == "active"
+
+
+def test_with_lan_instances_a_restored_lan_address_this_server_lacks_stops_before_the_instances(old_server, nas,
+                                                                                               incus, tmp_path):
+    reg = Registry.load()
+    reg.get("alice").access = "lan"
+    reg.save()
+    settings.CONFIG_TOML.write_text('[access]\ndefault = "local"\nlan_address = "192.168.1.10"\n'
+                                    '[backup]\ntarget = "you@nas:thinny-backups"\n')
+    backup.create(S, reg)
+    with pytest.raises(CommandError, match="this server does not have the address 192.168.1.10"):
+        backup.restore_all(S, new_server(incus, tmp_path))
+    assert not incus.containers
