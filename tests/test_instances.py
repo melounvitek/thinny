@@ -647,7 +647,7 @@ def chatgpt_auth(*emails):
 
 
 def test_usage_shows_each_active_instances_subscription_limits_in_the_servers_time(incus, capsys, prague):
-    names = ["alice", "bob", "carol", "dave", "erin", "frank", "gina", "hank"]
+    names = ["alice", "bob", "carol", "dave", "erin", "frank", "gina", "hank", "ivy"]
     reg = Registry({n: Instance(n, 9120 + i, "lan", state="active") for i, n in enumerate(names)})
     reg.get("hank").state = "disabled"
     reg.get("bob").lock, reg.get("bob").lock_provider = ["claude-opus-5-5"], instances.CLAUDE_PROVIDER
@@ -668,6 +668,8 @@ def test_usage_shows_each_active_instances_subscription_limits_in_the_servers_ti
     incus.containers["frank"] |= {"hermes_config": claude, "usage": usage_json(reason="Claude Code did not answer in time"),
                                   "claude_status": json.dumps({"loggedIn": True, "email": "frank@example.com"})}
     incus.containers["gina"]["usage"] = CommandError("hermes usage: timed out after 20 s")
+    # A plan with only a weekly limit
+    incus.containers["ivy"]["usage"] = usage_json(("Weekly", 42, "2026-11-25T10:00:00+00:00"))
     instances.usage(S, reg)
     assert capsys.readouterr().out.splitlines() == [
         "NAME   PROVIDER  ACCOUNT            5H           WEEK",
@@ -678,6 +680,7 @@ def test_usage_shows_each_active_instances_subscription_limits_in_the_servers_ti
         "erin   ChatGPT   erin@example.com   ?",
         "frank  Claude    frank@example.com  Claude Code did not answer in time",
         "gina   ChatGPT   -                  ?",
+        "ivy    ChatGPT   -                  -            42% → Wed 11:00",
     ]
     assert incus.ran(f"hermes usage --json --provider {instances.CLAUDE_PROVIDER}")
     assert not incus.ran("exec hank")
