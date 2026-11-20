@@ -4,11 +4,17 @@ server's own state, nightly before the update, and restores from them (README, B
 thinny's own SSH key there runs only `borg serve --append-only`, so a server broken into cannot delete the backups
 for good: they come back until the backup machine's monthly cleanup (its crontab) compacts the repository. The
 repository's key is encrypted with one passphrase, which the admin keeps; init leaves a copy of that key beside the
-repository, out of the restricted key's reach, in case a server broken into replaces the one in it."""
+repository, out of the restricted key's reach, in case a server broken into replaces the one in it.
+
+A nightly run makes one archive per container, `<run>.instance.<name>`, and then `<run>.server` with the server's
+settings and state: a run without it is incomplete, and the next one deletes what it left. `<run>` is its local
+time, ISO 8601."""
 
 from __future__ import annotations
 
+import datetime as dt
 import getpass
+import json
 import posixpath
 import secrets
 import shlex
@@ -19,15 +25,20 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import settings
+from . import export, host, instances, settings, update
+from .registry import Instance, Registry
 from .settings import Settings, secret
-from .system import CommandError, log, run, write_file
+from .system import STATE_DIR, CommandError, log, run, step, write_file
 
 KEY = settings.CONFIG_TOML.parent / "backup-key"   # thinny's SSH key on the backup machine, with KEY.pub beside it
 KNOWN_HOSTS = settings.CONFIG_TOML.parent / "backup-known-hosts"   # the backup machine's host key, confirmed at init
 PASSPHRASE = "THINNY_BACKUP_PASSPHRASE"
 LOCK_WAIT = "600"   # seconds a borg command waits for another's lock, such as the monthly cleanup's
 NO_BORG = 3   # the exit code of a remote step that lacks a command there
+STATUS_FILE = STATE_DIR / "backup-status.json"   # the last run's; any account may read it (extras/nightly-watch)
+KEEP = ["--keep-daily", "7", "--keep-weekly", "4", "--keep-monthly", "6"]
+ARCHIVE_TIMEOUT = 6 * 3600   # a large container's
+RUN_GLOB = "????-??-??T??:??:??"   # a run's name
 
 
 def target(s: Settings) -> tuple[str, str]:
@@ -51,7 +62,7 @@ def borg(s: Settings, *args: str, passphrase: str | None = None, **kw) -> subpro
     env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME": "/root", "LANG": "C.UTF-8",
            "BORG_REPO": s.backup_target, "BORG_RSH": shlex.join(["ssh", *ssh_options()]),
            "BORG_PASSPHRASE": secret(PASSPHRASE) if passphrase is None else passphrase}
-    return run(["borg", *args], env=env, **kw)
+    return run(["borg", args[0], "--lock-wait", LOCK_WAIT, *args[1:]], env=env, **kw)
 
 
 def init(s: Settings) -> None:
@@ -185,3 +196,118 @@ def save_passphrase(passphrase: str) -> None:
     lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     lines = [line for line in lines if line.partition("=")[0].strip() != PASSPHRASE] + [f"{PASSPHRASE}={passphrase}"]
     write_file(path, "\n".join(lines) + "\n", 0o600)
+
+
+def create(s: Settings, reg: Registry, scheduled: bool = False) -> int:
+    """Back up every container (without stopping it: Incus exports a snapshot) and then the server, then delete
+    what earlier failed runs left and old backups. 1 when it failed: thinny-update.service runs it before the nightly
+    update, which then waits for a run that worked."""
+    if not s.backup_target and scheduled:
+        return 0
+    target(s)
+    started = dt.datetime.now().replace(microsecond=0)
+    run_name = started.isoformat()
+    timestamp = started.astimezone(dt.UTC).replace(tzinfo=None).isoformat()   # borg takes UTC: buckets per run
+    log(f"=== thinny backup {run_name}")
+    try:
+        states, sizes = instances.container_states(), instances.pool_sizes()
+        # Also disabled ones, which keep their data, and pending ones with a container.
+        containers = sorted((inst for inst in reg.instances.values() if inst.name in states), key=lambda i: i.port)
+        try:
+            for inst in containers:
+                archive(s, inst, f"{run_name}.instance.{inst.name}", timestamp, sizes[instances.pool_of(inst.name)])
+            ca = host.caddy_root_ca().parent   # the office PCs trust it
+            # Not the new server's own key there, nor exports, which are their users'.
+            excluded = [KEY, f"{KEY}.pub", KNOWN_HOSTS, export.EXPORTS]
+            borg(s, "create", "--timestamp", timestamp, *[f"--exclude=pp:{path}" for path in excluded],
+                 f"::{run_name}.server", str(settings.CONFIG_TOML.parent), str(STATE_DIR),
+                 *([str(ca)] if ca.exists() else []), timeout=3600)
+        except BaseException:
+            borg(s, "delete", "--glob-archives", f"{run_name}.*", check=False, timeout=3600)
+            raise
+        tidy(s)
+        result, detail = "ok", f"{len(containers)} instances and the server"
+    except Exception as e:  # noqa: BLE001 - any failure must end as FAILED
+        result, detail = "FAILED", str(e) or type(e).__name__
+    log(f"{result}: {detail}")
+    last = started if result == "ok" else last_success()
+    status = {"time": started.isoformat(), "result": result, "detail": detail,
+              "last_success": last.isoformat() if last else None}
+    write_file(STATUS_FILE, json.dumps(status, ensure_ascii=False, indent=1) + "\n")
+    return 1 if result == "FAILED" else 0
+
+
+def archive(s: Settings, inst: Instance, name: str, timestamp: str, disk: int) -> None:
+    """The instance's container as Incus exports it, uncompressed so that borg stores only what changed. Its comment
+    has what a restore needs: the Hermes release its server was at (or going to), its built-ins and disk size."""
+    check_room(inst.name)
+    tag, commit = (update.UNFINISHED.read_text().split()[:2] if update.UNFINISHED.exists() else
+                   host.release() or ("", ""))
+    comment = json.dumps({"release": [tag, commit], "built_ins": inst.built_ins, "disk_gb": disk // 2**30})
+    with step(f"{inst.name}: backup"):
+        borg(s, "create", "--timestamp", timestamp, "--comment", comment, "--content-from-command",
+             "--stdin-name", f"{inst.name}.tar", f"::{name}", "--",
+             "incus", "export", inst.name, "-", "--instance-only", "--compression", "none", "--quiet",
+             timeout=ARCHIVE_TIMEOUT)
+
+
+def check_room(name: str) -> None:
+    """Refuse a container Incus has no room to export: it writes the whole archive to the server's disk before borg
+    reads it, and never into the last tenth of that disk, where the instances' pools grow."""
+    folder = Path(instances.SERVER_DISK) / "storage-pools" / instances.pool_of(name) / "containers" / name
+    size = int(run(["du", "-sb", str(folder)], timeout=3600).stdout.split()[0])   # uncompressed
+    disk = shutil.disk_usage(instances.SERVER_DISK)
+    room = max(0, disk.free - disk.total * export.KEEP_FREE)
+    if room < size:
+        raise CommandError(f"the server needs {size / 2**30:.1f} GiB free on top of 10% of its disk to back up {name}, "
+                           f"for the archive Incus writes first; it has {room / 2**30:.1f} GiB")
+
+
+def archives(s: Settings) -> list[str]:
+    return [a["name"] for a in json.loads(borg(s, "list", "--json", timeout=600).stdout)["archives"]]
+
+
+def tidy(s: Settings) -> None:
+    """Delete what failed runs left, then old backups: KEEP of each instance's and the server's, and the state
+    before a restore for 30 days. The space comes free where nothing restricts the key, such as a Hetzner Storage
+    Box; elsewhere at the backup machine's monthly cleanup."""
+    complete, members = runs(archives(s))
+    for unfinished in sorted(set(members) - set(complete)):
+        borg(s, "delete", "--glob-archives", f"{unfinished}.instance.*", timeout=3600)
+    for name in sorted({name for names in members.values() for name in names}):
+        borg(s, "prune", *KEEP, "--glob-archives", f"*.instance.{name}", timeout=3600)
+    borg(s, "prune", *KEEP, "--glob-archives", f"{RUN_GLOB}.server", timeout=3600)
+    borg(s, "prune", "--keep-within", "30d", "--glob-archives", "before-restore.*", timeout=3600)
+    borg(s, "compact", timeout=6 * 3600)   # with --append-only it frees nothing, and says nothing
+
+
+def runs(names: list[str]) -> tuple[list[str], dict[str, list[str]]]:
+    """The complete runs among these archives, and each run's instances. A run's name has no dot; an instance named
+    server is `<run>.instance.server`."""
+    complete, members = [], {}
+    for name in names:
+        run_name, _, rest = name.partition(".")
+        if rest == "server":
+            complete.append(run_name)
+        elif rest.startswith("instance."):
+            members.setdefault(run_name, []).append(rest.removeprefix("instance."))
+    return sorted(complete), members
+
+
+def last_success() -> dt.datetime | None:
+    try:
+        last = json.loads(STATUS_FILE.read_text(encoding="utf-8")).get("last_success")
+    except FileNotFoundError:
+        return None
+    return dt.datetime.fromisoformat(last) if last else None
+
+
+def list_backups(s: Settings) -> None:
+    """Each complete run with its instances, and the instances' states before a restore: what restore takes."""
+    target(s)
+    names = archives(s)
+    complete, members = runs(names)
+    for run_name in complete:
+        print(f"{run_name}  {', '.join(sorted(members.get(run_name, []))) or 'no instances'}")
+    for name in sorted(name for name in names if name.startswith("before-restore.")):
+        print(f"{name}  {name.split('.')[1]} as it was before a restore")

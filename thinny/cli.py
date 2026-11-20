@@ -202,8 +202,10 @@ def main(argv: list[str] | None = None) -> int:
     rcv.add_argument("--mailbox", default="")
     rcv.add_argument("--check", action="store_true")
     bkp = sub.add_parser("backup", help="back up every instance and the server now (see README, Backups)")
+    bkp.add_argument("--scheduled", action="store_true", help=argparse.SUPPRESS)   # thinny-update.service, first
     bkp = bkp.add_subparsers(dest="action", metavar="action")
     bkp.add_parser("init", help="set up the backups on the machine in [backup] target (or connect a new server)")
+    bkp.add_parser("list", help="the backups a restore can take")
     sub.add_parser("uninstall", help="remove thinny and every instance, with all their data")
     sub.add_parser("trace")  # without help, so not listed: thinny-trace.service runs it
     sub.add_parser("metrics")  # without help, so not listed: thinny-metrics.timer runs it
@@ -267,6 +269,9 @@ def main(argv: list[str] | None = None) -> int:
             return checks.run(s, Registry.load())
         if command == "status":
             return checks.status(s, Registry.load())
+        if command == "backup list":
+            backup.list_backups(s)
+            return 0
         if command == "instance list":
             instances.list_instances(Registry.load(), a.group)
             return 0
@@ -352,6 +357,8 @@ def main(argv: list[str] | None = None) -> int:
                 mail.connect(s, reg, a.name, a.senders, a.new_password)
             elif command == "instance export":
                 export.export(reg, a.name)
+            elif command == "backup":
+                return backup.create(s, reg, a.scheduled)
             elif command == "backup init":
                 backup.init(s)
             elif command == "instance trace-sheet":

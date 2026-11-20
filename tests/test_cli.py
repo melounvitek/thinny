@@ -824,7 +824,7 @@ def tab(capsys, *words):
     ([""], ["backup", "config", "doctor", "init", "instance", "setup", "status", "uninstall", "update"]),   # not trace
     (["instance", "re"], ["remove", "reset-password", "resize", "restart"]),                      # not receive
     (["instance", "e"], ["email", "export"]),
-    (["backup", ""], ["init"]),
+    (["backup", ""], ["init", "list"]),
     (["instance", "group", ""], ["list", "set"]),
     (["update", "--d"], ["--dry-run"]),
     (["instance", "restart", "--"], ["--help", "--group"]),

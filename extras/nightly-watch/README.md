@@ -15,6 +15,7 @@ with `BatchMode=yes`).
 | Kind | Status file | Healthy results |
 | --- | --- | --- |
 | `hermes-update` | `/var/lib/thinny/update-status.json` | `ok`, `up-to-date`, `waiting`, `available` |
+| `thinny-backup` | `/var/lib/thinny/backup-status.json` | `ok` |
 | `netcup-snapshot` | `status.json` next to its config (set `file`) | `ok` |
 
 Both files look like `{"time": "<ISO 8601>", "result": "...", "detail": "..."}`. A time without
@@ -28,7 +29,7 @@ Copy `config.example.json` and fill in the placeholders.
 - `jobs[].name`: shown in the alert.
 - `jobs[].kind`: one of the kinds above.
 - `jobs[].host`: SSH destination `<user>@<host>`; that user must be able to read the file. Any
-  account on a thinny server can read its update status, so it needs no root SSH.
+  account on a thinny server can read its update and backup status, so it needs no root SSH.
 - `jobs[].file`: the status file; required for `netcup-snapshot`.
 
 ## Cron

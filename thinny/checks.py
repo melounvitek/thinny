@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import dashboard as dash
-from . import host, instances, purelymail, render, settings, system, trace, update
+from . import backup, host, instances, purelymail, render, settings, system, trace, update
 from .registry import Instance, Registry
 from .settings import MONITORING_PORTS, Settings
 
@@ -132,6 +132,27 @@ def update_status(path: Path, now: dt.datetime):
         when = when.astimezone()  # local time
     if now - when > dt.timedelta(hours=48):
         return warn(f"{summary} (over 48 h ago)", "systemctl status thinny-update.timer")
+    return ok(summary)
+
+
+def backups(s: Settings, reg: Registry):
+    if s.backup_target:
+        yield backup_status(dt.datetime.now(dt.UTC))
+
+
+def backup_status(now: dt.datetime):
+    """The last backup, from its status file, and when one last worked: a failure keeps the nightly update waiting."""
+    if not backup.KEY.exists():
+        return fail("backups are on in config.toml, but not set up", "thinny backup init")
+    if not backup.STATUS_FILE.exists():
+        return warn("no backup yet (the nightly update takes one first)", "thinny backup")
+    status = json.loads(backup.STATUS_FILE.read_text(encoding="utf-8"))
+    summary = f"last backup {status['time']}: {status['result']} {status['detail']}"
+    if status["result"] == "FAILED":
+        return fail(f"{summary}\nthe nightly update waits for a backup that works",
+                    "fix what it says, then: thinny backup")
+    if now - dt.datetime.fromisoformat(status["last_success"]).astimezone() > dt.timedelta(hours=36):
+        return fail(f"{summary} (over 36 h ago)", "systemctl status thinny-update.timer; then: thinny backup")
     return ok(summary)
 
 
@@ -412,11 +433,12 @@ def overview(s: Settings, reg: Registry):
     if webui := host.release(host.WEBUI_RELEASE_FILE):
         yield ok(f"WebUI release of the instances that use it: {webui[0]}")
     yield update_status(UPDATE_STATUS, dt.datetime.now(dt.UTC))
+    yield from backups(s, reg)
 
 
 # ---------- runner ----------
 
-CHECKS = [install, tokens, access_trace, mailboxes, prerequisites, firewall, caddy, dashboard]
+CHECKS = [install, tokens, backups, access_trace, mailboxes, prerequisites, firewall, caddy, dashboard]
 INSTANCE_CHECKS = [container, webapp, version, built_ins, bypass]
 # Checks at once. An instance's start Hermes's command line in its container, which takes CPU and memory.
 WORKERS = 4

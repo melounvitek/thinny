@@ -23,6 +23,11 @@ KINDS = {
         "healthy": ["ok", "up-to-date", "waiting", "available"],
         "hint": "ssh {host} tail -40 /var/log/thinny.log",
     },
+    "thinny-backup": {
+        "file": "/var/lib/thinny/backup-status.json",
+        "healthy": ["ok"],
+        "hint": "ssh {host} tail -40 /var/log/thinny.log",
+    },
     "netcup-snapshot": {  # "file" is required in the job: <data dir>/status.json
         "healthy": ["ok"],
         "hint": "ssh {host} tail -20 {dir}/snapshot.log",

@@ -397,8 +397,10 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+# A failed backup stops the update: each update has a backup from just before it to go back to.
+ExecStartPre=/usr/local/sbin/thinny backup --scheduled
 ExecStart=/usr/local/sbin/thinny update --scheduled
-TimeoutStartSec=6h
+TimeoutStartSec=12h
 Nice=10
 """
 
