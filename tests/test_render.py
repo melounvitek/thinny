@@ -276,7 +276,10 @@ def test_disk_metrics_for_the_node_exporter():
 
 
 def test_subscription_usage_for_the_node_exporter():
-    text = render.usage_metrics([("alice", "ChatGPT", "5h", 0.37), ("alice", "ChatGPT", "week", 0.124)])
+    text = render.usage_metrics([("alice", "ChatGPT", "5h", 0.37), ("alice", "ChatGPT", "week", 0.124)],
+                                [("alice", "5h", 1, 2_600_000), ("alice", "week", 2, 3_600_000)])
     assert 'thinny_instance_subscription_used_ratio{name="alice",provider="ChatGPT",window="5h"} 0.37\n' in text
-    assert "# TYPE thinny_instance_subscription_used_ratio gauge\n" in text and text.endswith("} 0.124\n")
-    assert render.usage_metrics([]).count("\n") == 2   # its HELP and TYPE: nobody's usage known
+    assert 'thinny_instance_subscription_used_ratio{name="alice",provider="ChatGPT",window="week"} 0.124\n' in text
+    assert 'thinny_instance_turns{name="alice",window="5h"} 1\n' in text
+    assert "# TYPE thinny_instance_subscription_used_ratio gauge\n" in text and text.endswith("} 3600000\n")
+    assert render.usage_metrics([], []).count("\n") == 6   # their HELP and TYPE: nobody's usage known

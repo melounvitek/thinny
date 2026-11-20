@@ -40,6 +40,7 @@ class Server:
         self.stopped = set()   # containers not running
         # name -> its `hermes usage --json`; none: Hermes got nothing; an error: it did not finish
         self.usage = {}
+        self.activity = {}   # name -> what instances.ACTIVITY says in it; none: it failed
         self.settings = ON   # config.toml's
         self.now = time.time()
         self.answers = []
@@ -93,6 +94,10 @@ class Server:
         elif cmd[:2] == ["incus", "list"]:
             return json.dumps([{"name": name, "status": "Stopped" if name in self.stopped else "Running"}
                                for name in self.containers]), 0
+        elif cmd[:2] == ["incus", "exec"] and instances.ACTIVITY in cmd:   # as the instance's account
+            assert cmd[2] not in self.stopped
+            answer = self.activity.get(cmd[2], "")
+            return answer, 0 if answer else 1
         elif cmd[:2] == ["incus", "exec"]:   # as the instance's account
             assert cmd[-3:] == ["hermes", "usage", "--json"] and cmd[2] not in self.stopped
             answer = self.usage.get(cmd[2], "")
@@ -323,7 +328,7 @@ def test_turning_it_off_takes_back_all_but_the_packages_password_and_history(ser
     srv.answers = ["y"]
     dashboard.apply(dataclasses.replace(ON, dashboard_access="tailscale"), Registry.load())
     srv.served.add(9200)
-    dashboard.USAGE_METRICS.write_text(render.usage_metrics([("alice", "ChatGPT", "week", 0.5)]))
+    dashboard.USAGE_METRICS.write_text(render.usage_metrics([("alice", "ChatGPT", "week", 0.5)], []))
     srv.calls.clear()
     dashboard.apply(S, Registry.load())
     assert not srv.served
@@ -381,6 +386,11 @@ def usage(provider, *windows, reason=None):
                                    for label, used in windows]})
 
 
+def activity(five_hours, week):
+    """What instances.ACTIVITY says: the (turns, tokens) of the last 5 hours and 7 days."""
+    return json.dumps({"5h": five_hours, "week": week})
+
+
 def asked(srv):
     """The instances whose Hermes was asked for its subscription usage."""
     return sorted(call.split()[2] for call in srv.calls if call.endswith("hermes usage --json"))
@@ -408,10 +418,18 @@ def test_the_timer_writes_each_running_instances_share_of_its_subscription_limit
         "jack": usage("openai-codex", ("Session", 1)),
         "kate": usage("openai-codex", ("Weekly", 42)),   # a plan with only a weekly limit
     }
+    # each instance's own, also without an answer from the provider; bob's failed
+    srv.activity = {name: activity((1, 2_600_000), (2, 3_600_000)) for name in names if name != "bob"}
+    srv.activity["dave"] = activity((0, 0), (3, 1_000))
     assert cli.main(["metrics"]) == 0
     assert dashboard.USAGE_METRICS.read_text() == render.usage_metrics([
         ("alice", "ChatGPT", "5h", 0.37), ("alice", "ChatGPT", "week", 0.124),
-        ("bob", "Claude", "5h", 0.81), ("bob", "Claude", "week", 0.64), ("kate", "ChatGPT", "week", 0.42)])
+        ("bob", "Claude", "5h", 0.81), ("bob", "Claude", "week", 0.64), ("kate", "ChatGPT", "week", 0.42)], [
+        *((name, window, *counts) for name in ("alice", "carol") for window, counts in
+          (("5h", (1, 2_600_000)), ("week", (2, 3_600_000)))),
+        ("dave", "5h", 0, 0), ("dave", "week", 3, 1_000),
+        *((name, window, *counts) for name in ("erin", "frank", "gina", "kate") for window, counts in
+          (("5h", (1, 2_600_000)), ("week", (2, 3_600_000))))])
     assert asked(srv) == ["alice", "bob", "carol", "dave", "erin", "frank", "gina", "kate"]   # the provider: Hermes's
     assert "disk_used_bytes{name=\"hank\"}" in dashboard.DISK_METRICS.read_text()
 
@@ -437,7 +455,30 @@ def test_only_thinnys_providers_and_percentages_from_an_instances_hermes_count(s
     }
     assert cli.main(["metrics"]) == 0
     assert dashboard.USAGE_METRICS.read_text() == render.usage_metrics([("hank", "ChatGPT", "5h", 0.0),
-                                                                        ("hank", "ChatGPT", "week", 1.0)])
+                                                                        ("hank", "ChatGPT", "week", 1.0)], [])
+
+
+def test_only_whole_counts_from_an_instances_hermes_home_count(server, monkeypatch):
+    srv = server
+    names = ["alice", "bob", "carol", "dave", "erin", "frank", "gina", "hank"]
+    reg = Registry({name: Instance(name, 9120 + i, "lan", state="active") for i, name in enumerate(names)})
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: reg))
+    srv.containers = {name: 30 * 2**30 for name in names}
+    srv.settings = USAGE
+    # Its users control their Hermes home.
+    srv.activity = {
+        "alice": activity((True, 1), (1, 1)),
+        "bob": activity((1.5, 1), (1, 1)),
+        "carol": activity((-1, 1), (1, 1)),
+        "dave": activity((1, 2**53), (1, 1)),   # past what Prometheus's floats keep exact
+        "erin": json.dumps({"5h": [1]}),
+        "frank": json.dumps([1]),
+        "gina": "[" * 10**5 + "]" * 10**5,   # too deep for Python's JSON
+        "hank": activity((0, 0), (3, 2**53 - 1)),
+    }
+    assert cli.main(["metrics"]) == 0
+    assert dashboard.USAGE_METRICS.read_text() == render.usage_metrics([], [("hank", "5h", 0, 0),
+                                                                            ("hank", "week", 3, 2**53 - 1)])
 
 
 def test_it_asks_once_a_clock_hour_at_the_timers_first_run_in_it(server):
@@ -466,7 +507,7 @@ def test_it_leaves_out_the_instance_whose_hermes_an_update_is_changing(server, m
     assert cli.main(["metrics"]) == 0
     assert asked(srv) == ["alice"]
     assert dashboard.USAGE_METRICS.read_text() == render.usage_metrics([("alice", "ChatGPT", "5h", 0.37),
-                                                                        ("alice", "ChatGPT", "week", 0.12)])
+                                                                        ("alice", "ChatGPT", "week", 0.12)], [])
     update.UNFINISHED.write_text("v0.23.2 abc123\n")   # not on an instance yet
     srv.now = HOUR + 3600
     srv.calls.clear()
@@ -487,7 +528,7 @@ def test_a_round_keeps_only_what_it_got_and_freshens_the_file_also_when_it_stays
     srv.usage["bob"] = ""   # e.g. the provider did not answer
     srv.now = HOUR + 3600
     cli.main(["metrics"])
-    alice = render.usage_metrics([("alice", "ChatGPT", "5h", 0.37), ("alice", "ChatGPT", "week", 0.12)])
+    alice = render.usage_metrics([("alice", "ChatGPT", "5h", 0.37), ("alice", "ChatGPT", "week", 0.12)], [])
     assert dashboard.USAGE_METRICS.read_text() == alice
     srv.now = HOUR + 7200
     cli.main(["metrics"])
@@ -556,18 +597,25 @@ def test_the_dashboard_reads_the_provisioned_prometheus_and_thinnys_disk_file():
 def test_the_dashboard_shows_the_subscription_usage_only_while_thinnys_file_of_it_is_fresh():
     board = json.loads((host.FILES / "grafana/thinny.json").read_text())
     fresh = f' and on() (time() - node_textfile_mtime_seconds{{file="{dashboard.USAGE_METRICS}"}} < 7200)'
+    metrics = ("thinny_instance_subscription_used_ratio", "thinny_instance_turns", "thinny_instance_tokens")
     usage = {panel["title"]: panel for panel in board["panels"]
-             if any("thinny_instance_subscription_used_ratio{" in target["expr"] for target in panel.get("targets", []))}
-    assert list(usage) == ["Weekly subscription limit used", "Subscription limits"]
+             if any(f"{metric}{{" in target["expr"] for target in panel.get("targets", []) for metric in metrics)}
+    assert list(usage) == ["Weekly subscription limit used", "Turns in the last 7 days", "Tokens in the last 7 days",
+                           "Subscription limits", "Turns", "Tokens"]
     exprs = [target["expr"] for panel in usage.values() for target in panel["targets"]]
     assert all(expr.endswith(fresh) for expr in exprs)
     assert {window for expr in exprs for window in re.findall(r'window="(\w+)"', expr)} == set(dashboard.USAGE_WINDOWS)
-    assert 'thinny_instance_subscription_used_ratio{name="alice",provider="ChatGPT",window="week"} 0.5' in \
-        render.usage_metrics([("alice", "ChatGPT", "week", 0.5)])
+    text = render.usage_metrics([("alice", "ChatGPT", "week", 0.5)], [("alice", "week", 3, 1_000)])
+    for metric in ('thinny_instance_subscription_used_ratio{name="alice",provider="ChatGPT",window="week"} 0.5',
+                   'thinny_instance_turns{name="alice",window="week"} 3',
+                   'thinny_instance_tokens{name="alice",window="week"} 1000'):
+        assert metric in text
     # the fleet's in the row of the 10 with the most, the chosen instance's in its row
     rows = {panel["title"]: panel["gridPos"]["y"] for panel in board["panels"] if panel["type"] == "row"}
-    assert rows["Instances: the 10 with the most"] < usage["Weekly subscription limit used"]["gridPos"]["y"] \
-        < rows["Instance $instance"] < usage["Subscription limits"]["gridPos"]["y"]
+    for fleet, chosen in (("Weekly subscription limit used", "Subscription limits"),
+                          ("Turns in the last 7 days", "Turns"), ("Tokens in the last 7 days", "Tokens")):
+        assert rows["Instances: the 10 with the most"] < usage[fleet]["gridPos"]["y"] < rows["Instance $instance"] \
+            < usage[chosen]["gridPos"]["y"]
     assert all('{name="$instance",' in target["expr"] for target in usage["Subscription limits"]["targets"])
     cells = [(x, y) for panel in board["panels"] for grid in [panel["gridPos"]]
              for x in range(grid["x"], grid["x"] + grid["w"]) for y in range(grid["y"], grid["y"] + grid["h"])]

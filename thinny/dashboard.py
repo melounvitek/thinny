@@ -280,9 +280,9 @@ def write_disk_metrics() -> None:
 
 def write_usage_metrics() -> None:
     """With subscription_usage on: how much of their subscription's 5-hour and weekly limits the users of each running
-    instance used, as its Hermes asks the provider, into the node exporter's file. Once a clock hour, at the timer's
-    first run in it: each run shows in the instances' access trace. Four at a time: each starts Hermes, for Claude
-    also Claude Code."""
+    instance used, as its Hermes asks the provider, and their turns and tokens, into the node exporter's file. Once a
+    clock hour, at the timer's first run in it: each run shows in the instances' access trace. Four at a time: each
+    starts Hermes, for Claude also Claude Code."""
     s = load()
     if not (s.dashboard_enabled and s.dashboard_subscription_usage):
         USAGE_METRICS.unlink(missing_ok=True)
@@ -295,7 +295,9 @@ def write_usage_metrics() -> None:
     names = [inst.name for inst in Registry.load().current() if inst.state == "active" and inst.name in running]
     with ThreadPoolExecutor(4) as pool:
         rows = [row for rows in pool.map(_usage_of, names) for row in rows]
-    write_file(USAGE_METRICS, render.usage_metrics(rows))
+        counts = [(name, window, *pair) for name, used in zip(names, pool.map(instances.activity, names)) if used
+                  for window, pair in used.items()]
+    write_file(USAGE_METRICS, render.usage_metrics(rows, counts))
     os.utime(USAGE_METRICS, (now, now))   # the hour this round is for, also when the numbers stay the same
 
 

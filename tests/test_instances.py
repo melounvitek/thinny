@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -240,6 +241,10 @@ class Incus:
             return f"{cmd[3]}: {'logged in' if c.get('signed_in', True) else 'logged out'}\n", 0
         elif cmd[:3] == ["claude", "auth", "status"]:   # its JSON
             return c.get("claude_status", '{"loggedIn": false}'), 0
+        elif cmd[:2] == ["sh", "-c"] and instances.ACTIVITY in cmd:   # run, on the test's Hermes home
+            res = subprocess.run([sys.executable, "-I", "-c", cmd[4], c.get("hermes_home", "/nonexistent")],
+                                 capture_output=True, text=True)
+            return res.stdout, res.returncode
         elif cmd[:2] == ["sh", "-c"] and instances.DEFAULT_MODEL in cmd:
             model = self.default_models.get(input)
             return (f"{model}\n", 0) if model else ("\n", 1)
@@ -672,22 +677,23 @@ def test_usage_shows_each_active_instances_subscription_limits_in_the_servers_ti
     incus.containers["ivy"]["usage"] = usage_json(("Weekly", 42, "2026-11-25T10:00:00+00:00"))
     instances.usage(S, reg)
     assert capsys.readouterr().out.splitlines() == [
-        "NAME   PROVIDER  ACCOUNT            5H           WEEK",
-        "alice  ChatGPT   alice@example.com  37% → 21:00  12% → Thu 09:00",
-        "bob    Claude    bob@example.com    81% → 18:40  64% → Mon 07:00",
-        "carol  Claude    -                  not signed in",
-        "dave   ChatGPT   -                  not signed in",
-        "erin   ChatGPT   erin@example.com   ?",
-        "frank  Claude    frank@example.com  Claude Code did not answer in time",
-        "gina   ChatGPT   -                  ?",
-        "ivy    ChatGPT   -                  -            42% → Wed 11:00",
+        "NAME   PROVIDER  ACCOUNT            TURNS 7D  TOKENS 7D  5H           WEEK",
+        "alice  ChatGPT   alice@example.com  0         0          37% → 21:00  12% → Thu 09:00",
+        "bob    Claude    bob@example.com    0         0          81% → 18:40  64% → Mon 07:00",
+        "carol  Claude    -                  0         0          not signed in",
+        "dave   ChatGPT   -                  0         0          not signed in",
+        "erin   ChatGPT   erin@example.com   0         0          ?",
+        "frank  Claude    frank@example.com  0         0          Claude Code did not answer in time",
+        "gina   ChatGPT   -                  0         0          ?",
+        "ivy    ChatGPT   -                  0         0          -            42% → Wed 11:00",
     ]
     assert incus.ran(f"hermes usage --json --provider {instances.CLAUDE_PROVIDER}")
     assert not incus.ran("exec hank")
     assert not incus.ran("hermes config get model.default")   # only the provider counts
 
     instances.usage(S, reg, "alice")
-    assert capsys.readouterr().out.splitlines()[1:] == ["alice  ChatGPT   alice@example.com  37% → 21:00  12% → Thu 09:00"]
+    assert capsys.readouterr().out.splitlines()[1:] == [
+        "alice  ChatGPT   alice@example.com  0         0          37% → 21:00  12% → Thu 09:00"]
     for name in ("hank", "nobody"):
         with pytest.raises(RegistryError):
             instances.usage(S, reg, name)
@@ -709,11 +715,70 @@ def test_usage_takes_what_an_instances_users_make_hermes_say_as_text_or_a_failur
     }
     instances.usage(S, reg)
     assert capsys.readouterr().out.splitlines()[1:] == [
-        "alice  own[2JINJECTED  -                             Claude Code did not answer in time[2J",   # without control characters
-        "bob    ChatGPT         ?                             ?",
-        "carol  ChatGPT         carol[2J@example.com          37% → 21:00  -",
-        "dave   ChatGPT         d@example.com, d@example.org  ?",
+        "alice  own[2JINJECTED  -                             0         0          Claude Code did not answer in time[2J",   # without control characters
+        "bob    ChatGPT         ?                             0         0          ?",
+        "carol  ChatGPT         carol[2J@example.com          0         0          37% → 21:00  -",
+        "dave   ChatGPT         d@example.com, d@example.org  0         0          ?",
     ]
+
+
+def hermes_home(path, *chats):
+    """A Hermes home at `path`, its Hermes running, with a state.db of these chats: (source, its tokens (input, output,
+    cache reads, cache writes), its messages as (role, hours ago[, uid]), [its model_config]), as Hermes keeps them.
+    A `summary` is a compaction's summary, which Hermes keeps as a message of the user's; messages of one uid are a
+    message and the copies compaction made of it."""
+    path.mkdir()
+    db = sqlite3.connect(path / "state.db")
+    db.execute("PRAGMA journal_mode=WAL")
+    db.executescript("""
+        CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, model_config TEXT,
+            input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0, cache_read_tokens INTEGER DEFAULT 0,
+            cache_write_tokens INTEGER DEFAULT 0);
+        CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, role TEXT NOT NULL,
+            timestamp REAL NOT NULL, _compressed_summary INTEGER NOT NULL DEFAULT 0, message_uid TEXT);""")
+    uids = itertools.count()
+    for i, (source, tokens, messages, *config) in enumerate(chats):
+        db.execute("INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?)",
+                   (str(i), source, json.dumps(config[0]) if config else None, *tokens))
+        db.executemany("INSERT INTO messages (session_id, role, timestamp, _compressed_summary, message_uid) "
+                       "VALUES (?, ?, ?, ?, ?)",
+                       [(str(i), "user" if role == "summary" else role, time.time() - hours * 3600, role == "summary",
+                         uid[0] if uid else f"m{next(uids)}") for role, hours, *uid in messages])
+    db.commit()
+    return db
+
+
+def test_usage_shows_each_instances_turns_and_tokens_of_the_last_7_days(incus, capsys, tmp_path):
+    names = ["alice", "bob", "carol"]
+    reg = Registry({n: Instance(n, 9120 + i, "lan", state="active") for i, n in enumerate(names)})
+    incus.containers = {name: {"state": "RUNNING", "hermes_home": str(tmp_path / name)} for name in names}
+    hermes = hermes_home(
+        tmp_path / "alice",
+        # 4M tokens without the cache reads, over its 4 replies: 3 in the last 7 days, 2 in the last 5 hours. Its
+        # compaction kept the last turn and reply as copies.
+        ("webui", (2_500_000, 1_000_000, 90_000_000, 500_000),
+         [("user", 240), ("assistant", 240), ("user", 72), ("assistant", 72), ("user", 1, "turn"),
+          ("assistant", 1, "reply"), ("summary", 0.9), ("user", 1, "turn"), ("assistant", 1, "reply"),
+          ("assistant", 0.5)]),
+        # a branch of it, which copied its messages, and one turn and reply of its own
+        ("webui", (100_000, 0, 0, 0), [("user", 1, "turn"), ("assistant", 1, "reply"), ("user", 0.2),
+                                       ("assistant", 0.2)], {"_branched_from": "0"}),
+        # subagents' chats, also one from a Telegram turn: their tasks are no turns of the users'
+        ("subagent", (300_000, 100_000, 0, 0), [("user", 1), ("assistant", 1)]),
+        ("telegram", (200_000, 0, 0, 0), [("user", 1), ("assistant", 1)], {"_delegate_from": "0"}),
+        ("telegram", (1_000, 0, 0, 0), [("user", 200), ("assistant", 200)]))
+    # bob has used no chat yet; carol's state.db is not Hermes's
+    (tmp_path / "carol").mkdir()
+    (tmp_path / "carol/state.db").write_text("not a database")
+    instances.usage(S, reg)
+    assert capsys.readouterr().out.splitlines() == [
+        "NAME   PROVIDER  ACCOUNT  TURNS 7D  TOKENS 7D  5H  WEEK",
+        "alice  ChatGPT   -        3         3.7M       ?",
+        "bob    ChatGPT   -        0         0          ?",
+        "carol  ChatGPT   -        ?         ?          ?",
+    ]
+    assert instances.activity("alice") == {"5h": (2, 2_700_000), "week": (3, 3_700_000)}
+    hermes.close()
 
 
 def test_with_the_model_lock_the_policy_sets_the_model_and_the_guard_must_be_on(incus):

@@ -56,4 +56,4 @@ access = "local"                # local (SSH tunnel) | lan | tailscale; with lan
 port = 9200                     # outside webapp.port_range
 retention_days = 30
 subscription_usage = false      # true: also each instance's share of its 5-hour and weekly subscription limits,
-                                # asked hourly in its container (tell its users: see README, Dashboard)
+                                # turns and tokens, asked hourly in its container (tell its users: see README, Dashboard)

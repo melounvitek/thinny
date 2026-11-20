@@ -37,7 +37,8 @@ Status: in development. Design notes: [`NOTES.md`](NOTES.md).
 - **`thinny status`** for a quick look, **`thinny doctor`** for every isolation and health
   check, each with a fix.
 - **An optional dashboard** with the history of the server's and each instance's CPU, memory,
-  disk and network, and if you choose, of its users' subscription usage (see [Dashboard](#dashboard)).
+  disk and network, and if you choose, of its users' subscription usage, turns and tokens (see
+  [Dashboard](#dashboard)).
 
 ## Security
 
@@ -241,7 +242,7 @@ thinny instance login alice --provider anthropic   # or name it: openai | anthro
 thinny instance telegram alice          # a Telegram bot its user creates with a link (see Telegram)
 thinny instance email alice anna@example.com   # a mailbox alice@<domain> that anna can write to (see Email)
 thinny instance list                    # with each one's CPU, RAM and disk use, mailbox and phone line
-thinny instance usage [alice]           # its users' share of their 5-hour and weekly subscription limits
+thinny instance usage [alice]           # its users' share of their 5-hour and weekly subscription limits, turns and tokens
 thinny instance access alice tailscale  # lan | tailscale | url=<URL> | local
 thinny instance frontend alice webui    # webapp | webui
 thinny instance resize alice --cpu 4 --memory-mb 8192 --disk-gb 50
@@ -287,6 +288,12 @@ thinny instance restart --group sales   # instead of names: resize, login, model
   the provider afresh (`hermes usage`; for Claude, Claude Code answers without using any of the
   limits), for every instance at once, up to about 20 s each. `?` means no answer. The
   [dashboard](#dashboard) can keep its history.
+  It also shows how much they used their agent in the last 7 days, to tell who uses most of a
+  subscription that several instances share: their turns (messages to it) and its tokens (input,
+  output and cache writes, without the cache reads, which count the least against a limit). They
+  come from Hermes's chats in the instance, so not what the users do in Claude Code, ChatGPT or
+  Claude.ai. Hermes counts a chat's tokens, not each reply's, so thinny shares them out by its
+  replies: a close estimate, not the provider's count.
 - `add` can connect a phone line to the phone plugin. Answer `y` and it asks for the SIP account
   (Odorik's server by default), the PIN, the numbers that may call, the number Hermes calls back
   and an OpenAI API key for speech recognition, then starts Asterisk in the container. With
@@ -629,7 +636,7 @@ enabled = true
 access = "local"        # local | lan | tailscale
 port = 9200             # outside webapp.port_range
 retention_days = 30
-subscription_usage = false   # true: also each instance's subscription usage, hourly (see below)
+subscription_usage = false   # true: also each instance's subscription usage, turns and tokens, hourly (see below)
 ```
 
 Then run `thinny config apply` on a terminal (`thinny config edit` does it too). The first time, it
@@ -672,7 +679,9 @@ reads it). A password changed in Grafana stays in Grafana only.
 `hermes usage --json` in each running instance, as its account, as `thinny instance usage` does.
 The dashboard then shows how much of their ChatGPT or Claude subscription's 5-hour and weekly limits
 the users of the instance you choose used, and the weekly one of the 10 that used the most. Only
-these two shares: no plan, credits, reset times or accounts.
+these two shares: no plan, credits, reset times or accounts. Next to them, their turns and tokens
+of the last 5 hours and 7 days, as `thinny instance usage` counts them, read from Hermes's chats
+in the instance: only how many, nothing of what they say.
 
 - **Tell the instances' users before you turn it on.** Whoever can sign in to the dashboard sees
   their use hour by hour, for `retention_days`. The limits are the whole subscription's: with their
@@ -684,8 +693,9 @@ these two shares: no plan, credits, reset times or accounts.
   users report that frequent reads block the readout for hours, also in their own Claude Code. Once
   an hour is far below what status-line tools ask. Each check runs within its instance's CPU and
   memory limits, four instances at a time, up to 20 s each.
-- An instance that is stopped or not signed in, or whose check fails, shows a gap. While thinny's
-  file is over 2 hours old, the panels show nothing, and `doctor` warns.
+- An instance that is stopped or not signed in, or whose check fails, shows a gap. Turns and
+  tokens count also while it is not signed in. While thinny's file is over 2 hours old, the
+  panels show nothing, and `doctor` warns.
 - Turned off, the checks stop within 5 minutes. The history stays until `retention_days` ends.
 
 ## Access trace

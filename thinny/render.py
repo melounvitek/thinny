@@ -582,12 +582,19 @@ def disk_metrics(rows: list[tuple[str, int, int]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def usage_metrics(rows: list[tuple[str, str, str, float]]) -> str:
+def usage_metrics(rows: list[tuple[str, str, str, float]], counts: list[tuple[str, str, int, int]]) -> str:
     """The node exporter's file of each instance's subscription usage: (name, provider, window, share of the
-    window's limit used, from 0 to 1)."""
+    window's limit used, from 0 to 1), and of its users' turns and tokens: (name, window, turns, tokens)."""
     metric = "thinny_instance_subscription_used_ratio"
     lines = [f"# HELP {metric} Share of its subscription's limit the instance's users used.",
              f"# TYPE {metric} gauge",
              *(f'{metric}{{name="{name}",provider="{provider}",window="{window}"}} {used}'
-               for name, provider, window, used in rows)]
+               for name, provider, window, used in rows),
+             "# HELP thinny_instance_turns Messages the instance's users sent its agent in the window.",
+             "# TYPE thinny_instance_turns gauge",
+             *(f'thinny_instance_turns{{name="{name}",window="{window}"}} {turns}' for name, window, turns, _ in counts),
+             "# HELP thinny_instance_tokens Tokens the instance's agent used in the window, without cache reads.",
+             "# TYPE thinny_instance_tokens gauge",
+             *(f'thinny_instance_tokens{{name="{name}",window="{window}"}} {tokens}'
+               for name, window, _, tokens in counts)]
     return "\n".join(lines) + "\n"
