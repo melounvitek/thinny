@@ -760,6 +760,9 @@ def test_usage_shows_each_instances_turns_and_tokens_of_the_last_7_days(incus, c
          [("user", 240), ("assistant", 240), ("user", 72), ("assistant", 72), ("user", 1, "turn"),
           ("assistant", 1, "reply"), ("summary", 0.9), ("user", 1, "turn"), ("assistant", 1, "reply"),
           ("assistant", 0.5)]),
+        # a branch of it, which copied its messages, and one turn and reply of its own
+        ("webui", (100_000, 0, 0, 0), [("user", 1, "turn"), ("assistant", 1, "reply"), ("user", 0.2),
+                                       ("assistant", 0.2)], {"_branched_from": "0"}),
         # subagents' chats, also one from a Telegram turn: their tasks are no turns of the users'
         ("subagent", (300_000, 100_000, 0, 0), [("user", 1), ("assistant", 1)]),
         ("telegram", (200_000, 0, 0, 0), [("user", 1), ("assistant", 1)], {"_delegate_from": "0"}),
@@ -770,11 +773,11 @@ def test_usage_shows_each_instances_turns_and_tokens_of_the_last_7_days(incus, c
     instances.usage(S, reg)
     assert capsys.readouterr().out.splitlines() == [
         "NAME   PROVIDER  ACCOUNT  TURNS 7D  TOKENS 7D  5H  WEEK",
-        "alice  ChatGPT   -        2         3.6M       ?",
+        "alice  ChatGPT   -        3         3.7M       ?",
         "bob    ChatGPT   -        0         0          ?",
         "carol  ChatGPT   -        ?         ?          ?",
     ]
-    assert instances.activity("alice") == {"5h": (1, 2_600_000), "week": (2, 3_600_000)}
+    assert instances.activity("alice") == {"5h": (2, 2_700_000), "week": (3, 3_700_000)}
     hermes.close()
 
 

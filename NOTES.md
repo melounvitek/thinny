@@ -430,9 +430,12 @@ Incus 6.0.0, 6.0.4 and 6.0.5, Prometheus 2.45 and 2.53, node exporter 1.7 to 1.1
   replies (`assistant` messages, about one per model call) instead. Every message has a time, so turns are exact:
   `user` messages without compaction summaries (`_compressed_summary`), outside subagents' chats (whose task is
   the parent agent's: source `subagent`, or the gateway's with `_delegate_from` in `model_config`). Compaction
-  inserts the messages it keeps again, with their `message_uid` and time, so each uid counts once, replies too.
-  A cron job's prompt counts. Rewound or undone turns count too: they used the limits. On a
-  workstation's 850 MB `state.db`: 0.3 s, and cache reads were 92 % of all tokens **[tested]**.
+  and branches insert the messages they keep again, with their `message_uid` and time: a turn counts once per
+  uid in the instance, a reply once per uid in its chat. A branch starts without tokens, so the replies it copied
+  thin out its own: a branch of an old chat counts low. Every row has a uid since v0.23.1 (an insert trigger;
+  older rows get one in slices as Hermes opens the file). A cron job's prompt counts. Rewound or undone turns
+  count too: they used the limits. A workstation's 850 MB `state.db` took 0.3 s, and its cache reads were 92 %
+  of all tokens; a made-up 910 MB one with 310,000 messages 0.15 s **[tested]**.
 
 ### Email (2026-11-16)
 Hermes v0.23.1 **[src]**; Purelymail from its API spec (`news.purelymail.com/api/`), docs and public

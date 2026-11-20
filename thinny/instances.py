@@ -1188,27 +1188,26 @@ def list_instances(reg: Registry, group: str | None = None) -> None:
 # The turns of the instance's users (their messages, not those of the agent's subagents) and the tokens it used (input,
 # output and cache writes; cache reads count least against a limit) in the last 5 hours and 7 days, from the chats in
 # its Hermes home (argv[1]), as JSON. Hermes counts a chat's tokens, not a reply's: they are shared out by its replies.
-# Compaction copies messages, keeping their uid. A subagent's chat has its own source, or a mark when it has the
-# gateway's.
+# Compaction and branches copy messages, keeping their uid; a branch starts without tokens. A subagent's chat has its
+# own source, or a mark when it has the gateway's.
 ACTIVITY = r'''
 import json, sqlite3, sys, time
 from pathlib import Path
-db = Path(sys.argv[1]) / "state.db"
-query = """SELECT COALESCE(SUM(turns), 0), COALESCE(SUM(tokens * replies_since / replies), 0) FROM (
-    SELECT COUNT(DISTINCT CASE WHEN m.role = 'user' AND m.timestamp >= :since AND NOT m._compressed_summary
-                                    AND s.source != 'subagent' AND json_extract(CASE WHEN json_valid(s.model_config)
-                                        THEN s.model_config END, '$._delegate_from') IS NULL
-                               THEN m.message_uid END) AS turns,
+db, now = Path(sys.argv[1]) / "state.db", time.time()
+recent = "m.session_id IN (SELECT session_id FROM messages WHERE timestamp >= :since)"   # through an index
+turns = f"""SELECT COUNT(DISTINCT m.message_uid) FROM messages m JOIN sessions s ON s.id = m.session_id
+    WHERE {recent} AND m.role = 'user' AND m.timestamp >= :since AND NOT m._compressed_summary
+        AND s.source != 'subagent'
+        AND json_extract(CASE WHEN json_valid(s.model_config) THEN s.model_config END, '$._delegate_from') IS NULL"""
+tokens = f"""SELECT COALESCE(SUM(tokens * replies_since / replies), 0) FROM (
+    SELECT s.input_tokens + s.output_tokens + s.cache_write_tokens AS tokens,
            COUNT(DISTINCT CASE WHEN m.role = 'assistant' AND m.timestamp >= :since THEN m.message_uid END)
                AS replies_since,
-           COUNT(DISTINCT CASE WHEN m.role = 'assistant' THEN m.message_uid END) AS replies,
-           s.input_tokens + s.output_tokens + s.cache_write_tokens AS tokens
-    FROM sessions s JOIN messages m ON m.session_id = s.id
-    WHERE s.id IN (SELECT session_id FROM messages WHERE timestamp >= :since)
-    GROUP BY s.id)"""
+           COUNT(DISTINCT CASE WHEN m.role = 'assistant' THEN m.message_uid END) AS replies
+    FROM sessions s JOIN messages m ON m.session_id = s.id WHERE {recent} GROUP BY s.id)"""
 con = sqlite3.connect(db.as_uri() + "?mode=ro", uri=True) if db.exists() else None
-print(json.dumps({window: con.execute(query, {"since": time.time() - hours * 3600}).fetchone() if con else [0, 0]
-                  for window, hours in (("5h", 5), ("week", 7 * 24))}))
+print(json.dumps({window: [con.execute(query, {"since": since}).fetchone()[0] if con else 0 for query in (turns, tokens)]
+                  for window, since in (("5h", now - 5 * 3600), ("week", now - 7 * 24 * 3600))}))
 '''
 
 
