@@ -11,12 +11,13 @@ from pathlib import Path
 import pytest
 from test_instances import incus, server_disk  # noqa: F401 - incus: the fake Incus fixture
 
-from thinny import backup, checks, export, host, render, settings, update
+from thinny import backup, checks, export, host, render, settings, trace, update
 from thinny.registry import Instance, Registry
 from thinny.settings import Settings
 from thinny.system import CommandError
 
 S = Settings(backup_target="you@nas:thinny-backups")
+REGISTRY_LOAD, REGISTRY_SAVE = Registry.load.__func__, Registry.save   # before the incus fixture stubs saving
 
 
 class Machine:
@@ -42,6 +43,7 @@ class Machine:
         self.down = False   # whether the backup machine answers
         self.server = None   # the fake Incus, for the commands thinny runs on the server
         self.sizes = {}   # container -> what du says its folder takes
+        self.applied = []   # thinny config apply's runs on the server
 
     def tool(self, name, script):
         (self.bin / name).write_text(f"#!/bin/sh\n{script}\n")
@@ -49,12 +51,12 @@ class Machine:
 
     def run(self, cmd, *, check=True, input=None, timeout=600, env=None, cwd=None):
         self.calls.append(" ".join(cmd))
-        out, err, code = self.answer(cmd, env or {})
+        out, err, code = self.answer(cmd, env or {}, cwd)
         if check and code:
             raise CommandError(f"{' '.join(cmd)} -> exit {code}\n{out}{err}")
         return subprocess.CompletedProcess(cmd, code, out, err)
 
-    def answer(self, cmd, env):
+    def answer(self, cmd, env, cwd=None):
         if cmd[0] == "ssh-keygen":
             key = Path(cmd[cmd.index("-f") + 1])
             key.write_text("PRIVATE\n")
@@ -71,7 +73,7 @@ class Machine:
         elif cmd[0] == "borg":
             if self.down:
                 return "", "Connection closed by remote host\n", 2
-            return self.borg(cmd[1:], env)
+            return self.borg(cmd[1:], env, cwd)
         elif cmd[0] == "bash":   # borg extract --stdout ::ARCHIVE | incus import - NAME --storage POOL
             if self.down:
                 return "", "Connection closed by remote host\n", 2
@@ -88,7 +90,7 @@ class Machine:
     def repo(self, env):
         return self.home / env["BORG_REPO"].partition(":")[2]
 
-    def borg(self, args, env):
+    def borg(self, args, env, cwd=None):
         repo = self.repo(env)
         assert args[1:3] == ["--lock-wait", "600"]   # for the monthly cleanup's lock
         command, args = args[0], args[3:]
@@ -115,6 +117,10 @@ class Machine:
             self.archives[args[at][2:]] = {"time": option("--timestamp"), "comment": "", "files": files}
         elif command == "list":
             return json.dumps({"archives": [{"name": name} for name in self.archives]}), "", 0
+        elif command == "extract":   # ::NAME, its files under cwd
+            for path, data in self.archives[args[-1][2:]]["files"].items():
+                (Path(cwd) / path).parent.mkdir(parents=True, exist_ok=True)
+                (Path(cwd) / path).write_bytes(data)
         elif command == "info" and "--json" in args:   # of ::ARCHIVE
             found = self.archives[args[-1][2:]]
             return json.dumps({"archives": [{"comment": found["comment"],
@@ -262,6 +268,9 @@ def test_the_target_is_a_plain_user_host_and_path(value):
         settings.parse(f'[access]\ndefault = "local"\n[backup]\ntarget = "{value}"\n')
 
 
+CONFIG = '[access]\ndefault = "local"\n[backup]\ntarget = "you@nas:thinny-backups"\n'
+
+
 class Clock(dt.datetime):
     """Each backup a night later: 03:00 local time from 2026-11-19 on."""
     days = 0
@@ -284,7 +293,7 @@ def server(nas, incus, tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "SECRETS_ENV", tmp_path / "etc" / "secrets.env")
     monkeypatch.setattr(backup, "dt", types.SimpleNamespace(datetime=Clock, UTC=dt.UTC))
     Clock.days = 0
-    settings.CONFIG_TOML.write_text('[backup]\ntarget = "you@nas:thinny-backups"\n')
+    settings.CONFIG_TOML.write_text(CONFIG)
     settings.SECRETS_ENV.write_text("THINNY_BACKUP_PASSPHRASE=kept-in-a-password-manager\n")
     state = tmp_path / "state"
     for module in (backup, update, export):
@@ -292,11 +301,22 @@ def server(nas, incus, tmp_path, monkeypatch):
     monkeypatch.setattr(backup, "STATUS_FILE", state / "backup-status.json")
     monkeypatch.setattr(update, "UNFINISHED", state / "update-unfinished")
     monkeypatch.setattr(export, "EXPORTS", state / "exports")
-    monkeypatch.setattr(host, "caddy_root_ca", lambda: tmp_path / "caddy" / "local" / "root.crt")
+    ca = tmp_path / "caddy/.local/share/caddy/pki/authorities/local"   # as deep as Caddy's
+    monkeypatch.setattr(host, "caddy_root_ca", lambda: ca / "root.crt")
     (state / "exports").mkdir(parents=True)
     (state / "exports" / "alice-2026.zip").write_text("alice's chats, for her users")
     (state / "instances.json").write_text('{"instances": {}}\n')
     monkeypatch.setattr(backup, "RESTORE", state / "restore.json")
+    for module, name in ((host, "RELEASE_FILE"), (host, "WEBUI_RELEASE_FILE"), (trace, "DIR")):
+        monkeypatch.setattr(module, name, state / getattr(module, name).name)
+    host.write_release("v2", "c0ffee")
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, path=None: REGISTRY_LOAD(cls, path or
+                                                                                             state / "instances.json")))
+    monkeypatch.setattr(Registry, "save", lambda self, path=None: REGISTRY_SAVE(self, path or state / "instances.json"))
+    monkeypatch.setattr(backup, "NETWORK_INTERFACES", tmp_path / "net")
+    (tmp_path / "net" / "eth0").mkdir(parents=True)
+    # with the containers there are by then
+    monkeypatch.setattr(backup.apply, "apply", lambda s: nas.applied.append((s, sorted(incus.containers))))
     monkeypatch.setattr(host, "tailscale_status", lambda: None)
     monkeypatch.setattr(host, "FILES", tmp_path / "files")
     (tmp_path / "files" / "model-guard").mkdir(parents=True)
@@ -317,8 +337,8 @@ def runs(nas):
 
 
 def test_a_backup_takes_every_container_running_and_then_the_servers_settings(server, nas, incus, tmp_path):
-    (tmp_path / "caddy" / "local").mkdir(parents=True)
-    (tmp_path / "caddy" / "local" / "root.key").write_text("the office's certificate authority")
+    host.caddy_root_ca().parent.mkdir(parents=True)
+    (host.caddy_root_ca().parent / "root.key").write_text("the office's certificate authority")
     assert backup.create(S, server) == 0
 
     [run] = runs(nas)
@@ -337,10 +357,10 @@ def test_a_backup_takes_every_container_running_and_then_the_servers_settings(se
         {dt.datetime.fromisoformat(run).astimezone(dt.UTC).replace(tzinfo=None).isoformat()}
     # the server's settings, tokens, instances and certificate authority; not exports nor its key there
     files = nas.archives[f"{run}.server"]["files"]
-    assert files[str(settings.CONFIG_TOML).lstrip("/")].startswith(b"[backup]")
+    assert files[str(settings.CONFIG_TOML).lstrip("/")] == CONFIG.encode()
     assert files[str(settings.SECRETS_ENV).lstrip("/")] == b"THINNY_BACKUP_PASSPHRASE=kept-in-a-password-manager\n"
     assert str(tmp_path / "state" / "instances.json").lstrip("/") in files
-    assert files[str(tmp_path / "caddy/local/root.key").lstrip("/")] == b"the office's certificate authority"
+    assert files[str(host.caddy_root_ca().parent / "root.key").lstrip("/")] == b"the office's certificate authority"
     assert not any("exports" in path or "backup-key" in path or "known-hosts" in path for path in files)
 
     status = json.loads(backup.STATUS_FILE.read_text())
@@ -531,10 +551,10 @@ def test_a_restore_cut_short_goes_on_where_it_stopped(server, nas, incus):
     nas.down = False
     original = nas.answer
 
-    def cut_off(cmd, env):   # the backup machine goes away during the import
+    def cut_off(cmd, env, cwd=None):   # the backup machine goes away during the import
         if cmd[0] == "bash":
             nas.down = True
-        return original(cmd, env)
+        return original(cmd, env, cwd)
     nas.answer = cut_off
     with pytest.raises(CommandError):
         backup.restore(S, server, "alice")
@@ -548,3 +568,124 @@ def test_a_restore_cut_short_goes_on_where_it_stopped(server, nas, incus):
     backup.restore(S, server, "alice")
     assert chats(incus, "alice") == "alice's chats" and server.get("alice").state == "active"
     assert len([name for name in nas.archives if name.startswith("before-restore.")]) == 1   # it was gone by then
+
+
+def new_server(incus, tmp_path):
+    """This server, wiped as a new one is after install.sh, init and backup init: its own config.toml, key to the
+    backups and passphrase, no instances."""
+    state = tmp_path / "state"
+    shutil.rmtree(state)
+    state.mkdir()
+    settings.CONFIG_TOML.write_text(CONFIG)
+    settings.SECRETS_ENV.write_text("THINNY_BACKUP_PASSPHRASE=kept-in-a-password-manager\n")
+    shutil.rmtree(settings.CONFIG_TOML.parent / "groups", ignore_errors=True)
+    incus.containers.clear()
+    incus.pools.clear()
+    return Registry()
+
+
+@pytest.fixture
+def old_server(server, nas, incus, tmp_path):
+    """The old server as its last backup has it: its own settings, a token, a group, alice's access trace and the
+    office's certificate authority; alice and bob at 10.78.0.1 and 10.78.0.2."""
+    settings.CONFIG_TOML.write_text(CONFIG + "[container]\ncpu = 3\n")
+    settings.SECRETS_ENV.write_text("THINNY_BACKUP_PASSPHRASE=kept-in-a-password-manager\n"
+                                    "THINNY_PURELYMAIL_API_TOKEN=pm-live-x\n")
+    (settings.CONFIG_TOML.parent / "groups").mkdir()
+    (settings.CONFIG_TOML.parent / "groups" / "sales.toml").write_text('[agent]\nenvironment_hint = "Sales"\n')
+    (trace.DIR / "alice").mkdir(parents=True)
+    (trace.DIR / "alice" / "admin-access.log").write_text("2026-11-10 incus exec alice\n")
+    ca = host.caddy_root_ca().parent
+    ca.mkdir(parents=True)
+    (ca / "root.key").write_text("the office's certificate authority")
+    for i, name in enumerate(("alice", "bob")):
+        server.get(name).address = f"10.78.0.{i + 1}"
+    server.save()
+    assert backup.create(S, server) == 0
+    (ca / "root.key").write_text("the one Caddy made on the new server")
+    (ca.parents[2] / "certificates" / "local").mkdir(parents=True)
+    return runs(nas)[-1]
+
+
+def test_a_new_server_gets_the_old_ones_settings_and_instances_as_they_were(old_server, nas, incus, tmp_path, capsys):
+    reg = new_server(incus, tmp_path)
+    capsys.readouterr()
+    backup.restore_all(S, reg)
+
+    # its settings, tokens, group and access traces; its own key to the backups and passphrase stay
+    restored = settings.load(settings.CONFIG_TOML)
+    assert restored.container_cpu == 3 and restored.groups["sales"]
+    assert settings.secret("THINNY_PURELYMAIL_API_TOKEN") == "pm-live-x"
+    assert (trace.DIR / "alice" / "admin-access.log").read_text() == "2026-11-10 incus exec alice\n"
+    assert backup.KEY.read_text() == "PRIVATE\n"
+    # applied before any container came, so they start under its firewall and limits
+    [(applied, containers)] = nas.applied
+    assert applied.container_cpu == 3 and containers == []
+    # each instance as it was, at its own port and address; disabled carol stays stopped; removed dave stays removed
+    reg = Registry.load()
+    assert {name: (inst.state, inst.port, inst.address) for name, inst in reg.instances.items()} == {
+        "alice": ("active", 9120, "10.78.0.1"), "bob": ("active", 9121, "10.78.0.2"),
+        "carol": ("disabled", 9122, ""), "dave": ("removed", 9123, "")}
+    assert {name: c["state"] for name, c in incus.containers.items()} == \
+        {"alice": "RUNNING", "bob": "RUNNING", "carol": "STOPPED"}
+    assert chats(incus, "alice") == "alice's chats" and chats(incus, "carol") == "carol's chats"
+    assert incus.pools["thinny-alice"]["size"] == 30 * 2**30
+    assert incus.containers["alice"]["devices"]["eth0"]["ipv4.address"] == "10.78.0.1"
+    assert not incus.ran("display.language")   # its users' settings came along
+    # the office PCs keep trusting its sites
+    ca = host.caddy_root_ca().parent
+    assert (ca / "root.key").read_text() == "the office's certificate authority"
+    assert not (ca.parents[2] / "certificates" / "local").exists()
+    assert nas.ran("chown -R caddy:caddy") and nas.ran("systemctl start caddy")
+    assert not backup.RESTORE.exists()
+    assert f"This server is back as it was in {old_server}." in capsys.readouterr().out
+
+
+def test_after_an_unfinished_update_every_instance_goes_to_its_release(server, nas, incus, tmp_path):
+    update.UNFINISHED.write_text("v3 c3 bob\n")   # alice may be at v3 already, so none may stay at v2
+    backup.create(S, server)
+    backup.restore_all(S, new_server(incus, tmp_path))
+    assert host.RELEASE_FILE.read_text() == "v3 c3\n" and not update.UNFINISHED.exists()
+
+
+def test_a_restore_of_everything_cut_short_goes_on_where_it_stopped(old_server, nas, incus, tmp_path):
+    reg = new_server(incus, tmp_path)
+    nas.archives[f"{old_server}.instance.bob"]["data"] = b"cut off"
+    with pytest.raises(CommandError, match="incus import"):
+        backup.restore_all(S, reg)
+    assert json.loads(backup.RESTORE.read_text())["step"] == "instances"
+    assert backup.create(S, Registry.load()) == 1   # no backups meanwhile
+    with pytest.raises(CommandError, match="the restore of everything is unfinished"):
+        backup.restore(S, Registry.load(), "alice")
+
+    nas.archives[f"{old_server}.instance.bob"]["data"] = json.dumps(incus_container("bob")).encode()
+    incus.calls.clear()
+    backup.restore_all(S, Registry.load())
+    assert not incus.ran("incus import - alice") and incus.ran("incus import - bob")
+    assert Registry.load().get("bob").state == "active" and not backup.RESTORE.exists()
+
+
+def incus_container(name):
+    return {"state": "RUNNING", "devices": {}, "account": True, "hermes": True, "unit": True,
+            "files": {"/home/x/.hermes/state.db": f"{name}'s chats"}}
+
+
+def test_a_restore_of_everything_needs_a_new_server_and_a_complete_backup(old_server, nas, incus, tmp_path):
+    with pytest.raises(CommandError, match="this server has instances"):
+        backup.restore_all(S, Registry.load())
+    reg = new_server(incus, tmp_path)
+    with pytest.raises(CommandError, match="no complete backup 2026-11-01T03:00:00"):
+        backup.restore_all(S, reg, "2026-11-01T03:00:00")
+    assert not backup.RESTORE.exists()
+
+
+def test_a_restored_config_naming_an_interface_this_server_lacks_stops_before_the_instances(old_server, nas, incus,
+                                                                                            tmp_path):
+    reg = new_server(incus, tmp_path)
+    shutil.rmtree(tmp_path / "net" / "eth0")
+    with pytest.raises(CommandError, match="no network interface eth0"):
+        backup.restore_all(S, reg)
+    assert not incus.containers and not nas.applied
+    (tmp_path / "net" / "eth0").mkdir()   # once thinny config edit corrected it
+    backup.restore_all(S, Registry.load())
+    assert Registry.load().get("alice").state == "active"

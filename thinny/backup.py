@@ -12,6 +12,7 @@ time, ISO 8601."""
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import getpass
 import json
@@ -26,7 +27,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import export, host, instances, settings, update
+from . import apply, export, host, instances, settings, trace, update
 from .registry import Instance, Registry
 from .settings import Settings, secret
 from .system import STATE_DIR, CommandError, log, run, step, write_file
@@ -41,6 +42,7 @@ RESTORE = STATE_DIR / "restore.json"   # an unfinished restore: what it restores
 KEEP = ["--keep-daily", "7", "--keep-weekly", "4", "--keep-monthly", "6"]
 ARCHIVE_TIMEOUT = 6 * 3600   # a large container's
 RUN_GLOB = "????-??-??T??:??:??"   # a run's name
+NETWORK_INTERFACES = Path("/sys/class/net")
 
 
 def target(s: Settings) -> tuple[str, str]:
@@ -216,8 +218,8 @@ def create(s: Settings, reg: Registry, scheduled: bool = False) -> int:
     log(f"=== thinny backup {run_name}")
     try:
         if RESTORE.exists():   # a container may be missing, or the one from before the restore
-            raise CommandError(f"a restore is unfinished: run thinny backup restore "
-                               f"{json.loads(RESTORE.read_text())['name']} again")
+            name = json.loads(RESTORE.read_text())["name"]
+            raise CommandError(f"a restore is unfinished: run thinny backup restore {name or '--all'} again")
         states, sizes = instances.container_states(), instances.pool_sizes()
         # Also disabled ones, which keep their data, and pending ones with a container.
         containers = sorted((inst for inst in reg.instances.values() if inst.name in states), key=lambda i: i.port)
@@ -326,10 +328,7 @@ def restore(s: Settings, reg: Registry, name: str, source: str | None = None) ->
     back), replace its container with the backup's, then finish it like a moved instance, at this server's Hermes
     release. RESTORE records each step, so a run again goes on where one stopped."""
     target(s)
-    marker = json.loads(RESTORE.read_text()) if RESTORE.exists() else None
-    if marker and marker["name"] != name:
-        raise CommandError(f"the restore of {marker['name']} is unfinished: run thinny backup restore "
-                           f"{marker['name']} again")
+    marker = unfinished(name)
     inst = reg.get(name)
     if marker:
         log(f"{name}: going on with its restore from {marker['archive']}")
@@ -371,6 +370,15 @@ def restore(s: Settings, reg: Registry, name: str, source: str | None = None) ->
           f"{marker['fallback']}: thinny backup restore {name} --from {marker['fallback']}")
 
 
+def unfinished(name: str | None) -> dict | None:
+    """The unfinished restore of `name` (None: of everything) to go on with, or none; refuses another one's."""
+    marker = json.loads(RESTORE.read_text()) if RESTORE.exists() else None
+    if marker and marker["name"] != name:
+        raise CommandError(f"the restore of {marker['name'] or 'everything'} is unfinished: run thinny backup restore "
+                           f"{marker['name'] or '--all'} again")
+    return marker
+
+
 def pick(names: list[str], name: str, source: str | None) -> str:
     """The archive of the instance: of the run `source`, the state before a restore `source`, or the newest."""
     if source is None:
@@ -402,3 +410,98 @@ def import_container(s: Settings, archive_name: str, name: str) -> None:
         run(["bash", "-o", "pipefail", "-c", 'borg extract --lock-wait "$1" --stdout "::$2" | '
              'incus import - "$3" --storage "$4" --quiet', "bash", LOCK_WAIT, archive_name, name,
              instances.pool_of(name)], env=borg_env(s), timeout=ARCHIVE_TIMEOUT)
+
+
+def restore_all(s: Settings, reg: Registry, source: str | None = None) -> None:
+    """On a new server, once init connected it to the backups: this server's settings, tokens and instances as they
+    were in a run (by default the newest), each instance at the port and address it had, at the Hermes release its
+    server ran or was going to; then its certificate authority. RESTORE records how far it got; run again, it goes
+    on."""
+    target(s)
+    marker = unfinished(None)
+    if not marker:
+        if reg.instances:
+            raise CommandError("this server has instances; restore --all is for a new one (restore them one by one)")
+        complete, _ = runs(archives(s))
+        run_name = source or (complete[-1] if complete else "")
+        if run_name not in complete:
+            raise CommandError(f"no complete backup {source} (see thinny backup list)" if source else "no backup yet")
+        marker = {"name": None, "run": run_name, "step": "files"}
+        write_file(RESTORE, json.dumps(marker) + "\n", 0o600)
+    run_name = marker["run"]
+    if marker["step"] == "files":
+        with server_files(s, run_name) as root:
+            restore_files(root)
+        marker["step"] = "instances"
+        write_file(RESTORE, json.dumps(marker) + "\n", 0o600)
+    s, reg = settings.load(settings.CONFIG_TOML), Registry.load()   # the old server's
+    if not (NETWORK_INTERFACES / s.network_interface).exists():
+        raise CommandError(f"this server has no network interface {s.network_interface} (network.interface in the "
+                           "restored config.toml): correct it with thinny config edit, then run thinny backup "
+                           "restore --all again")
+    apply.apply(s)   # firewall, profile and units as the restored config.toml says, before any container starts
+    names = archives(s)
+    for inst in sorted(reg.instances.values(), key=lambda inst: inst.port):
+        source_name = f"{run_name}.instance.{inst.name}"
+        if source_name in names and instances.container_state(inst.name) is None:
+            info = json.loads(borg(s, "info", "--json", f"::{source_name}", timeout=600).stdout)["archives"][0]
+            host.write_policy(s, inst.name)   # Incus refuses the container while its policy's folder is missing
+            if instances.pool_of(inst.name) not in instances.pool_sizes():
+                instances.create_pool(inst.name, json.loads(info["comment"])["disk_gb"])
+            check_room(inst.name, info["stats"]["original_size"], "restore")
+            import_container(s, source_name, inst.name)
+        if inst.moved and inst.state == "pending" and instances.container_state(inst.name) is not None:
+            instances.add(s, reg, inst.name, inst.access, inst.url if inst.access == "url" else "")
+    with server_files(s, run_name) as root:
+        restore_ca(s, reg, root)
+    RESTORE.unlink()
+    print(f"This server is back as it was in {run_name}. Check access.lan_address in config.toml if its LAN "
+          "address changed (thinny config edit), and sign it in to Tailscale if its instances use it. On the backup "
+          "machine, delete the old server's line in ~/.ssh/authorized_keys.")
+
+
+@contextlib.contextmanager
+def server_files(s: Settings, run_name: str):
+    """The folder the run's server archive is unpacked in, as it was under /."""
+    with tempfile.TemporaryDirectory(dir=STATE_DIR) as root:   # root's only, with tokens
+        borg(s, "extract", f"::{run_name}.server", cwd=root, timeout=3600)
+        yield Path(root)
+
+
+def restore_files(root: Path) -> None:
+    """Settings, tokens, groups, instances, releases and access traces from the old server; this server keeps its
+    own key to the backups. Instances that were active become pending, moved: imported, they finish like moved ones.
+    An unfinished update's release is the release, so that every instance only moves forward."""
+    def old(path: Path) -> Path:
+        return root / str(path).lstrip("/")
+    for path in (settings.CONFIG_TOML, settings.SECRETS_ENV):
+        if old(path).exists():
+            shutil.copy2(old(path), path)
+    for folder in (settings.CONFIG_TOML.parent / "groups", trace.DIR):
+        if old(folder).exists():
+            shutil.copytree(old(folder), folder, dirs_exist_ok=True)
+    for path, into in ((host.RELEASE_FILE, host.RELEASE_FILE), (host.WEBUI_RELEASE_FILE, host.WEBUI_RELEASE_FILE),
+                       (update.UNFINISHED, host.RELEASE_FILE)):   # its "<tag> <commit> [<instance>]"
+        if old(path).exists():
+            host.write_release(*old(path).read_text().split()[:2], into)
+    reg = Registry.load(old(STATE_DIR / "instances.json"))
+    for inst in reg.instances.values():
+        if inst.state == "active":
+            inst.state, inst.moved = "pending", True
+    reg.save()
+
+
+def restore_ca(s: Settings, reg: Registry, root: Path) -> None:
+    """The old server's certificate authority, which office PCs trust, in place of the one Caddy made here; Caddy then
+    issues the sites' certificates afresh."""
+    ca = host.caddy_root_ca().parent
+    old = root / str(ca).lstrip("/")
+    if not (old.exists() and shutil.which("caddy")):
+        return
+    run(["systemctl", "stop", "caddy"])
+    shutil.rmtree(ca, ignore_errors=True)
+    shutil.rmtree(ca.parents[2] / "certificates" / "local", ignore_errors=True)
+    shutil.copytree(old, ca)
+    run(["chown", "-R", "caddy:caddy", str(ca)])
+    run(["systemctl", "start", "caddy"])
+    host.reconcile_access(s, reg)   # the office's copy of it

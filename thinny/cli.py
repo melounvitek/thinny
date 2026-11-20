@@ -207,7 +207,8 @@ def main(argv: list[str] | None = None) -> int:
     bkp.add_parser("init", help="set up the backups on the machine in [backup] target (or connect a new server)")
     bkp.add_parser("list", help="the backups a restore can take")
     rsr = bkp.add_parser("restore", help="put an instance back as it was in a backup (or go on with a restore)")
-    rsr.add_argument("name")
+    rsr.add_argument("name", nargs="?")
+    rsr.add_argument("--all", action="store_true", help="instead of a name: everything, on a new server")
     rsr.add_argument("--from", dest="source", metavar="BACKUP", help="a run or state from thinny backup list "
                                                                        "(default: the newest)")
     sub.add_parser("uninstall", help="remove thinny and every instance, with all their data")
@@ -229,6 +230,8 @@ def main(argv: list[str] | None = None) -> int:
         inst.choices[a.action].error("name the instances, or give --group")
     if command == "instance move" and not (a.names or a.all or a.group):
         mov.error("name the instances to move, or give --all or --group")
+    if command == "backup restore" and bool(a.name) == a.all:
+        rsr.error("name the instance, or give --all")
     if command == "update" and (a.now or a.dry_run) and not a.all:
         upd.error("--now and --dry-run go with --all")
 
@@ -365,6 +368,8 @@ def main(argv: list[str] | None = None) -> int:
                 return backup.create(s, reg, a.scheduled)
             elif command == "backup init":
                 backup.init(s)
+            elif command == "backup restore" and a.all:
+                backup.restore_all(s, reg, a.source)
             elif command == "backup restore":
                 backup.restore(s, reg, a.name, a.source)
             elif command == "instance trace-sheet":
