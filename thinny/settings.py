@@ -45,7 +45,7 @@ class Settings:
     port_range: tuple[int, int] = (9120, 9199)
     frontend: str = "webapp"
     theme: str = "light"
-    text_scale: int = 110
+    text_scale: int = 125
     interface: str = "simple"
     known_models: tuple[str, ...] = ()
     access_default: str = "lan"

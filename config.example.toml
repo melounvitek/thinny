@@ -31,7 +31,7 @@ disk_gb = 30                    # a new instance's disk; resize grows an instanc
 port_range = [9120, 9199]       # one local port per instance
 frontend = "webapp"             # webapp (Hermes's built-in) | webui (hermes-webui), for new instances (asked)
 theme = "light"                 # light | dark, for new instances
-text_scale = 110                # chat text size in %
+text_scale = 125                # chat text size in %
 interface = "simple"
 known_models = []               # with model_lock: other model ids the model picker should not announce as new
 

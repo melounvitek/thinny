@@ -110,7 +110,7 @@ def test_invalid_settings_are_refused(changes, message):
 def test_container_limits_and_webapp_look():
     s = parse(site(container__cpu=4, container__memory_mb=8192, container__disk_gb=50))
     assert (s.container_cpu, s.container_memory_mb, s.container_disk_gb) == (4, 8192, 50)
-    assert parse(site()).text_scale == 110
+    assert parse(site()).text_scale == 125
 
 
 def test_new_instances_get_the_webapp_unless_the_site_chooses_webui():
