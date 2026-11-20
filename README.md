@@ -15,7 +15,8 @@ Status: in development. Design notes: [`NOTES.md`](NOTES.md).
   (Hermes "managed scope"): approvals, the agent kept in its container, Hermes not borrowing
   Claude Code's or Codex CLI's sign-ins on its own (it could log them out), and no messages to
   users on Telegram, email or the phone whenever Hermes restarts, such as at the nightly update or
-  a reboot. The optional **model
+  a reboot. It also tells the agent that it runs on a server its users reach from their own
+  devices, so it does not offer to open things in their browser. The optional **model
   lock** (`policy.model_lock`) also pins the provider, model, reasoning effort and plugins, and
   allows only `allowed_models`. Without it, users choose their own. One instance can have its own
   lock, or none, whatever the server's (`thinny instance lock` and `unlock`).
@@ -387,7 +388,8 @@ thinny instance restart --group sales   # also resize, login, model, lock, unloc
   ```
 
 - They join each member's policy, so its users cannot change them. thinny's own policy (the
-  sandbox, approvals, the model lock) wins over them, and `webapp` is thinny's. A list, such as
+  sandbox, approvals, the model lock) wins over them, and `webapp` is thinny's. A group's
+  `agent.environment_hint` follows thinny's own. A list, such as
   `plugins.enabled`, replaces the instance's own.
 - Joining a group removes the instance's own values of those settings, and leaving it does not
   bring them back: Hermes's defaults apply.

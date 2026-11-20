@@ -246,8 +246,9 @@ def test_agents_of_mailboxes_from_before_learn_how_to_send_mail_after_their_grou
     apply.apply(s)
     hints = {name: yaml.safe_load((host.POLICIES / name / "config.yaml").read_text())["agent"]["environment_hint"]
              for name in reg.instances}
-    assert hints == {"alice": "Office hours: 9-17.\n\n" + render.mail_hint("alice@example.org", instances.HIMALAYA_BIN),
-                     "bob": "Office hours: 9-17."}
+    groups = f"{render.SERVER_HINT}\n\nOffice hours: 9-17."
+    assert hints == {"alice": f"{groups}\n\n" + render.mail_hint("alice@example.org", instances.HIMALAYA_BIN),
+                     "bob": groups}
     assert incus.containers["alice"]["hermes_config"] == {}   # pinned now
     assert restarted == ["alice", "bob"]
     assert sales == {"agent": {"environment_hint": "Office hours: 9-17."}}   # the group's own stays as it is

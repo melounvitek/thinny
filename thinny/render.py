@@ -98,6 +98,8 @@ def managed_config(s: Settings) -> str:
         "platforms": {platform: {"gateway_restart_notification": False} for platform in ("email", "phone", "telegram")},
     }
     config = merged(s.hermes, config)   # the instance's group's settings, under thinny's own
+    hint = "\n\n".join(filter(None, [SERVER_HINT, s.hermes.get("agent", {}).get("environment_hint")]))
+    config = merged(config, {"agent": {"environment_hint": hint}})   # the group's and the mail hints after it
     return f"# {HEADER}\n# Hermes managed scope: these values win over every instance's own config.\n{to_yaml(config)}\n"
 
 
@@ -130,6 +132,13 @@ def himalaya_account(address: str, env: str, default: bool) -> str:
     password = rf"""'''sed -n 's/^EMAIL_PASSWORD="\(.*\)"$/\1/p' {env}'''"""
     return HIMALAYA_ACCOUNT.format(default="default = true\n" if default else "", address=address, imap=IMAP_HOST,
                                    smtp=SMTP_HOST, password=password)
+
+
+# For the prompt of every instance's agent: Hermes's describes the host as if users sat at it, so agents told them
+# they had opened things in their browser or saved them to their Downloads.
+SERVER_HINT = ("You run on a remote server, not on the user's computer: the host and paths above are the server's. "
+               "Users reach you from their own devices, which you can't touch, and they get only what you send "
+               "them. Act and speak accordingly.")
 
 
 def mail_hint(address: str, client: str) -> str:
