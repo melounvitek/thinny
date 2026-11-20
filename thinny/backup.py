@@ -192,7 +192,7 @@ def ask_passphrase(s: Settings, passphrase: str) -> str:
         if res.returncode == 0:
             save_passphrase(passphrase)
             return passphrase
-        if "passphrase" not in res.stdout + res.stderr:
+        if "passphrase" not in (res.stdout + res.stderr).lower():
             raise CommandError(f"borg info: {(res.stdout + res.stderr).strip()}")
         print("That passphrase does not open the backups.")
         passphrase = ""
@@ -255,6 +255,7 @@ def archive(s: Settings, inst: Instance, name: str, timestamp: str, disk: int) -
     tag, commit = (update.UNFINISHED.read_text().split()[:2] if update.UNFINISHED.exists() else
                    host.release() or ("", ""))
     comment = json.dumps({"release": [tag, commit], "built_ins": inst.built_ins, "disk_gb": disk // 2**30})
+    comment = comment.replace("{", "{{").replace("}", "}}")   # borg fills in its {placeholders} there
     with step(f"{inst.name}: backup"):
         borg(s, "create", "--timestamp", timestamp, "--comment", comment, "--content-from-command",
              "--stdin-name", f"{inst.name}.tar", f"::{name}", "--",
@@ -279,8 +280,8 @@ def archives(s: Settings) -> list[str]:
 
 def tidy(s: Settings) -> None:
     """Delete what failed runs left, then old backups: KEEP of each instance's and the server's, and the state
-    before a restore for 30 days. The space comes free where nothing restricts the key, such as a Hetzner Storage
-    Box; elsewhere at the backup machine's monthly cleanup."""
+    before a restore for 30 days. Their space comes free at the backup machine's monthly cleanup (at once where
+    nothing restricts thinny's key)."""
     complete, members = runs(archives(s))
     for unfinished in sorted(set(members) - set(complete)):
         borg(s, "delete", "--glob-archives", f"{unfinished}.instance.*", timeout=3600)

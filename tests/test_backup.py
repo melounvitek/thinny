@@ -102,8 +102,11 @@ class Machine:
             if res.returncode:
                 return "", f"Command {args[args.index('--') + 1]!r} exited with {res.returncode}\n", 2
             name = next(a for a in args if a.startswith("::"))[2:]
-            self.archives[name] = {"time": option("--timestamp"), "comment": option("--comment"),
-                                   "data": res.stdout.encode()}
+            try:
+                comment = option("--comment").format()   # borg's {placeholders}, of which the test has none
+            except (KeyError, IndexError, ValueError):
+                return "", f"Invalid placeholder in string: {option('--comment')}\n", 2
+            self.archives[name] = {"time": option("--timestamp"), "comment": comment, "data": res.stdout.encode()}
         elif command == "create":   # ::NAME PATH...
             at = next(i for i, a in enumerate(args) if a.startswith("::"))
             excluded = [a.removeprefix("--exclude=pp:") for a in args if a.startswith("--exclude=pp:")]
@@ -133,8 +136,8 @@ class Machine:
             (repo / "config").write_text("[repository]\n")
             self.passphrases[repo] = env["BORG_PASSPHRASE"]
         elif command == "info" and self.passphrases.get(repo) != env["BORG_PASSPHRASE"]:
-            return "", "passphrase supplied in BORG_PASSPHRASE, by BORG_PASSCOMMAND or via BORG_PASSPHRASE_FD is " \
-                       "incorrect.\n", 52
+            return "", "Passphrase supplied in BORG_PASSPHRASE, by BORG_PASSCOMMAND, or via BORG_PASSPHRASE_FD is " \
+                       "incorrect.\n", 2
         return "", "", 0
 
     def ran(self, text):

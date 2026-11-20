@@ -30,6 +30,9 @@ Status: in development. Design notes: [`NOTES.md`](NOTES.md).
 - **A mailbox per instance**, `alice@<your domain>` at Purelymail, that the people you name can email
   and get replies from (optional, see [Email](#email)).
 - **One Hermes release**, with an optional nightly update that moves instances one at a time.
+- **Nightly backups** of every instance and of the server to another machine over SSH, encrypted, that a
+  server broken into cannot delete, and restores of one instance or of everything on a new server
+  (optional, see [Backups](#backups)).
 - **Webapp or WebUI per instance:** Hermes's built-in Webapp, or hermes-webui, with the same
   password. WebUI follows its stable releases like Hermes.
 - **Four ways to open the Webapp:** office network (HTTPS), Tailscale, your own address, or an
@@ -604,10 +607,113 @@ thinny update --all --dry-run   # only report what --all would do
 ```
 
 - **There is no rollback.** Hermes databases cannot be downgraded. Snapshot the server before
-  `update_time` (see [`extras/netcup-snapshot`](extras/netcup-snapshot/)).
+  `update_time` (see [`extras/netcup-snapshot`](extras/netcup-snapshot/)), or turn on
+  [Backups](#backups): the update then runs only after a backup that worked, which `thinny backup
+  restore --all` on a new server brings back as it was, at its release.
 - A gateway restart waits for a reply in progress, but cuts off scheduled jobs. Keep them away
   from `update_time`.
 - The update never reboots the server.
+
+## Backups
+
+Every night, just before the update, thinny backs up every instance's container and its own settings to
+another machine over SSH with [borg](https://www.borgbackup.org/): encrypted, and storing only what changed.
+From them it restores one instance, or everything on a new server. Off until `[backup] target` is set.
+
+**You keep one thing: the passphrase.** With it and SSH access to the backup machine, everything can be
+restored.
+
+### Setup
+
+1. Install borg on the backup machine, a Linux server or NAS with SSH: `apt install borgbackup`, or the
+   NAS's package. Debian's and Ubuntu's borg 1.2 and 1.4 work with each other.
+2. Name it in `config.toml` (`thinny config edit`):
+
+   ```toml
+   [backup]
+   target = "you@nas:thinny-backups"   # a relative path is in that account's home
+   ```
+
+3. Run `thinny backup init`. It logs in to the backup machine as `you`, once: with your password, or
+   with your SSH key if you run `sudo --preserve-env=SSH_AUTH_SOCK thinny backup init` (sudo hides your
+   SSH agent). You confirm the machine's host key. thinny keeps nothing of that login. There it:
+   - adds thinny's own key to `~/.ssh/authorized_keys`, allowed only `borg serve --append-only` in that
+     folder: it can add backups, but not delete or change them;
+   - creates the backups, encrypted with a new **passphrase that thinny shows once**. Keep it off the
+     server, e.g. in your password manager: without it, nothing can be restored. The server keeps a copy
+     in `secrets.env` for its nightly runs;
+   - leaves a spare copy of the backups' key beside them (`thinny-backups.key-copy`, see below);
+   - adds a monthly cleanup to its crontab, which frees the space of old backups. Where there is no
+     crontab (some NAS), it prints the line for the NAS's task scheduler.
+
+   Run again, it changes nothing that is set up. On another SSH port, give the host a `Host` entry with
+   `Port` in `/root/.ssh/config`.
+
+A Hetzner Storage Box is not supported: its SSH cannot run init's setup, nor restrict thinny's key.
+
+### Every night
+
+```sh
+thinny backup          # back up now
+thinny backup list     # the backups: each run, with its instances
+```
+
+- Before the update, thinny backs up each container (active, disabled or pending) without stopping it,
+  from an instant snapshot, then the server's settings, tokens, instances and access traces, and the
+  certificate authority office PCs trust. Exports stay out.
+- It keeps 7 daily, 4 weekly and 6 monthly backups of each instance and of the server. A run that
+  failed or stopped halfway leaves nothing: the next run deletes what it left.
+- **If the backup fails, the update waits** for one that works (`thinny update --all` does not). `thinny
+  doctor` fails then, and when no backup worked for 36 hours. [`extras/nightly-watch`](extras/nightly-watch/)
+  can watch it too (`thinny-backup`).
+- Incus writes each container's whole archive to the server's disk before borg reads it, uncompressed: a
+  container whose archive does not fit above the last tenth of that disk is not backed up. Only what
+  changed goes over the network, so the first run takes the longest.
+- The [access trace](#access-trace) notes each backup as `incus export <name>`, so its users can see
+  their data is backed up.
+
+### Restore an instance
+
+```sh
+thinny backup restore alice                              # from the newest backup
+thinny backup restore alice --from 2026-11-18T03:00:12   # a run from thinny backup list
+```
+
+- It stops `alice`, backs up its state then (`before-restore.alice.<time>`, kept 30 days; `--from` takes
+  it back), replaces its container with the backup's and finishes it like a [moved](#instances)
+  instance, at the server's Hermes release.
+- Everything in it is as it was then: data, the password, sign-ins and its users' settings. A sign-in
+  renewed since may need `thinny instance login alice` again.
+- It refuses a backup from a newer Hermes release than the server's, and runs only when no update is
+  unfinished. If it stops halfway, run it again: it goes on where it stopped. Until then, no backup
+  runs.
+
+### Rebuild on a new server
+
+1. [Install](#install) thinny on the new server, with the same `[backup] target`.
+2. `thinny backup init` adds the new server's key on the backup machine and asks for the passphrase.
+3. `thinny backup restore --all`, or `--from <run>`.
+
+- It brings back `config.toml`, `secrets.env`, the groups, the access traces and the certificate
+  authority, and every instance at its old port and address, with everything in it, at the Hermes
+  release of the backup. Disabled instances stay disabled.
+- If it stops halfway, run it again. A `config.toml` that names a network interface the new server
+  lacks stops it before the instances: correct it with `thinny config edit`, then run it again.
+- Then check `access.lan_address` if the server's LAN address changed, sign the server in to Tailscale
+  if instances use it, point DNS or your tunnel at it for `url` instances, and on the backup machine
+  delete the old server's line in `~/.ssh/authorized_keys` (ending in `thinny-backup@<old hostname>`).
+- Not in the backups: the dashboard's history and your tunnel's settings. Mailboxes and Telegram bots
+  live outside the server and work on.
+
+### Limits
+
+- **A server broken into cannot delete backups for good, until the next monthly cleanup** on the
+  backup machine, which makes deletions final, possibly within minutes. After a break-in, turn that
+  cleanup off at once; borg's docs on append-only mode tell how to bring deleted backups back.
+- It can replace the backups' key, so that the passphrase no longer opens them. Then, on the backup
+  machine: `borg key import ~/thinny-backups ~/thinny-backups.key-copy`.
+- The server must hold no other way into the backup machine, such as your own SSH key or password
+  there: whoever breaks into it could delete the backups with that.
 
 ## Status and checks
 
@@ -773,6 +879,7 @@ its check, `/etc/thinny`, `/etc/hermes`, `/var/lib/thinny`, the log, `/etc/sudoe
 the clone in `/usr/local/src/thinny` and thinny itself. **There is no undo.** If a step fails, fix the
 cause and run it again: it continues.
 
+The backups stay on the backup machine, and so does thinny's line in its `~/.ssh/authorized_keys`.
 Storage pools that are not thinny's stay. The packages stay installed (the dashboard's with their
 services masked, and their history): `apt purge` removes those nothing else uses. IP forwarding and
 user namespaces stay on until the next reboot.
