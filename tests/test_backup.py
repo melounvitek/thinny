@@ -364,7 +364,8 @@ def test_a_backup_takes_every_container_running_and_then_the_servers_settings(se
     assert not incus.ran("incus stop") and incus.containers["alice"]["state"] == "RUNNING"
     alice = nas.archives[f"{run}.instance.alice"]
     assert json.loads(alice["data"])["files"]["/home/x/.hermes/state.db"] == "alice's chats"
-    assert incus.ran("incus export alice - --instance-only --compression none --quiet")   # so borg stores only changes
+    # btrfs's stream (the quickest), uncompressed: borg stores only what changed
+    assert incus.ran("incus export alice - --instance-only --optimized-storage --compression none --quiet")
     # what a restore needs to know
     assert json.loads(alice["comment"]) == {"release": ["v2", "c0ffee"], "built_ins": render.BUILT_INS, "disk_gb": 30}
     # one time for the whole run, so that every instance's backups and the server's are kept alike

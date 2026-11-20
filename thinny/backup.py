@@ -250,8 +250,10 @@ def create(s: Settings, reg: Registry, scheduled: bool = False) -> int:
 
 
 def archive(s: Settings, inst: Instance, name: str, timestamp: str, disk: int) -> None:
-    """The instance's container as Incus exports it, uncompressed so that borg stores only what changed. Its comment
-    has what a restore needs: the Hermes release its server was at (or going to), its built-ins and disk size."""
+    """The instance's container as Incus exports it: as a btrfs stream, which the instances' pools are and which takes
+    a quarter of the time of a tarball of its files, and uncompressed, so that borg stores only what changed. Its
+    comment has what a restore needs: the Hermes release its server was at (or going to), its built-ins and disk
+    size."""
     folder = Path(instances.SERVER_DISK) / "storage-pools" / instances.pool_of(inst.name) / "containers" / inst.name
     check_room(inst.name, int(run(["du", "-sb", str(folder)], timeout=3600).stdout.split()[0]), "back up")
     tag, commit = (update.UNFINISHED.read_text().split()[:2] if update.UNFINISHED.exists() else
@@ -261,7 +263,8 @@ def archive(s: Settings, inst: Instance, name: str, timestamp: str, disk: int) -
     with step(f"{inst.name}: backup"):
         borg(s, "create", "--timestamp", timestamp, "--comment", comment, "--content-from-command",
              "--stdin-name", f"{inst.name}.tar", f"::{name}", "--",
-             "incus", "export", inst.name, "-", "--instance-only", "--compression", "none", "--quiet",
+             "incus", "export", inst.name, "-", "--instance-only", "--optimized-storage", "--compression", "none",
+             "--quiet",
              timeout=ARCHIVE_TIMEOUT)
 
 
