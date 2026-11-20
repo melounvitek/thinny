@@ -428,8 +428,10 @@ Incus 6.0.0, 6.0.4 and 6.0.5, Prometheus 2.45 and 2.53, node exporter 1.7 to 1.1
   Compaction keeps the chat (`compression.in_place`, on by default): one Telegram chat can last weeks, so a chat
   counted whole in every window it was active in would count its old tokens again; thinny shares them out by its
   replies (`assistant` messages, about one per model call) instead. Every message has a time, so turns are exact:
-  `user` messages without compaction summaries (`_compressed_summary`), outside `subagent` chats (whose task is
-  the parent agent's). A cron job's prompt counts. Rewound or undone turns count too: they used the limits. On a
+  `user` messages without compaction summaries (`_compressed_summary`), outside subagents' chats (whose task is
+  the parent agent's: source `subagent`, or the gateway's with `_delegate_from` in `model_config`). Compaction
+  inserts the messages it keeps again, with their `message_uid` and time, so each uid counts once, replies too.
+  A cron job's prompt counts. Rewound or undone turns count too: they used the limits. On a
   workstation's 850 MB `state.db`: 0.3 s, and cache reads were 92 % of all tokens **[tested]**.
 
 ### Email (2026-11-16)

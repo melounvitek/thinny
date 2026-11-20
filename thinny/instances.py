@@ -1188,14 +1188,20 @@ def list_instances(reg: Registry, group: str | None = None) -> None:
 # The turns of the instance's users (their messages, not those of the agent's subagents) and the tokens it used (input,
 # output and cache writes; cache reads count least against a limit) in the last 5 hours and 7 days, from the chats in
 # its Hermes home (argv[1]), as JSON. Hermes counts a chat's tokens, not a reply's: they are shared out by its replies.
+# Compaction copies messages, keeping their uid. A subagent's chat has its own source, or a mark when it has the
+# gateway's.
 ACTIVITY = r'''
 import json, sqlite3, sys, time
 from pathlib import Path
 db = Path(sys.argv[1]) / "state.db"
 query = """SELECT COALESCE(SUM(turns), 0), COALESCE(SUM(tokens * replies_since / replies), 0) FROM (
-    SELECT SUM(m.role = 'user' AND m.timestamp >= :since AND NOT m._compressed_summary AND s.source != 'subagent')
-               AS turns,
-           SUM(m.role = 'assistant' AND m.timestamp >= :since) AS replies_since, SUM(m.role = 'assistant') AS replies,
+    SELECT COUNT(DISTINCT CASE WHEN m.role = 'user' AND m.timestamp >= :since AND NOT m._compressed_summary
+                                    AND s.source != 'subagent' AND json_extract(CASE WHEN json_valid(s.model_config)
+                                        THEN s.model_config END, '$._delegate_from') IS NULL
+                               THEN m.message_uid END) AS turns,
+           COUNT(DISTINCT CASE WHEN m.role = 'assistant' AND m.timestamp >= :since THEN m.message_uid END)
+               AS replies_since,
+           COUNT(DISTINCT CASE WHEN m.role = 'assistant' THEN m.message_uid END) AS replies,
            s.input_tokens + s.output_tokens + s.cache_write_tokens AS tokens
     FROM sessions s JOIN messages m ON m.session_id = s.id
     WHERE s.id IN (SELECT session_id FROM messages WHERE timestamp >= :since)

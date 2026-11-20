@@ -724,21 +724,26 @@ def test_usage_takes_what_an_instances_users_make_hermes_say_as_text_or_a_failur
 
 def hermes_home(path, *chats):
     """A Hermes home at `path`, its Hermes running, with a state.db of these chats: (source, its tokens (input, output,
-    cache reads, cache writes), its messages as (role, hours ago)), as Hermes keeps them. A `summary` is a compaction's
-    summary, which Hermes keeps as a message of the user's."""
+    cache reads, cache writes), its messages as (role, hours ago[, uid]), [its model_config]), as Hermes keeps them.
+    A `summary` is a compaction's summary, which Hermes keeps as a message of the user's; messages of one uid are a
+    message and the copies compaction made of it."""
     path.mkdir()
     db = sqlite3.connect(path / "state.db")
     db.execute("PRAGMA journal_mode=WAL")
     db.executescript("""
-        CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, input_tokens INTEGER DEFAULT 0,
-            output_tokens INTEGER DEFAULT 0, cache_read_tokens INTEGER DEFAULT 0, cache_write_tokens INTEGER DEFAULT 0);
+        CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, model_config TEXT,
+            input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0, cache_read_tokens INTEGER DEFAULT 0,
+            cache_write_tokens INTEGER DEFAULT 0);
         CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, role TEXT NOT NULL,
-            timestamp REAL NOT NULL, _compressed_summary INTEGER NOT NULL DEFAULT 0);""")
-    for i, (source, tokens, messages) in enumerate(chats):
-        db.execute("INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?)", (str(i), source, *tokens))
-        db.executemany("INSERT INTO messages (session_id, role, timestamp, _compressed_summary) VALUES (?, ?, ?, ?)",
-                       [(str(i), "user" if role == "summary" else role, time.time() - hours * 3600, role == "summary")
-                        for role, hours in messages])
+            timestamp REAL NOT NULL, _compressed_summary INTEGER NOT NULL DEFAULT 0, message_uid TEXT);""")
+    uids = itertools.count()
+    for i, (source, tokens, messages, *config) in enumerate(chats):
+        db.execute("INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?)",
+                   (str(i), source, json.dumps(config[0]) if config else None, *tokens))
+        db.executemany("INSERT INTO messages (session_id, role, timestamp, _compressed_summary, message_uid) "
+                       "VALUES (?, ?, ?, ?, ?)",
+                       [(str(i), "user" if role == "summary" else role, time.time() - hours * 3600, role == "summary",
+                         uid[0] if uid else f"m{next(uids)}") for role, hours, *uid in messages])
     db.commit()
     return db
 
@@ -749,11 +754,15 @@ def test_usage_shows_each_instances_turns_and_tokens_of_the_last_7_days(incus, c
     incus.containers = {name: {"state": "RUNNING", "hermes_home": str(tmp_path / name)} for name in names}
     hermes = hermes_home(
         tmp_path / "alice",
-        # 4M tokens without the cache reads, over its 4 replies: 3 in the last 7 days, 2 in the last 5 hours
+        # 4M tokens without the cache reads, over its 4 replies: 3 in the last 7 days, 2 in the last 5 hours. Its
+        # compaction kept the last turn and reply as copies.
         ("webui", (2_500_000, 1_000_000, 90_000_000, 500_000),
-         [("user", 240), ("assistant", 240), ("user", 72), ("assistant", 72), ("summary", 1), ("user", 1),
-          ("assistant", 1), ("assistant", 0.5)]),
-        ("subagent", (500_000, 100_000, 0, 0), [("user", 1), ("assistant", 1)]),   # its task is no turn of the users'
+         [("user", 240), ("assistant", 240), ("user", 72), ("assistant", 72), ("user", 1, "turn"),
+          ("assistant", 1, "reply"), ("summary", 0.9), ("user", 1, "turn"), ("assistant", 1, "reply"),
+          ("assistant", 0.5)]),
+        # subagents' chats, also one from a Telegram turn: their tasks are no turns of the users'
+        ("subagent", (300_000, 100_000, 0, 0), [("user", 1), ("assistant", 1)]),
+        ("telegram", (200_000, 0, 0, 0), [("user", 1), ("assistant", 1)], {"_delegate_from": "0"}),
         ("telegram", (1_000, 0, 0, 0), [("user", 200), ("assistant", 200)]))
     # bob has used no chat yet; carol's state.db is not Hermes's
     (tmp_path / "carol").mkdir()
