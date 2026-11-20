@@ -667,9 +667,9 @@ thinny backup list     # the backups: each run, with its instances
   active or disabled instance without its container fails it too. `thinny doctor` fails then, and when
   no backup worked for 36 hours. [`extras/nightly-watch`](extras/nightly-watch/)
   can watch it too (`thinny-backup`).
-- Incus writes each container's whole archive to the server's disk before borg reads it, uncompressed: a
-  container whose archive does not fit above the last tenth of that disk is not backed up. Only what
-  changed goes over the network, so the first run takes the longest.
+- Each instance takes a few minutes, even with little changed (about 2.5 for 3 GB on a test server):
+  Incus exports it whole, to the server's disk, before borg reads it. A container whose archive does not
+  fit there above the last tenth of the disk is not backed up. Only what changed goes over the network.
 - The [access trace](#access-trace) notes each backup as `incus export <name>`, so its users can see
   their data is backed up.
 

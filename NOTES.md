@@ -627,6 +627,7 @@ machine's forced command runs, `borg serve --append-only --restrict-to-repositor
   non-optimized; v6.0.0 and v6.0.5) **[src]**: a crash-consistent copy, without stopping it. Not tried with a running
   instance.
 - `borg create --content-from-command ... -- incus export <name> - --instance-only --compression none --quiet`
+  (thinny adds `--optimized-storage`, see below)
   stored the export; an export that failed (no such container) ended with exit 2 and no archive **[tested]**. A
   shell pipe into `borg create -` would have stored a cut-off stream **[docs]**. Two runs of an unchanged container
   of 9 KiB added 1.9 KiB **[tested]**.
@@ -649,6 +650,31 @@ machine's forced command runs, `borg serve --append-only --restrict-to-repositor
 - `borg extract --stdout ::<archive> | incus import - <name> --storage <pool>` (bash, pipefail) brought back the
   container with its file **[tested]**.
 - `borg --timestamp` is UTC **[docs]**; every archive of a run gets the same one, so prune keeps whole runs.
+
+On servers (2026-11-20, thinny 0300715): Debian 13 VMs on this workstation (Incus 6.0.5 VMs, 4 CPUs, 6 GiB, the
+guests' Incus 6.0.4 and borg 1.4.0), one the old server with alice (Webapp) and bob (WebUI, disabled), each about
+3.2 GiB, one a fresh new server; a Debian 13 VM with sshd, cron and borg 1.4.0 as the backup machine, account
+`you` with a password. The admin's answers came from `expect` **[tested]**:
+
+- `backup init` asked for the host key and the password, showed the passphrase and set up the forced command,
+  the crontab line and the key's copy. thinny's key got no shell: `borg serve` reads `SSH_ORIGINAL_COMMAND`, so
+  `ssh ... id` printed borg's usage, and `echo thinny-unrestricted` exited 2 with the word on stderr only.
+- `incus export` as a tarball of the files took 5 min 13 s for alice: 8.3 GB uncompressed at about 27 MB/s, while
+  the VM's disk wrote 738 MB/s. With `--optimized-storage` (a btrfs stream): 1 min 23 s, 6.5 GB. Through borg,
+  each instance took about 2 min 40 s per run with the stream, the first run too, against 5 min 40 s with the
+  tarball, also when nothing had changed; a second stream of alice with a line changed added 74 MB. `incus import -` of such a stream into another btrfs
+  pool took 89 s.
+- `systemctl start thinny-update.service` ran the backup, then the update. With the backup machine's disk full,
+  borg failed with "No space left on device": the service failed without updating, the status kept the last
+  good run, and the run's first archive was gone.
+- `backup restore alice` took 5 min 23 s (her state before it, the import, Hermes again) and brought back her
+  file; her Webapp answered, `doctor` was all OK.
+- `backup restore --all` on the new server took 4 min 51 s: alice active at her port and address with her file,
+  bob disabled with his, the access traces back, `doctor` without a failure. With alice on `lan`, it first stopped
+  at the old server's LAN address; after `config apply` with the new one, it went on, and Caddy ran with the old
+  server's certificate authority (the same fingerprint): curl trusting only the old root certificate got 302
+  from the new address.
+- The monthly cleanup line, run as `you`, took 24 s and freed 3 of 16 GB.
 
 ## 2. Rejected options (and why)
 
@@ -722,11 +748,10 @@ machine's forced command runs, `borg serve --append-only --restrict-to-repositor
 - Export: not tried are its time on a large `state.db` (2 s with 1.4 MB) and `hermes import` into a Hermes
   outside thinny. It follows Hermes's list of credentials, but mirrors its private any-depth names: check
   them when Hermes changes.
-- Backups are tested with real borg and Incus only as section 1, Backups says: not yet as root on a server (the
-  nightly run through systemd, `du` in a pool, `backup init` against a real backup machine and its sshd, a restore
-  of a real instance, `restore --all` on a fresh server, Caddy's certificate authority), nor how long a run takes
-  with large instances. A Hetzner Storage Box is not supported: its restricted shell cannot run init's setup, and
-  its key cannot be restricted.
+- Backups are tried on Debian 13 VMs only (section 1, Backups): not on Ubuntu, nor with a NAS as the backup
+  machine, nor with large or busy instances (how long a run takes, and the consistency of a running one's
+  export). A Hetzner Storage Box is not supported: its restricted shell cannot run init's setup, and its key
+  cannot be restricted.
 - Per-instance SSH and Tailscale are left to the users; SSH needs the host as jump host.
 - The firewall check: a flush with Tailscale's tables around is untried (the VM had no Tailscale, and nothing
   was flushed on the workstation).
