@@ -388,7 +388,7 @@ def asked(srv):
 
 def test_the_timer_writes_each_running_instances_share_of_its_subscription_limits(server, monkeypatch):
     srv = server
-    names = ["alice", "bob", "carol", "dave", "erin", "frank", "gina", "hank", "ivy", "jack"]
+    names = ["alice", "bob", "carol", "dave", "erin", "frank", "gina", "hank", "ivy", "jack", "kate"]
     reg = Registry({name: Instance(name, 9120 + i, "lan", state="active") for i, name in enumerate(names)})
     reg.get("ivy").state = "disabled"   # its container stays
     reg.get("jack").state = "pending"   # its add goes on
@@ -406,12 +406,13 @@ def test_the_timer_writes_each_running_instances_share_of_its_subscription_limit
         "gina": usage("openrouter", ("Session", 5)),   # no subscription of thinny's
         "ivy": usage("openai-codex", ("Session", 1)),
         "jack": usage("openai-codex", ("Session", 1)),
+        "kate": usage("openai-codex", ("Weekly", 42)),   # a plan with only a weekly limit
     }
     assert cli.main(["metrics"]) == 0
     assert dashboard.USAGE_METRICS.read_text() == render.usage_metrics([
         ("alice", "ChatGPT", "5h", 0.37), ("alice", "ChatGPT", "week", 0.124),
-        ("bob", "Claude", "5h", 0.81), ("bob", "Claude", "week", 0.64)])
-    assert asked(srv) == ["alice", "bob", "carol", "dave", "erin", "frank", "gina"]   # the provider: Hermes's
+        ("bob", "Claude", "5h", 0.81), ("bob", "Claude", "week", 0.64), ("kate", "ChatGPT", "week", 0.42)])
+    assert asked(srv) == ["alice", "bob", "carol", "dave", "erin", "frank", "gina", "kate"]   # the provider: Hermes's
     assert "disk_used_bytes{name=\"hank\"}" in dashboard.DISK_METRICS.read_text()
 
 
