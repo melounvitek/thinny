@@ -1185,39 +1185,84 @@ def list_instances(reg: Registry, group: str | None = None) -> None:
         print("  ".join(c.ljust(w) for c, w in zip(r, widths)).rstrip())
 
 
+# The turns of the instance's users (their messages, not those of the agent's subagents) and the tokens it used (input,
+# output and cache writes; cache reads count least against a limit) in the last 5 hours and 7 days, from the chats in
+# its Hermes home (argv[1]), as JSON. Hermes counts a chat's tokens, not a reply's: they are shared out by its replies.
+ACTIVITY = r'''
+import json, sqlite3, sys, time
+from pathlib import Path
+db = Path(sys.argv[1]) / "state.db"
+query = """SELECT COALESCE(SUM(turns), 0), COALESCE(SUM(tokens * replies_since / replies), 0) FROM (
+    SELECT SUM(m.role = 'user' AND m.timestamp >= :since AND NOT m._compressed_summary AND s.source != 'subagent')
+               AS turns,
+           SUM(m.role = 'assistant' AND m.timestamp >= :since) AS replies_since, SUM(m.role = 'assistant') AS replies,
+           s.input_tokens + s.output_tokens + s.cache_write_tokens AS tokens
+    FROM sessions s JOIN messages m ON m.session_id = s.id
+    WHERE s.id IN (SELECT session_id FROM messages WHERE timestamp >= :since)
+    GROUP BY s.id)"""
+con = sqlite3.connect(db.as_uri() + "?mode=ro", uri=True) if db.exists() else None
+print(json.dumps({window: con.execute(query, {"since": time.time() - hours * 3600}).fetchone() if con else [0, 0]
+                  for window, hours in (("5h", 5), ("week", 7 * 24))}))
+'''
+
+
+def activity(name: str) -> dict[str, tuple[int, int]] | None:
+    """The turns and tokens of the instance's users in the last 5 hours ("5h") and 7 days ("week"), as ACTIVITY
+    counts them; None without an answer. Its users control what it says."""
+    try:
+        res = hermes_python(name, ACTIVITY, check=False, timeout=USAGE_TIMEOUT)
+        doc = json.loads(res.stdout)
+        counts = {window: (doc[window][0], doc[window][1]) for window in ("5h", "week")}
+    except (CommandError, ValueError, TypeError, KeyError, IndexError, RecursionError):
+        return None
+    # Below 2**53, where a float (Prometheus's numbers) keeps every integer.
+    if res.returncode or not all(type(n) is int and 0 <= n < 2**53 for pair in counts.values() for n in pair):
+        return None
+    return counts
+
+
 def usage(s: Settings, reg: Registry, name: str | None = None) -> None:
     """How much of their subscription's limits the users of every active instance (or the named one) used, as
-    Hermes asks the provider now. All at once: one after another, they would add up to minutes."""
+    Hermes asks the provider now, and their turns and tokens of the last 7 days. All at once: one after another, they
+    would add up to minutes."""
     targets = [_active(reg, name)] if name else [inst for inst in reg.current() if inst.state == "active"]
     with ThreadPoolExecutor() as pool:
-        rows = [("NAME", "PROVIDER", "ACCOUNT", "5H", "WEEK"),
+        rows = [("NAME", "PROVIDER", "ACCOUNT", "TURNS 7D", "TOKENS 7D", "5H", "WEEK"),
                 *pool.map(lambda inst: _usage_row(s, reg, inst.name), targets)]
     # With its users' texts (a provider, an account, a reason): without control characters, for the admin's terminal.
     rows = [[printable(c) for c in r] for r in rows]
     # A row's last text sets no column's width: a note (not signed in, ?) spans 5H and WEEK.
-    widths = [max(len(r[i]) for r in rows if len(r) > i + 1) for i in range(4)]
+    widths = [max(len(r[i]) for r in rows if len(r) > i + 1) for i in range(6)]
     for r in rows:
         print("  ".join(c.ljust(w) for c, w in zip(r, [*widths, 0])).rstrip())
 
 
 def _usage_row(s: Settings, reg: Registry, name: str) -> tuple[str, ...]:
     shown = account = "?"
+    week = (activity(name) or {}).get("week")
+    used = (str(week[0]), _count(week[1])) if week else ("?", "?")
     try:
         provider = provider_of(s, reg, name, timeout=USAGE_TIMEOUT)
         shown, account = _provider_name(provider), _account(name, provider)
         res = hermes(name, ["usage", "--json", "--provider", provider], check=False, timeout=USAGE_TIMEOUT)
         if res.returncode:   # Hermes got nothing: without a credential, or the provider did not answer
             status = hermes(name, ["auth", "status", provider], check=False, timeout=USAGE_TIMEOUT).stdout
-            return name, shown, account, "not signed in" if ": logged out" in status else "?"
+            return name, shown, account, *used, "not signed in" if ": logged out" in status else "?"
         doc = json.loads(res.stdout)
         if reason := doc["unavailable_reason"]:   # the Claude plugin's way of saying it got nothing
-            return (name, shown, account,
+            return (name, shown, account, *used,
                     "not signed in" if reason.startswith("no Claude subscription login") else reason)
         windows = {w["label"]: w for w in doc["windows"]}
-        return name, shown, account, _window(windows, FIVE_HOURS, "%H:%M"), _window(windows, WEEK, "%a %H:%M")
+        return (name, shown, account, *used,
+                _window(windows, FIVE_HOURS, "%H:%M"), _window(windows, WEEK, "%a %H:%M"))
     except (CommandError, ValueError, TypeError, KeyError, AttributeError, OverflowError,
             RecursionError):   # or what its users made Hermes say
-        return name, shown, account, "?"
+        return name, shown, account, *used, "?"
+
+
+def _count(n: int) -> str:
+    """A count, short: 999, 12k, 3.6M."""
+    return f"{n / 1e6:.1f}M" if n >= 999_500 else f"{n / 1e3:.0f}k" if n >= 1000 else str(n)
 
 
 def _account(name: str, provider: str) -> str:
