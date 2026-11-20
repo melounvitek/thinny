@@ -451,7 +451,7 @@ def restore_all(s: Settings, reg: Registry, source: str | None = None) -> None:
         raise CommandError(f"this server has no network interface {s.network_interface} (network.interface {fix}")
     # Caddy binds the LAN address, which a new server may not have.
     if any(inst.access == "lan" for inst in reg.current()) and \
-            f" {s.lan_address}/" not in run(["ip", "-o", "address", "show"]).stdout:
+            not run(["ip", "-o", "addr", "show", "to", s.lan_address], check=False, timeout=10).stdout.strip():
         raise CommandError(f"this server does not have the address {s.lan_address} (access.lan_address {fix}")
     apply.apply(s)   # firewall, profile and units as the restored config.toml says, before any container starts
     names = archives(s)
