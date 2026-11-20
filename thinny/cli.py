@@ -14,8 +14,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import (apply, checks, dashboard, export, host, instances, mail, move, settings, system, telegram, trace, uninstall,
-               update)
+from . import (apply, backup, checks, dashboard, export, host, instances, mail, move, settings, system, telegram, trace,
+               uninstall, update)
 from .registry import Registry, RegistryError, validate_name
 from .settings import SettingsError, load
 from .system import CommandError, lock, write_file
@@ -201,11 +201,14 @@ def main(argv: list[str] | None = None) -> int:
     rcv.add_argument("--disk-gb", type=at_least_1, required=True)
     rcv.add_argument("--mailbox", default="")
     rcv.add_argument("--check", action="store_true")
+    bkp = sub.add_parser("backup", help="back up every instance and the server now (see README, Backups)")
+    bkp = bkp.add_subparsers(dest="action", metavar="action")
+    bkp.add_parser("init", help="set up the backups on the machine in [backup] target (or connect a new server)")
     sub.add_parser("uninstall", help="remove thinny and every instance, with all their data")
     sub.add_parser("trace")  # without help, so not listed: thinny-trace.service runs it
     sub.add_parser("metrics")  # without help, so not listed: thinny-metrics.timer runs it
     sub.add_parser("firewall-check")  # without help, so not listed: thinny-firewall.timer runs it
-    for commands in (sub, cfg, inst, grp):   # listed alphabetically in help
+    for commands in (sub, cfg, inst, grp, bkp):   # listed alphabetically in help
         commands._choices_actions.sort(key=lambda action: action.dest)
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["complete"]:   # not listed: the bash completion runs it, as whoever presses Tab
@@ -349,6 +352,8 @@ def main(argv: list[str] | None = None) -> int:
                 mail.connect(s, reg, a.name, a.senders, a.new_password)
             elif command == "instance export":
                 export.export(reg, a.name)
+            elif command == "backup init":
+                backup.init(s)
             elif command == "instance trace-sheet":
                 trace.connect_sheet(reg, a.name, a.url)
             elif command == "instance reset-password":

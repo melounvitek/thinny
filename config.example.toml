@@ -57,3 +57,7 @@ port = 9200                     # outside webapp.port_range
 retention_days = 30
 subscription_usage = false      # true: also each instance's share of its 5-hour and weekly subscription limits,
                                 # turns and tokens, asked hourly in its container (tell its users: see README, Dashboard)
+
+[backup]                        # nightly backups of every instance and of the server, before the update (README, Backups)
+target = ""                     # the backup machine and folder, e.g. "you@nas:thinny-backups"; "" = off.
+                                # Then run: thinny backup init
