@@ -422,6 +422,15 @@ Incus 6.0.0, 6.0.4 and 6.0.5, Prometheus 2.45 and 2.53, node exporter 1.7 to 1.1
   three at every apply left `doctor` failing and the printed address unanswered, so apply restarts
   only what changed and waits until Prometheus and Grafana answer. Memory with one instance:
   Grafana 233 MiB, Prometheus 28 MiB, the node exporter 6 MiB **[tested]**.
+- Turns and tokens (Hermes v0.23.2 **[src]**): `state.db` keeps tokens per chat only (`sessions`: input without
+  the cache, output, cache reads and writes; `messages.token_count` stays empty), also for the Claude plugin, which
+  hands Claude Code's counts on. A subscription chat's cost is `included`, 0, so no cost to weigh models by.
+  Compaction keeps the chat (`compression.in_place`, on by default): one Telegram chat can last weeks, so a chat
+  counted whole in every window it was active in would count its old tokens again; thinny shares them out by its
+  replies (`assistant` messages, about one per model call) instead. Every message has a time, so turns are exact:
+  `user` messages without compaction summaries (`_compressed_summary`), outside `subagent` chats (whose task is
+  the parent agent's). A cron job's prompt counts. Rewound or undone turns count too: they used the limits. On a
+  workstation's 850 MB `state.db`: 0.3 s, and cache reads were 92 % of all tokens **[tested]**.
 
 ### Email (2026-11-16)
 Hermes v0.23.1 **[src]**; Purelymail from its API spec (`news.purelymail.com/api/`), docs and public
@@ -678,5 +687,7 @@ own), through `sudo -n` there. The instance: Webapp, local access, no group, loc
   (time and CPU per check, Anthropic's 429s). Also open: Codex's usage endpoint may answer 429 at 100 % (a gap
   where it matters most); the Claude plugin reads Claude Code's older answer (`utilization`) of 1 or less as a
   fraction, so 1 % or less could show as up to 100 % (upstream).
+- Turns and tokens are untested on a server, and against the limits: how close tokens track a shared
+  subscription's use (Opus weighs more than Sonnet; replies late in a long chat cost more than early ones).
 - Per-instance ChatGPT seats versus one API account per organisation (a local proxy such as
   CLIProxyAPI is parked).

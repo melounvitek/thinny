@@ -118,7 +118,8 @@ def main(argv: list[str] | None = None) -> int:
     inst = inst.add_subparsers(dest="action", required=True, metavar="action")
     inst.add_parser("list", help="instances, URLs, gateway state, CPU, RAM and disk use, mailboxes and phone lines") \
         .add_argument("--group", help="its instances only")
-    inst.add_parser("usage", help="how much of their 5-hour and weekly subscription limits instances used, and the resets") \
+    inst.add_parser("usage", help="how much of their 5-hour and weekly subscription limits instances used, and the "
+                                "resets; their turns and tokens of the last 7 days") \
         .add_argument("name", nargs="?", help="(default: every active instance)")
     add = inst.add_parser("add", help="add an instance (or finish an interrupted add)",
                           description="CPU and memory not given follow [container] in config.toml; "
