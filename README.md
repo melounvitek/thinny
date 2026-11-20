@@ -694,8 +694,8 @@ in the instance: only how many, nothing of what they say.
   an hour is far below what status-line tools ask. Each check runs within its instance's CPU and
   memory limits, four instances at a time, up to 20 s each.
 - An instance that is stopped or not signed in, or whose check fails, shows a gap. Turns and
-  tokens count also while it is not signed in. While thinny's
-  file is over 2 hours old, the panels show nothing, and `doctor` warns.
+  tokens count also while it is not signed in. While thinny's file is over 2 hours old, the
+  panels show nothing, and `doctor` warns.
 - Turned off, the checks stop within 5 minutes. The history stays until `retention_days` ends.
 
 ## Access trace
