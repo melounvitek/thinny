@@ -136,8 +136,9 @@ def init(s: Settings) -> None:
 
 def login(account: str, master: Path) -> None:
     """Log in as the admin, who confirms the backup machine's host key and types a password or uses their SSH key,
-    for a connection the next steps share. It closes 60 s after the last one, or when init closes it."""
-    code = subprocess.run(["ssh", "-o", "ControlMaster=yes", "-o", f"ControlPath={master}", "-o", "ControlPersist=60",
+    for a connection the next steps share. It closes when init closes it, or 15 minutes after its last use: long
+    enough to save the passphrase in between."""
+    code = subprocess.run(["ssh", "-o", "ControlMaster=yes", "-o", f"ControlPath={master}", "-o", "ControlPersist=900",
                            "-o", f"UserKnownHostsFile={KNOWN_HOSTS}", "-o", "StrictHostKeyChecking=ask",
                            account, "true"]).returncode
     if code:
@@ -422,7 +423,8 @@ def restore_all(s: Settings, reg: Registry, source: str | None = None) -> None:
     on."""
     target(s)
     marker = unfinished(None)
-    if not marker:
+    fresh = marker is None
+    if fresh:
         if reg.instances:
             raise CommandError("this server has instances; restore --all is for a new one (restore them one by one)")
         names = archives(s)
@@ -430,12 +432,12 @@ def restore_all(s: Settings, reg: Registry, source: str | None = None) -> None:
         run_name = source or (complete[-1] if complete else "")
         if run_name not in complete:
             raise CommandError(f"no complete backup {source} (see thinny backup list)" if source else "no backup yet")
-        with server_files(s, run_name) as root:
-            check_run(root, run_name, names)   # before anything changes
         marker = {"name": None, "run": run_name, "step": "files"}
-        write_file(RESTORE, json.dumps(marker) + "\n", 0o600)
     if marker["step"] == "files":
         with server_files(s, marker["run"]) as root:
+            if fresh:
+                check_run(root, marker["run"], names)   # before anything changes
+                write_file(RESTORE, json.dumps(marker) + "\n", 0o600)
             restore_files(root)
         marker["step"] = "instances"
         write_file(RESTORE, json.dumps(marker) + "\n", 0o600)
