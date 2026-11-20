@@ -194,7 +194,7 @@ def test_the_agent_learns_how_to_send_mail_from_the_mailbox_before_its_gateway_r
     monkeypatch.setattr(instances, "_gateway_up", lambda s, inst: hints.append(policy_hint()))
     mail.connect(SITE, alice, "alice", ["anna@example.com"])
     hint = render.mail_hint("alice@example.org", instances.HIMALAYA_BIN)
-    assert hints == [hint]
+    assert hints == [f"{render.SERVER_HINT}\n\n{hint}"]
     assert "/usr/local/bin/himalaya template send -a alice@example.org" in hint
     assert "EMAIL_HOME_ADDRESS" in hint and "--preview" in hint
 

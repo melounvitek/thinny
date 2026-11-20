@@ -484,7 +484,9 @@ noted **[tested]**.
 - Hermes removes `EMAIL_*` from the terminal's environment, and its file tool refuses `.env`; `grep` in the
   terminal reads it **[src]**.
 - `agent.environment_hint`, also from the managed scope, is in the prompt on every platform;
-  `HERMES_ENVIRONMENT_HINT` wins over it **[src]**.
+  `HERMES_ENVIRONMENT_HINT` wins over it **[src]**. It follows the local backend's `Host:`, home and working
+  directory lines, and nothing there says users are elsewhere **[src]**: agents told them they had opened pages
+  in their browser or saved files to their Downloads. thinny's own hint, first in every instance's, says so.
 - A chat reuses the prompt it started with. `hermes sessions refresh-prompts` has each chat of the profile
   rebuild it once, on its next turn, its history kept, also with the gateway running **[src]**.
 - thinny's account in the v1.2.0 binary: it read the password from a `.env` as `set_env` writes it and

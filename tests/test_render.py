@@ -14,7 +14,8 @@ def test_managed_config_pins_the_policy():
     yaml = pytest.importorskip("yaml")
     config = yaml.safe_load(render.managed_config(LOCKED))
     assert config["model"] == {"provider": "openai-codex", "default": "m1"}
-    assert config["agent"] == {"reasoning_effort": "high"}
+    # The agent knows its users are not at its host.
+    assert config["agent"] == {"reasoning_effort": "high", "environment_hint": render.SERVER_HINT}
     assert config["plugins"] == {"enabled": ["model-guard", "hermes-lang-cs",
                                              "claude-subscription-directsdk-experimental", "hermes-3310"],
                                  "disabled": []}
@@ -31,7 +32,8 @@ def test_managed_config_pins_the_policy():
 def test_without_the_model_lock_users_choose_their_model_effort_and_plugins():
     yaml = pytest.importorskip("yaml")
     config = yaml.safe_load(render.managed_config(S))
-    assert config == {"terminal": {"backend": "local"}, "bot_desktop": {"placement": "terminal"},
+    assert config == {"agent": {"environment_hint": render.SERVER_HINT},
+                      "terminal": {"backend": "local"}, "bot_desktop": {"placement": "terminal"},
                       "security": {"redact_secrets": True}, "approvals": {"mode": "smart"},
                       "auth": {"adopt_external_logins": False},
                       "platforms": {platform: {"gateway_restart_notification": False}
@@ -45,16 +47,19 @@ def test_a_groups_hermes_settings_join_the_policy_under_thinnys():
              "mcp_servers": {"github: work": {"command": "npx", "args": ["-y", "server-github"], "env": {}},
                              "on": {"command": "on-mcp"}, "123": {"url": "https://mcp.example.org/"}},
              "approvals": {"mode": "off"}, "security": False, "model": {"default": "m9"},
-             "platforms": {"telegram": {"enabled": True, "gateway_restart_notification": True}}}
+             "platforms": {"telegram": {"enabled": True, "gateway_restart_notification": True}},
+             "agent": {"environment_hint": "Office hours: 9-17."}}
     config = yaml.safe_load(render.managed_config(dataclasses.replace(LOCKED, hermes=group)))
     assert config["display"] == {"language": "cs"}
+    assert config["agent"]["environment_hint"] == f"{render.SERVER_HINT}\n\nOffice hours: 9-17."
     assert config["platforms"]["telegram"] == {"enabled": True, "gateway_restart_notification": False}
     assert config["mcp_servers"] == group["mcp_servers"]   # names YAML would read as no strings too
     # thinny's own win, also over a whole section
     assert config["terminal"] == {"timeout": 60, "backend": "local"}
     assert config["approvals"] == {"mode": "smart"} and config["security"] == {"redact_secrets": True}
     assert config["model"] == {"default": "m1", "provider": "openai-codex"}
-    assert group["terminal"]["backend"] == "docker"   # the group's own settings stay as they are
+    # the group's own settings stay as they are
+    assert group["terminal"]["backend"] == "docker" and group["agent"] == {"environment_hint": "Office hours: 9-17."}
 
 def test_managed_env_keeps_the_agent_in_the_container():
     env = render.managed_env()
