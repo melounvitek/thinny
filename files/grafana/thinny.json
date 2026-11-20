@@ -381,7 +381,7 @@
    "gridPos": {
     "x": 0,
     "y": 17,
-    "w": 24,
+    "w": 8,
     "h": 8
    },
    "fieldConfig": {
@@ -433,6 +433,96 @@
     }
    },
    "id": 18
+  },
+  {
+   "type": "timeseries",
+   "title": "Turns in the last 7 days",
+   "description": "The messages its users sent their agent in the last 7 days, not its subagents'. Counted hourly (dashboard.subscription_usage). Hidden while thinny's file of it is over 2 hours old.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "thinny-prometheus"
+   },
+   "gridPos": {
+    "x": 8,
+    "y": 17,
+    "w": 8,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "topk(10, max by (name) (thinny_instance_turns{window=\"week\"})) and on() (time() - node_textfile_mtime_seconds{file=\"/var/lib/prometheus/node-exporter/thinny-usage.prom\"} < 7200)",
+     "legendFormat": "{{name}}"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "id": 20
+  },
+  {
+   "type": "timeseries",
+   "title": "Tokens in the last 7 days",
+   "description": "The tokens their agent used in the last 7 days: input, output and cache writes, not cache reads. Hermes counts them per chat, so thinny shares a chat's out by its replies. Counted hourly (dashboard.subscription_usage). Hidden while thinny's file of it is over 2 hours old.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "thinny-prometheus"
+   },
+   "gridPos": {
+    "x": 16,
+    "y": 17,
+    "w": 8,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "topk(10, max by (name) (thinny_instance_tokens{window=\"week\"})) and on() (time() - node_textfile_mtime_seconds{file=\"/var/lib/prometheus/node-exporter/thinny-usage.prom\"} < 7200)",
+     "legendFormat": "{{name}}"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "id": 21
   },
   {
    "type": "row",
@@ -820,7 +910,7 @@
    "gridPos": {
     "x": 0,
     "y": 42,
-    "w": 12,
+    "w": 8,
     "h": 8
    },
    "fieldConfig": {
@@ -881,6 +971,114 @@
     }
    },
    "id": 19
+  },
+  {
+   "type": "timeseries",
+   "title": "Turns",
+   "description": "The messages its users sent their agent in the last 5 hours and 7 days, not its subagents'. Counted hourly (dashboard.subscription_usage). Hidden while thinny's file of it is over 2 hours old.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "thinny-prometheus"
+   },
+   "gridPos": {
+    "x": 8,
+    "y": 42,
+    "w": 8,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "thinny_instance_turns{name=\"$instance\",window=\"5h\"} and on() (time() - node_textfile_mtime_seconds{file=\"/var/lib/prometheus/node-exporter/thinny-usage.prom\"} < 7200)",
+     "legendFormat": "5 hours"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "thinny_instance_turns{name=\"$instance\",window=\"week\"} and on() (time() - node_textfile_mtime_seconds{file=\"/var/lib/prometheus/node-exporter/thinny-usage.prom\"} < 7200)",
+     "legendFormat": "7 days"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "id": 22
+  },
+  {
+   "type": "timeseries",
+   "title": "Tokens",
+   "description": "The tokens their agent used in the last 5 hours and 7 days: input, output and cache writes, not cache reads. Hermes counts them per chat, so thinny shares a chat's out by its replies. Counted hourly (dashboard.subscription_usage). Hidden while thinny's file of it is over 2 hours old.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "thinny-prometheus"
+   },
+   "gridPos": {
+    "x": 16,
+    "y": 42,
+    "w": 8,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "thinny_instance_tokens{name=\"$instance\",window=\"5h\"} and on() (time() - node_textfile_mtime_seconds{file=\"/var/lib/prometheus/node-exporter/thinny-usage.prom\"} < 7200)",
+     "legendFormat": "5 hours"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "thinny-prometheus"
+     },
+     "expr": "thinny_instance_tokens{name=\"$instance\",window=\"week\"} and on() (time() - node_textfile_mtime_seconds{file=\"/var/lib/prometheus/node-exporter/thinny-usage.prom\"} < 7200)",
+     "legendFormat": "7 days"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "id": 23
   }
  ]
 }

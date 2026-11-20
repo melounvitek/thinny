@@ -511,7 +511,7 @@ def test_doctor_sees_the_subscription_usage_fresh_while_it_is_asked_for(monitori
     def check(s):
         return [(level, message) for level, message, _ in checks.dashboard(s, Registry()) if "subscription" in message]
     assert check(usage) == [("WARN", "the instances' subscription usage is missing or older than 2 hours")]
-    dashboard.USAGE_METRICS.write_text(render.usage_metrics([]))   # nobody's answer: fresh all the same
+    dashboard.USAGE_METRICS.write_text(render.usage_metrics([], []))   # nobody's answer: fresh all the same
     assert check(usage) == [("OK", "the instances' subscription usage is fresh")]
     old = dt.datetime.now().timestamp() - 2 * 3600 - 60
     os.utime(dashboard.USAGE_METRICS, (old, old))
