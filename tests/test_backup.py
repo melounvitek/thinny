@@ -72,6 +72,12 @@ class Machine:
             if self.down:
                 return "", "Connection closed by remote host\n", 2
             return self.borg(cmd[1:], env)
+        elif cmd[0] == "bash":   # borg extract --stdout ::ARCHIVE | incus import - NAME --storage POOL
+            if self.down:
+                return "", "Connection closed by remote host\n", 2
+            res = self.server.run(["incus", "import", "-", cmd[-2], "--storage", cmd[-1], "--quiet"], check=False,
+                                  input=self.archives[cmd[-3]]["data"].decode())
+            return res.stdout, res.stderr, res.returncode
         elif cmd[0] == "du":
             return f"{self.sizes.get(Path(cmd[-1]).name, 2**20)}\t{cmd[-1]}\n", "", 0
         elif self.server:
@@ -109,6 +115,10 @@ class Machine:
             self.archives[args[at][2:]] = {"time": option("--timestamp"), "comment": "", "files": files}
         elif command == "list":
             return json.dumps({"archives": [{"name": name} for name in self.archives]}), "", 0
+        elif command == "info" and "--json" in args:   # of ::ARCHIVE
+            found = self.archives[args[-1][2:]]
+            return json.dumps({"archives": [{"comment": found["comment"],
+                                             "stats": {"original_size": len(found["data"])}}]}), "", 0
         elif command == "delete":
             for name in fnmatch.filter(list(self.archives), option("--glob-archives")):
                 del self.archives[name]
@@ -286,6 +296,10 @@ def server(nas, incus, tmp_path, monkeypatch):
     (state / "exports").mkdir(parents=True)
     (state / "exports" / "alice-2026.zip").write_text("alice's chats, for her users")
     (state / "instances.json").write_text('{"instances": {}}\n')
+    monkeypatch.setattr(backup, "RESTORE", state / "restore.json")
+    monkeypatch.setattr(host, "tailscale_status", lambda: None)
+    monkeypatch.setattr(host, "FILES", tmp_path / "files")
+    (tmp_path / "files" / "model-guard").mkdir(parents=True)
     reg = Registry({name: Instance(name, 9120 + i, "local", state=state_, built_ins=render.BUILT_INS)
                     for i, (name, state_) in enumerate([("alice", "active"), ("bob", "active"), ("carol", "disabled"),
                                                         ("dave", "removed")])})
@@ -429,3 +443,108 @@ def test_doctor_asks_for_init_when_backups_are_on_but_not_set_up(nas):
     level, message, fix = next(checks.backups(S, Registry()))
     assert (level, fix) == ("FAIL", "thinny backup init")
     assert not list(checks.backups(Settings(), Registry()))
+
+
+def chats(incus, name):
+    return incus.containers[name]["files"]["/home/x/.hermes/state.db"]
+
+
+def test_an_instance_comes_back_as_it_was_and_its_state_just_before_is_kept(server, nas, incus, capsys):
+    backup.create(S, server)
+    [run] = runs(nas)
+    incus.containers["alice"]["files"]["/home/x/.hermes/state.db"] = "alice's chats, some deleted by mistake"
+    incus.calls.clear()
+    capsys.readouterr()
+
+    backup.restore(S, server, "alice")
+    assert chats(incus, "alice") == "alice's chats"
+    # stopped, its state then kept, and only then its container replaced, in its own pool
+    fallback = next(name for name in nas.archives if name.startswith("before-restore.alice."))
+    assert json.loads(nas.archives[fallback]["data"])["files"]["/home/x/.hermes/state.db"] == \
+        "alice's chats, some deleted by mistake"
+    assert json.loads(nas.archives[fallback]["data"])["state"] == "STOPPED"
+    assert incus.index("incus stop alice") < incus.index("incus delete --force alice") < \
+        incus.index("incus import - alice --storage thinny-alice")
+    assert "thinny-alice" in incus.pools
+    # finished as a moved instance is, at this server's release, with its users' settings
+    alice = server.get("alice")
+    assert (alice.state, incus.containers["alice"]["state"]) == ("active", "RUNNING")
+    assert incus.ran("bash /tmp/hermes-install.sh --channel stable --commit c0ffee --non-interactive")
+    assert not incus.ran("display.language")
+    assert not backup.RESTORE.exists()
+    assert f"alice is back as it was in {run}.instance.alice. As it was just before, it is in the backup {fallback}: " \
+           f"thinny backup restore alice --from {fallback}" in capsys.readouterr().out
+    assert chats(incus, "bob") == "bob's chats"   # nothing else changes
+
+    # and back to how it was before
+    backup.restore(S, server, "alice", fallback)
+    assert chats(incus, "alice") == "alice's chats, some deleted by mistake"
+
+
+def test_a_restore_takes_the_run_named(server, nas, incus):
+    backup.create(S, server)
+    [first] = runs(nas)
+    incus.containers["alice"]["files"]["/home/x/.hermes/state.db"] = "alice's chats of the next day"
+    backup.create(S, server)
+    backup.restore(S, server, "alice", first)
+    assert chats(incus, "alice") == "alice's chats"
+    with pytest.raises(CommandError, match="no backup 2026-11-01T03:00:00 of alice"):
+        backup.restore(S, server, "alice", "2026-11-01T03:00:00")
+    with pytest.raises(CommandError, match="no backup of dave"):
+        backup.restore(S, Registry({"dave": Instance("dave", 9130, "local", state="active")}), "dave")
+
+
+@pytest.mark.parametrize("release, refused", [(["v2", "c0ffee"], False), (["v1", "c1"], False),
+                                              (["v3", "c3"], True), (["", ""], True), (["nightly", "c4"], True)])
+def test_a_backup_of_a_newer_release_is_refused_before_anything_changes(server, nas, incus, release, refused):
+    backup.create(S, server)
+    [run] = runs(nas)
+    archive = nas.archives[f"{run}.instance.alice"]
+    archive["comment"] = json.dumps(json.loads(archive["comment"]) | {"release": release})
+    incus.calls.clear()
+    if refused:
+        with pytest.raises(CommandError, match="Hermes databases cannot be downgraded"):
+            backup.restore(S, server, "alice")
+        assert not incus.ran("incus stop") and not backup.RESTORE.exists()
+    else:   # an older one is brought to this server's
+        backup.restore(S, server, "alice")
+        assert incus.ran("--commit c0ffee")
+
+
+@pytest.mark.parametrize("why, error", [("update", "an update is unfinished"), ("disabled", "carol is disabled"),
+                                        ("room", "the server needs")])
+def test_a_restore_that_cannot_work_changes_nothing(server, nas, incus, monkeypatch, why, error):
+    backup.create(S, server)
+    name = "carol" if why == "disabled" else "alice"
+    if why == "update":
+        update.UNFINISHED.write_text("v3 c3 bob\n")
+    if why == "room":
+        server_disk(monkeypatch, 100 * 2**30, free=10 * 2**30)
+    incus.calls.clear()
+    with pytest.raises(CommandError, match=error):
+        backup.restore(S, server, name)
+    assert not incus.ran("incus stop") and not backup.RESTORE.exists()
+
+
+def test_a_restore_cut_short_goes_on_where_it_stopped(server, nas, incus):
+    backup.create(S, server)
+    nas.down = False
+    original = nas.answer
+
+    def cut_off(cmd, env):   # the backup machine goes away during the import
+        if cmd[0] == "bash":
+            nas.down = True
+        return original(cmd, env)
+    nas.answer = cut_off
+    with pytest.raises(CommandError):
+        backup.restore(S, server, "alice")
+    assert "alice" not in incus.containers and json.loads(backup.RESTORE.read_text())["step"] == "replace"
+    # meanwhile, no backup, and no other restore
+    assert backup.create(S, server) == 1
+    with pytest.raises(CommandError, match="the restore of alice is unfinished"):
+        backup.restore(S, server, "bob")
+
+    nas.answer, nas.down = original, False
+    backup.restore(S, server, "alice")
+    assert chats(incus, "alice") == "alice's chats" and server.get("alice").state == "active"
+    assert len([name for name in nas.archives if name.startswith("before-restore.")]) == 1   # it was gone by then

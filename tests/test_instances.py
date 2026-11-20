@@ -158,9 +158,10 @@ class Incus:
                 json.dump(c, f)
             self.exported_mode = os.stat(os.path.dirname(cmd[3])).st_mode & 0o777
         elif cmd[:2] == ["incus", "import"]:
-            self.imported_mode = os.stat(cmd[2]).st_mode & 0o777
+            if cmd[2] != "-":   # else from its input
+                self.imported_mode = os.stat(cmd[2]).st_mode & 0o777
             try:
-                container = json.loads(Path(cmd[2]).read_text())
+                container = json.loads(input if cmd[2] == "-" else Path(cmd[2]).read_text())
             except ValueError:
                 return "Error: not a backup", 1
             for device, d in container["devices"].items():

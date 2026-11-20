@@ -206,6 +206,10 @@ def main(argv: list[str] | None = None) -> int:
     bkp = bkp.add_subparsers(dest="action", metavar="action")
     bkp.add_parser("init", help="set up the backups on the machine in [backup] target (or connect a new server)")
     bkp.add_parser("list", help="the backups a restore can take")
+    rsr = bkp.add_parser("restore", help="put an instance back as it was in a backup (or go on with a restore)")
+    rsr.add_argument("name")
+    rsr.add_argument("--from", dest="source", metavar="BACKUP", help="a run or state from thinny backup list "
+                                                                       "(default: the newest)")
     sub.add_parser("uninstall", help="remove thinny and every instance, with all their data")
     sub.add_parser("trace")  # without help, so not listed: thinny-trace.service runs it
     sub.add_parser("metrics")  # without help, so not listed: thinny-metrics.timer runs it
@@ -361,6 +365,8 @@ def main(argv: list[str] | None = None) -> int:
                 return backup.create(s, reg, a.scheduled)
             elif command == "backup init":
                 backup.init(s)
+            elif command == "backup restore":
+                backup.restore(s, reg, a.name, a.source)
             elif command == "instance trace-sheet":
                 trace.connect_sheet(reg, a.name, a.url)
             elif command == "instance reset-password":

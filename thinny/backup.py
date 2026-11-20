@@ -16,6 +16,7 @@ import datetime as dt
 import getpass
 import json
 import posixpath
+import re
 import secrets
 import shlex
 import shutil
@@ -36,6 +37,7 @@ PASSPHRASE = "THINNY_BACKUP_PASSPHRASE"
 LOCK_WAIT = "600"   # seconds a borg command waits for another's lock, such as the monthly cleanup's
 NO_BORG = 3   # the exit code of a remote step that lacks a command there
 STATUS_FILE = STATE_DIR / "backup-status.json"   # the last run's; any account may read it (extras/nightly-watch)
+RESTORE = STATE_DIR / "restore.json"   # an unfinished restore: what it restores, from which archive, how far it got
 KEEP = ["--keep-daily", "7", "--keep-weekly", "4", "--keep-monthly", "6"]
 ARCHIVE_TIMEOUT = 6 * 3600   # a large container's
 RUN_GLOB = "????-??-??T??:??:??"   # a run's name
@@ -57,12 +59,15 @@ def ssh_options() -> list[str]:
             "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=4"]
 
 
+def borg_env(s: Settings, passphrase: str | None = None) -> dict[str, str]:
+    """borg's environment for the backups, through thinny's key."""
+    return {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME": "/root", "LANG": "C.UTF-8",
+            "BORG_REPO": s.backup_target, "BORG_RSH": shlex.join(["ssh", *ssh_options()]),
+            "BORG_PASSPHRASE": secret(PASSPHRASE) if passphrase is None else passphrase}
+
+
 def borg(s: Settings, *args: str, passphrase: str | None = None, **kw) -> subprocess.CompletedProcess:
-    """borg on the backups, through thinny's key."""
-    env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME": "/root", "LANG": "C.UTF-8",
-           "BORG_REPO": s.backup_target, "BORG_RSH": shlex.join(["ssh", *ssh_options()]),
-           "BORG_PASSPHRASE": secret(PASSPHRASE) if passphrase is None else passphrase}
-    return run(["borg", args[0], "--lock-wait", LOCK_WAIT, *args[1:]], env=env, **kw)
+    return run(["borg", args[0], "--lock-wait", LOCK_WAIT, *args[1:]], env=borg_env(s, passphrase), **kw)
 
 
 def init(s: Settings) -> None:
@@ -210,6 +215,9 @@ def create(s: Settings, reg: Registry, scheduled: bool = False) -> int:
     timestamp = started.astimezone(dt.UTC).replace(tzinfo=None).isoformat()   # borg takes UTC: buckets per run
     log(f"=== thinny backup {run_name}")
     try:
+        if RESTORE.exists():   # a container may be missing, or the one from before the restore
+            raise CommandError(f"a restore is unfinished: run thinny backup restore "
+                               f"{json.loads(RESTORE.read_text())['name']} again")
         states, sizes = instances.container_states(), instances.pool_sizes()
         # Also disabled ones, which keep their data, and pending ones with a container.
         containers = sorted((inst for inst in reg.instances.values() if inst.name in states), key=lambda i: i.port)
@@ -240,7 +248,8 @@ def create(s: Settings, reg: Registry, scheduled: bool = False) -> int:
 def archive(s: Settings, inst: Instance, name: str, timestamp: str, disk: int) -> None:
     """The instance's container as Incus exports it, uncompressed so that borg stores only what changed. Its comment
     has what a restore needs: the Hermes release its server was at (or going to), its built-ins and disk size."""
-    check_room(inst.name)
+    folder = Path(instances.SERVER_DISK) / "storage-pools" / instances.pool_of(inst.name) / "containers" / inst.name
+    check_room(inst.name, int(run(["du", "-sb", str(folder)], timeout=3600).stdout.split()[0]), "back up")
     tag, commit = (update.UNFINISHED.read_text().split()[:2] if update.UNFINISHED.exists() else
                    host.release() or ("", ""))
     comment = json.dumps({"release": [tag, commit], "built_ins": inst.built_ins, "disk_gb": disk // 2**30})
@@ -251,15 +260,14 @@ def archive(s: Settings, inst: Instance, name: str, timestamp: str, disk: int) -
              timeout=ARCHIVE_TIMEOUT)
 
 
-def check_room(name: str) -> None:
-    """Refuse a container Incus has no room to export: it writes the whole archive to the server's disk before borg
-    reads it, and never into the last tenth of that disk, where the instances' pools grow."""
-    folder = Path(instances.SERVER_DISK) / "storage-pools" / instances.pool_of(name) / "containers" / name
-    size = int(run(["du", "-sb", str(folder)], timeout=3600).stdout.split()[0])   # uncompressed
+def check_room(name: str, size: int, doing: str) -> None:
+    """Refuse an archive of `size` bytes Incus has no room for: it writes the whole of it to the server's disk before
+    borg reads it or before unpacking it, and never into the last tenth of that disk, where the instances' pools
+    grow."""
     disk = shutil.disk_usage(instances.SERVER_DISK)
     room = max(0, disk.free - disk.total * export.KEEP_FREE)
     if room < size:
-        raise CommandError(f"the server needs {size / 2**30:.1f} GiB free on top of 10% of its disk to back up {name}, "
+        raise CommandError(f"the server needs {size / 2**30:.1f} GiB free on top of 10% of its disk to {doing} {name}, "
                            f"for the archive Incus writes first; it has {room / 2**30:.1f} GiB")
 
 
@@ -311,3 +319,86 @@ def list_backups(s: Settings) -> None:
         print(f"{run_name}  {', '.join(sorted(members.get(run_name, []))) or 'no instances'}")
     for name in sorted(name for name in names if name.startswith("before-restore.")):
         print(f"{name}  {name.split('.')[1]} as it was before a restore")
+
+
+def restore(s: Settings, reg: Registry, name: str, source: str | None = None) -> None:
+    """Put the instance back as it was in a backup (by default, the newest): stop it, back up its state now (the way
+    back), replace its container with the backup's, then finish it like a moved instance, at this server's Hermes
+    release. RESTORE records each step, so a run again goes on where one stopped."""
+    target(s)
+    marker = json.loads(RESTORE.read_text()) if RESTORE.exists() else None
+    if marker and marker["name"] != name:
+        raise CommandError(f"the restore of {marker['name']} is unfinished: run thinny backup restore "
+                           f"{marker['name']} again")
+    inst = reg.get(name)
+    if marker:
+        log(f"{name}: going on with its restore from {marker['archive']}")
+    else:
+        if inst.state != "active":
+            raise CommandError(f"{name} is {inst.state}; only an active instance is restored")
+        if update.UNFINISHED.exists():
+            raise CommandError("an update is unfinished: run thinny update --all first")
+        source_name = pick(archives(s), name, source)
+        info = json.loads(borg(s, "info", "--json", f"::{source_name}", timeout=600).stdout)["archives"][0]
+        details = json.loads(info["comment"])
+        check_release(details["release"])
+        check_room(name, info["stats"]["original_size"], "restore")
+        marker = {"name": name, "archive": source_name, "built_ins": details["built_ins"],
+                  "disk_gb": details["disk_gb"], "step": "stop"}
+        write_file(RESTORE, json.dumps(marker) + "\n", 0o600)
+    if marker["step"] == "stop":
+        instances.stop(name)
+        now = dt.datetime.now().replace(microsecond=0)
+        fallback = f"before-restore.{name}.{now.isoformat()}"
+        archive(s, inst, fallback, now.astimezone(dt.UTC).replace(tzinfo=None).isoformat(),
+                instances.pool_sizes()[instances.pool_of(name)])
+        marker |= {"fallback": fallback, "step": "replace"}
+        write_file(RESTORE, json.dumps(marker) + "\n", 0o600)
+    if marker["step"] == "replace":
+        if instances.container_state(name) is not None:
+            run(["incus", "delete", "--force", name])   # its pool stays, for the backup's
+        if instances.pool_sizes()[instances.pool_of(name)] < marker["disk_gb"] * 2**30:   # a purged name's new disk
+            instances.set_limits(name, None, None, marker["disk_gb"])
+        import_container(s, marker["archive"], name)
+        inst.state, inst.moved, inst.built_ins = "pending", True, marker["built_ins"]
+        reg.save()
+        marker["step"] = "finish"
+        write_file(RESTORE, json.dumps(marker) + "\n", 0o600)
+    if inst.state != "active":   # else instance add finished it
+        instances.add(s, reg, name, inst.access, inst.url if inst.access == "url" else "")
+    RESTORE.unlink()
+    print(f"{name} is back as it was in {marker['archive']}. As it was just before, it is in the backup "
+          f"{marker['fallback']}: thinny backup restore {name} --from {marker['fallback']}")
+
+
+def pick(names: list[str], name: str, source: str | None) -> str:
+    """The archive of the instance: of the run `source`, the state before a restore `source`, or the newest."""
+    if source is None:
+        complete, members = runs(names)
+        found = [run_name for run_name in complete if name in members.get(run_name, [])]
+        if not found:
+            raise CommandError(f"no backup of {name} (see thinny backup list)")
+        return f"{found[-1]}.instance.{name}"
+    for candidate in (f"{source}.instance.{name}", source if source.startswith(f"before-restore.{name}.") else ""):
+        if candidate in names:
+            return candidate
+    raise CommandError(f"no backup {source} of {name} (see thinny backup list)")
+
+
+def check_release(release: list[str]) -> None:
+    """Refuse a backup from a newer Hermes release than this server's (or one it cannot tell): Hermes databases
+    cannot be downgraded. An older one's moves on to this server's."""
+    def version(tag: str) -> tuple[int, ...] | None:
+        return tuple(map(int, m[1].split("."))) if (m := re.fullmatch(r"v?(\d+(?:\.\d+)*)", tag)) else None
+    here = (host.release() or ("",))[0]
+    if release[0] != here and not (version(release[0]) and version(here) and version(release[0]) < version(here)):
+        raise CommandError(f"the backup is of Hermes {release[0] or 'unknown'}, this server runs {here or 'none'}: "
+                           "Hermes databases cannot be downgraded")
+
+
+def import_container(s: Settings, archive_name: str, name: str) -> None:
+    """The archive's container, as the instance's, into its pool."""
+    with step(f"{name}: importing its container"):
+        run(["bash", "-o", "pipefail", "-c", 'borg extract --lock-wait "$1" --stdout "::$2" | '
+             'incus import - "$3" --storage "$4" --quiet', "bash", LOCK_WAIT, archive_name, name,
+             instances.pool_of(name)], env=borg_env(s), timeout=ARCHIVE_TIMEOUT)
