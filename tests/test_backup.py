@@ -229,6 +229,18 @@ def test_a_new_server_joins_the_backups_with_the_passphrase_the_admin_kept(nas, 
     assert nas.file("thinny-backups.key-copy") == "the key as it was"
 
 
+def test_the_new_passphrase_shows_once_the_backups_exist_even_if_init_fails_after(nas, capsys):
+    nas.tool("crontab", "exit 1")
+    with pytest.raises(CommandError, match="crontab"):
+        backup.init(S)
+    passphrase = settings.secret("THINNY_BACKUP_PASSPHRASE")
+    assert passphrase in capsys.readouterr().out
+    nas.tool("crontab", 'f="$HOME/.crontab"\ncase "$1" in -l) cat "$f" 2>/dev/null || exit 1 ;; '
+                        '-) t=$(cat); printf "%s\\n" "$t" > "$f" ;; esac')
+    backup.init(S)   # the one it showed
+    assert settings.secret("THINNY_BACKUP_PASSPHRASE") == passphrase and nas.file(".crontab")
+
+
 def test_init_refuses_thinnys_key_listed_there_with_other_options(nas):
     backup.init(S)
     lines = nas.file(".ssh/authorized_keys").replace("--append-only ", "")
@@ -398,6 +410,9 @@ def test_a_run_cut_short_is_deleted_by_the_next_and_old_backups_go(server, nas):
         assert nas.ran(f"borg prune --lock-wait 600 {keep} --glob-archives *.instance.{name}")
     assert nas.ran(f"borg prune --lock-wait 600 {keep} --glob-archives ????-??-??T??:??:??.server")
     assert nas.ran("borg prune --lock-wait 600 --keep-within 30d --glob-archives before-restore.*")
+    # the server's first: cut short after them, what is left of a run counts as incomplete
+    assert nas.calls.index(f"borg prune --lock-wait 600 {keep} --glob-archives ????-??-??T??:??:??.server") < \
+        nas.calls.index(f"borg prune --lock-wait 600 {keep} --glob-archives *.instance.alice")
     assert nas.ran("borg compact")
 
 
@@ -413,6 +428,13 @@ def test_an_instance_named_server_is_kept_apart_from_the_servers_own_backups(ser
     capsys.readouterr()
     backup.list_backups(S)
     assert capsys.readouterr().out == f"{run}  alice, carol, server\n"
+
+
+def test_an_instance_without_its_container_fails_the_backup(server, nas, incus):
+    del incus.containers["carol"]   # disabled, so it keeps its data in it
+    assert backup.create(S, server) == 1
+    assert json.loads(backup.STATUS_FILE.read_text())["detail"] == "no container for carol (see thinny doctor)"
+    assert not nas.archives
 
 
 def test_a_container_without_room_on_the_servers_disk_for_its_archive_is_not_exported(server, nas, incus, monkeypatch):
@@ -680,6 +702,21 @@ def test_a_restore_of_everything_needs_a_new_server_and_a_complete_backup(old_se
     with pytest.raises(CommandError, match="no complete backup 2026-11-01T03:00:00"):
         backup.restore_all(S, reg, "2026-11-01T03:00:00")
     assert not backup.RESTORE.exists()
+
+
+@pytest.mark.parametrize("why", ["incomplete", "taken"])
+def test_a_restore_of_everything_refuses_before_changing_anything(old_server, nas, incus, tmp_path, why):
+    reg = new_server(incus, tmp_path)
+    if why == "incomplete":   # e.g. a cleanup cut short
+        del nas.archives[f"{old_server}.instance.carol"]
+        error = f"{old_server} lacks carol's backup"
+    else:   # a container of the new server's own
+        incus.containers["alice"] = {"state": "RUNNING", "devices": {}, "files": {}}
+        error = "an Incus container 'alice' already exists"
+    with pytest.raises(CommandError, match=error):
+        backup.restore_all(S, reg)
+    assert settings.CONFIG_TOML.read_text() == CONFIG and not backup.RESTORE.exists()
+    assert not nas.applied and incus.containers.get("alice", {}).get("files") in (None, {})
 
 
 def test_a_restored_config_naming_an_interface_this_server_lacks_stops_before_the_instances(old_server, nas, incus,

@@ -663,8 +663,9 @@ thinny backup list     # the backups: each run, with its instances
   certificate authority office PCs trust. Exports stay out.
 - It keeps 7 daily, 4 weekly and 6 monthly backups of each instance and of the server. A run that
   failed or stopped halfway leaves nothing: the next run deletes what it left.
-- **If the backup fails, the update waits** for one that works (`thinny update --all` does not). `thinny
-  doctor` fails then, and when no backup worked for 36 hours. [`extras/nightly-watch`](extras/nightly-watch/)
+- **If the backup fails, the update waits** for one that works (`thinny update --all` does not). An
+  active or disabled instance without its container fails it too. `thinny doctor` fails then, and when
+  no backup worked for 36 hours. [`extras/nightly-watch`](extras/nightly-watch/)
   can watch it too (`thinny-backup`).
 - Incus writes each container's whole archive to the server's disk before borg reads it, uncompressed: a
   container whose archive does not fit above the last tenth of that disk is not backed up. Only what
@@ -690,18 +691,20 @@ thinny backup restore alice --from 2026-11-18T03:00:12   # a run from thinny bac
 
 ### Rebuild on a new server
 
-1. [Install](#install) thinny on the new server, with the same `[backup] target`.
+1. [Install](#install) thinny on the new server, with the same `[backup] target`. If instances use
+   Tailscale, sign the server in to it first.
 2. `thinny backup init` adds the new server's key on the backup machine and asks for the passphrase.
-3. `thinny backup restore --all`, or `--from <run>`.
+3. `thinny backup restore --all`, or `--from <run>`. It refuses a run that lacks an instance's backup,
+   and names that the new server uses for its own containers.
 
 - It brings back `config.toml`, `secrets.env`, the groups, the access traces and the certificate
   authority, and every instance at its old port and address, with everything in it, at the Hermes
   release of the backup. Disabled instances stay disabled.
 - If it stops halfway, run it again. A `config.toml` that names a network interface the new server
   lacks stops it before the instances: correct it with `thinny config edit`, then run it again.
-- Then check `access.lan_address` if the server's LAN address changed, sign the server in to Tailscale
-  if instances use it, point DNS or your tunnel at it for `url` instances, and on the backup machine
-  delete the old server's line in `~/.ssh/authorized_keys` (ending in `thinny-backup@<old hostname>`).
+- Then check `access.lan_address` if the server's LAN address changed, point DNS or your tunnel at it
+  for `url` instances, and on the backup machine delete the old server's line in
+  `~/.ssh/authorized_keys` (ending in `thinny-backup@<old hostname>`).
 - Not in the backups: the dashboard's history and your tunnel's settings. Mailboxes and Telegram bots
   live outside the server and work on.
 

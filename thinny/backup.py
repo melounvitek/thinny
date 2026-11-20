@@ -107,11 +107,13 @@ def init(s: Settings) -> None:
                                       f"restrict {public}")
             check_restricted(account)
             passphrase = secret(PASSPHRASE)
-            new = remote.run('test -f "$1/config"', repo, check=False).returncode != 0
-            if new:
+            if remote.run('test -f "$1/config"', repo, check=False).returncode:
                 passphrase = passphrase or secrets.token_urlsafe(24)
                 save_passphrase(passphrase)   # first: an init that fails later reuses it
                 borg(s, "init", "--encryption", "repokey-blake2", passphrase=passphrase, timeout=300)
+                print(f"\nThe backups' passphrase, shown only now:\n\n  {passphrase}\n\n"   # before what may fail
+                      "Keep it off this server, e.g. in your password manager: without it, nothing can be restored.")
+                input("Press Enter once it is saved. ")
             else:
                 passphrase = ask_passphrase(s, passphrase)
             # Only when missing: the repository's key may be a broken-in server's by now.
@@ -129,10 +131,6 @@ def init(s: Settings) -> None:
         finally:
             run(["ssh", "-o", f"ControlPath={master}", "-O", "exit", account], check=False, timeout=30)
     log(f"backups set up on {s.backup_target}")
-    if new:
-        print(f"\nThe backups' passphrase, shown only now:\n\n  {passphrase}\n\n"
-              "Keep it off this server, e.g. in your password manager: without it, nothing can be restored.")
-        input("Press Enter once it is saved. ")
     print("Backups run every night before the update; thinny backup takes one now.")
 
 
@@ -221,6 +219,9 @@ def create(s: Settings, reg: Registry, scheduled: bool = False) -> int:
             name = json.loads(RESTORE.read_text())["name"]
             raise CommandError(f"a restore is unfinished: run thinny backup restore {name or '--all'} again")
         states, sizes = instances.container_states(), instances.pool_sizes()
+        if missing := [inst.name for inst in reg.instances.values()
+                       if inst.state in ("active", "disabled") and inst.name not in states]:
+            raise CommandError(f"no container for {', '.join(missing)} (see thinny doctor)")
         # Also disabled ones, which keep their data, and pending ones with a container.
         containers = sorted((inst for inst in reg.instances.values() if inst.name in states), key=lambda i: i.port)
         try:
@@ -285,9 +286,10 @@ def tidy(s: Settings) -> None:
     complete, members = runs(archives(s))
     for unfinished in sorted(set(members) - set(complete)):
         borg(s, "delete", "--glob-archives", f"{unfinished}.instance.*", timeout=3600)
+    # The server's first: cut short after them, what is left of a run is incomplete, and the next run deletes it.
+    borg(s, "prune", *KEEP, "--glob-archives", f"{RUN_GLOB}.server", timeout=3600)
     for name in sorted({name for names in members.values() for name in names}):
         borg(s, "prune", *KEEP, "--glob-archives", f"*.instance.{name}", timeout=3600)
-    borg(s, "prune", *KEEP, "--glob-archives", f"{RUN_GLOB}.server", timeout=3600)
     borg(s, "prune", "--keep-within", "30d", "--glob-archives", "before-restore.*", timeout=3600)
     borg(s, "compact", timeout=6 * 3600)   # with --append-only it frees nothing, and says nothing
 
@@ -423,18 +425,21 @@ def restore_all(s: Settings, reg: Registry, source: str | None = None) -> None:
     if not marker:
         if reg.instances:
             raise CommandError("this server has instances; restore --all is for a new one (restore them one by one)")
-        complete, _ = runs(archives(s))
+        names = archives(s)
+        complete, _ = runs(names)
         run_name = source or (complete[-1] if complete else "")
         if run_name not in complete:
             raise CommandError(f"no complete backup {source} (see thinny backup list)" if source else "no backup yet")
+        with server_files(s, run_name) as root:
+            check_run(root, run_name, names)   # before anything changes
         marker = {"name": None, "run": run_name, "step": "files"}
         write_file(RESTORE, json.dumps(marker) + "\n", 0o600)
-    run_name = marker["run"]
     if marker["step"] == "files":
-        with server_files(s, run_name) as root:
+        with server_files(s, marker["run"]) as root:
             restore_files(root)
         marker["step"] = "instances"
         write_file(RESTORE, json.dumps(marker) + "\n", 0o600)
+    run_name = marker["run"]
     s, reg = settings.load(settings.CONFIG_TOML), Registry.load()   # the old server's
     if not (NETWORK_INTERFACES / s.network_interface).exists():
         raise CommandError(f"this server has no network interface {s.network_interface} (network.interface in the "
@@ -457,8 +462,18 @@ def restore_all(s: Settings, reg: Registry, source: str | None = None) -> None:
         restore_ca(s, reg, root)
     RESTORE.unlink()
     print(f"This server is back as it was in {run_name}. Check access.lan_address in config.toml if its LAN "
-          "address changed (thinny config edit), and sign it in to Tailscale if its instances use it. On the backup "
-          "machine, delete the old server's line in ~/.ssh/authorized_keys.")
+          "address changed (thinny config edit). On the backup machine, delete the old server's line in "
+          "~/.ssh/authorized_keys.")
+
+
+def check_run(root: Path, run_name: str, names: list[str]) -> None:
+    """Refuse a run that lacks an active or disabled instance's backup, or whose instances' names this server uses
+    for its own containers, pools or accounts."""
+    for inst in Registry.load(root / str(STATE_DIR / "instances.json").lstrip("/")).instances.values():
+        if inst.state in ("active", "disabled") and f"{run_name}.instance.{inst.name}" not in names:
+            raise CommandError(f"{run_name} lacks {inst.name}'s backup: restore --all --from another run")
+        if inst.state != "removed":
+            instances.check_free_name(inst.name)
 
 
 @contextlib.contextmanager
