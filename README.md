@@ -134,8 +134,10 @@ thinny's table only: Incus's and Tailscale's tables stay gone, so the steps abov
 
 **Unattended upgrades, with automatic reboots.** The containers share the server's kernel, so a
 fixed kernel protects them only once the server reboots into it. Schedule the reboot well after
-the nightly Hermes update (`hermes.update_time`, 03:00), which can take an hour with many
-instances. `thinny doctor` warns when automatic reboots are off and while a reboot is pending:
+thinny's whole nightly run at `hermes.update_time` (03:00): the [backup](#backups), when on, takes a
+few minutes per instance, and then the Hermes update can take an hour with many instances.
+`thinny status` and `thinny doctor` show when each comes, and `thinny doctor` warns when automatic
+reboots are off, when the last nightly run went on past their time, and while a reboot is pending:
 
 ```sh
 apt install unattended-upgrades
@@ -721,8 +723,15 @@ thinny backup restore alice --from 2026-11-18T03:00:12   # a run from thinny bac
 ## Status and checks
 
 ```sh
-thinny status   # releases, last update, containers, gateways
+thinny status   # releases, last update, the nightly schedule, containers, gateways
 thinny doctor   # every isolation and health check, each with a fix
+```
+
+Both show when thinny's nightly run, the OS upgrades and their automatic reboots come, as systemd and
+apt have them, also after changes by hand:
+
+```
+OK   nightly: backup and update at 03:00 (next 2026-11-22 03:00); OS upgrades at 06:00 (+ up to 1h), reboots when needed at 05:00
 ```
 
 Both exit with status 1 when anything fails, so monitoring can use them. Over SSH, a sudo account
