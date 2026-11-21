@@ -489,6 +489,22 @@ issues **[docs]**, not tried.
 - An older thinny refuses registry fields it does not know: going back to `main` after the test
   needed the registry's empty `mailbox` fields removed **[tested]**.
 
+### Mailboxes at any provider (2026-11-21)
+Hermes v0.23.2 **[src]**, CPython 3.13 **[src]**; not tried on a server.
+
+- Hermes signs in to IMAP and SMTP with `EMAIL_ADDRESS` and `EMAIL_PASSWORD`: no other login name, no OAuth.
+  It also takes `EMAIL_IMAP_PORT`, `EMAIL_SMTP_PORT` and `EMAIL_*_SECURITY` (tls, starttls, plain); thinny
+  keeps 993 with TLS and 587 with STARTTLS, which common providers offer, and so does its himalaya account.
+- `EMAIL_AUTHSERV_ID` must equal the authserv-id of the topmost `Authentication-Results` exactly: one id per
+  account. The provider must replace headers with its id that came with the mail (RFC 8601). One that names
+  whichever of its servers took the message cannot be pinned.
+- `imaplib.IMAP4_SSL` and `smtplib.SMTP.starttls` without a context check no certificate
+  (`ssl._create_stdlib_context`): thinny's sign-in check passes `ssl.create_default_context()`.
+- Hermes expands `${VAR}` and `${VAR:-default}` in every `.env` value, quoted or not
+  (`hermes_cli/env_loader.py`): thinny refuses a typed password with them.
+- himalaya's `auth.cmd` took the password from `.env` as `set_env` writes it, quotes and backslashes still
+  escaped: wrong for a password with either, which only an admin's own can have.
+
 ### Mail from the agent (2026-11-18)
 Hermes v0.23.1 **[src]**; himalaya v1.2.0 and v2.2.1 **[static]**, its binary run on this workstation where
 noted **[tested]**.
@@ -735,6 +751,9 @@ guests' Incus 6.0.4 and borg 1.4.0), one the old server with alice (Webapp) and 
   (daily sending caps per account), Cloudflare's Email Routing and agent inbox (no mailboxes or IMAP,
   which Hermes needs). DNS records through Cloudflare's API in thinny: a one-time step, and sites use
   other DNS providers.
+- Mailboxes at any provider: creating them through other providers' APIs (one integration each), a provider
+  per instance (one per server is enough so far), and giving an instance another mailbox (its himalaya account
+  keeps the old address and hosts, and Purelymail must never get another mailbox's password).
 
 ## 3. Open questions
 
@@ -755,7 +774,8 @@ guests' Incus 6.0.4 and borg 1.4.0), one the old server with alice (Webapp) and 
 - Access trace: snapshots, `incus console --show-log` and other clients' file events are
   untested with the installed service.
 - Mailboxes: not yet tried are a scheduled job's mail, mail from another Purelymail mailbox (dropped?),
-  `move` and `uninstall` with a mailbox.
+  `move` and `uninstall` with a mailbox, and any provider but Purelymail (`custom`: Gmail with an app password,
+  a mail server of one's own).
 - Mail from the agent is untried on a server outside the Webapp (Telegram, a mail chat), and so are the
   gateway answering mail while the agent reads INBOX, and `--new-password`.
 - Export: not tried are its time on a large `state.db` (2 s with 1.4 MB) and `hermes import` into a Hermes
