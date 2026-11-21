@@ -27,8 +27,8 @@ Status: in development. Design notes: [`NOTES.md`](NOTES.md).
   plugin with Docker.
 - **Telegram with one link:** each instance's user creates a bot of their own that only they can
   write to (optional, see [Telegram](#telegram)).
-- **A mailbox per instance**, `alice@<your domain>` at Purelymail, that the people you name can email
-  and get replies from (optional, see [Email](#email)).
+- **A mailbox per instance**, at any provider, or created for you at Purelymail, that the people you
+  name can email and get replies from (optional, see [Email](#email)).
 - **One Hermes release**, with an optional nightly update that moves instances one at a time.
 - **Nightly backups** of every instance and of the server to another machine over SSH, encrypted, that a
   server broken into cannot delete, and restores of one instance or of everything on a new server
@@ -226,9 +226,10 @@ thinny config edit --secrets   # edit a copy, check it, then save it (nothing to
 ```
 
 It takes one `NAME=value` per line, without quotes: `THINNY_TELEGRAM_MANAGER_TOKEN` (see
-[Telegram](#telegram)) and `THINNY_PURELYMAIL_API_TOKEN` (see [Email](#email)). Commands read it when
-they need a token. `sudo grep -o '^[A-Z_]*=' /etc/thinny/secrets.env` lists the names set without their
-tokens, and `thinny doctor` warns when others than root can read the file.
+[Telegram](#telegram)) and `THINNY_PURELYMAIL_API_TOKEN` (for Purelymail mailboxes, see
+[Email](#email)). Commands read it when they need a token.
+`sudo grep -o '^[A-Z_]*=' /etc/thinny/secrets.env` lists the names set without their tokens, and
+`thinny doctor` warns when others than root can read the file.
 
 For one run, an environment variable of the same name wins, e.g. to try a token before saving it. In a
 root shell, or through sudo by name:
@@ -245,7 +246,7 @@ thinny instance add alice               # about 7 minutes; asks how users open i
 thinny instance login alice             # sign in to a model provider; asks which
 thinny instance login alice --provider anthropic   # or name it: openai | anthropic
 thinny instance telegram alice          # a Telegram bot its user creates with a link (see Telegram)
-thinny instance email alice anna@example.com   # a mailbox alice@<domain> that anna can write to (see Email)
+thinny instance email alice anna@example.com   # a mailbox that anna can write to (see Email)
 thinny instance list                    # with each one's CPU, RAM and disk use, mailbox and phone line
 thinny instance usage [alice]           # its users' share of their 5-hour and weekly subscription limits, turns and tokens
 thinny instance access alice tailscale  # lan | tailscale | url=<URL> | local
@@ -508,13 +509,49 @@ can write to it. Their chat is also Hermes's Telegram home channel, so Hermes do
 
 ## Email
 
-Each instance can get a mailbox of its own, `alice@<your domain>`, at
-[Purelymail](https://purelymail.com/) ($10 a year for any number of mailboxes). The people you name
-can email the agent and get its replies, and its scheduled jobs can mail the first of them. Hermes
-reads the mailbox and sends from it with its
-[email gateway](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/email).
+Each instance can get a mailbox of its own. The people you name can email the agent and get its
+replies, and its scheduled jobs can mail the first of them. Hermes reads the mailbox and sends from
+it with its [email gateway](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/email).
+All instances of a server use one provider, `email.provider`:
 
-Set it up once:
+- `custom`: mailboxes you create at any provider with IMAP and SMTP, such as Gmail or your own mail
+  server. thinny connects them and never deletes them.
+- `purelymail`: thinny creates `alice@<your domain>` at [Purelymail](https://purelymail.com/) ($10 a
+  year for any number of mailboxes) and deletes it with the instance. The least work.
+
+### Your own mailboxes
+
+1. Set your provider's servers with `thinny config edit`:
+
+   ```toml
+   [email]
+   provider = "custom"
+   imap_host = "imap.example.org"   # port 993, TLS
+   smtp_host = "smtp.example.org"   # port 587, STARTTLS
+   authserv_id = "mx.example.org"
+   ```
+
+   `authserv_id` is the name your provider's mail server signs its checks of incoming mail with.
+   Mail a mailbox there from another provider, open the message's headers (*Show original* or
+   *View source*) and take the first word of the topmost `Authentication-Results:` line, before
+   the `;`. Gmail's is `mx.google.com`. Hermes answers only mail this server says it verified, so
+   with a wrong id it answers none. Check a few messages: a provider that names whichever of its
+   servers took the message does not work. The provider must also remove such lines with its id
+   that came with the mail: else a forged sender can bring their own. Large providers do; check a
+   mail server of your own.
+2. Create a mailbox for the instance. Use it only for the agent: its users can read its password.
+   It must take its whole address and a password over IMAP and SMTP (Gmail: an
+   [app password](https://support.google.com/accounts/answer/185833)). Providers that take only
+   OAuth sign-ins, such as Microsoft 365, do not work. Then:
+
+   ```sh
+   thinny instance email alice --address alice@example.org anna@example.com boss@example.com
+   ```
+
+   It asks for the mailbox's password and signs in to both servers with it. Only then does it set
+   alice's Hermes up with it and restart alice's gateway.
+
+### Purelymail
 
 1. Create a Purelymail account and add your domain. Add the DNS records Purelymail lists for it at
    your DNS provider: the ownership TXT record, MX, SPF, the three DKIM records and DMARC. On
@@ -525,6 +562,7 @@ Set it up once:
 
    ```toml
    [email]
+   provider = "purelymail"
    domain = "example.org"
    ```
 
@@ -534,27 +572,34 @@ Set it up once:
    THINNY_PURELYMAIL_API_TOKEN=...
    ```
 
-The server must reach `smtp.purelymail.com` on port 587 and `imap.purelymail.com` on 993. Some
-hosting providers block outgoing mail ports: netcup's default firewall policy *netcup Mail block*
-does (ports 25, 465 and 587), so remove it from the server. That opens port 25 too, but thinny's
-firewall keeps the instances from it: they send mail through Purelymail. Until Hermes reaches both,
-it logs `email failed to connect` and tries again every few minutes.
+4. Then:
 
-`thinny doctor` checks that the server reaches both and that the domain passes Purelymail's DNS
-checks. Then:
+   ```sh
+   thinny instance email alice anna@example.com boss@example.com
+   ```
 
-```sh
-thinny instance email alice anna@example.com boss@example.com
-```
+   It creates `alice@example.org`, sets alice's Hermes up with it and restarts alice's gateway.
 
-It creates `alice@example.org`, sets alice's Hermes up with it and restarts alice's gateway. Only
-`anna@example.com` and `boss@example.com` can write to alice; mail from alice's scheduled jobs goes to
-the first.
+A config from before `provider` with only a `domain` keeps working as `purelymail`.
+
+### Both
+
+The server must reach the IMAP server on port 993 and the SMTP server on 587 (Purelymail's:
+`imap.purelymail.com` and `smtp.purelymail.com`). Some hosting providers block outgoing mail ports:
+netcup's default firewall policy *netcup Mail block* does (ports 25, 465 and 587), so remove it from
+the server. That opens port 25 too, but thinny's firewall keeps the instances from it: they send mail
+through your provider. Until Hermes reaches both, it logs `email failed to connect` and tries again
+every few minutes. `thinny doctor` checks that the server reaches both, and with Purelymail, that the
+domain passes Purelymail's DNS checks.
+
+Only `anna@example.com` and `boss@example.com` can write to alice; mail from alice's scheduled jobs
+goes to the first.
 
 - Name whole addresses. Hermes ignores mail from anyone else, without an answer. thinny refuses
   `*`: whoever can write to the agent can have it run commands in its container.
-- Hermes answers only mail whose sender Purelymail could verify (DMARC, SPF or DKIM), so a forged
-  sender gets nothing.
+- Hermes answers only mail whose sender the provider could verify (DMARC, SPF or DKIM), so a forged
+  sender gets nothing, as long as the provider removes `Authentication-Results` that came with the
+  mail (see above).
 - **Best effort:** Hermes skips mail that arrives while its gateway restarts (a Hermes update,
   `config apply`, `reset-password`, a reboot) or while the instance is disabled. That mail stays
   unread in the mailbox, and its sender has to write again.
@@ -566,21 +611,25 @@ the first.
   users' own himalaya config, if any. thinny's policy tells the agent so, and where its users' address is. No copy of
   what it sends is kept. Mailboxes from before get it at the next `thinny config apply` or update.
 - Run it again to change who can write to it; without addresses it keeps them. `--new-password`
-  gives the mailbox a new password. The password is in the instance's `.env`, where its users can
+  gives a Purelymail mailbox a new password; for your own, change it at your provider, then type
+  the new one with `--new-password`. The password is in the instance's `.env`, where its users can
   read it: the mailbox is theirs.
-- thinny never takes over a mailbox it did not create, and gives none to role names such as
-  `postmaster`, `abuse` or `admin`. If Purelymail created one but its answer never came, thinny
-  says so: delete the mailbox in Purelymail and run the command again.
-- `remove` deletes the mailbox, with all its mail, before the container. When Purelymail fails,
-  nothing is deleted: run it again. `--keep-mailbox` leaves the mailbox in Purelymail. `uninstall`
-  deletes every mailbox it can and names the rest.
+- An instance keeps its mailbox: thinny gives it no other. A new `provider` applies to instances
+  without one.
+- thinny never takes over a mailbox it did not create at Purelymail, and gives none to role names
+  such as `postmaster`, `abuse` or `admin`. If Purelymail created one but its answer never came,
+  thinny says so: delete the mailbox in Purelymail and run the command again.
+- `remove` deletes a Purelymail mailbox, with all its mail, before the container. When Purelymail
+  fails, nothing is deleted: run it again. `--keep-mailbox` leaves the mailbox in Purelymail.
+  `uninstall` deletes every Purelymail mailbox it can and names the rest. Your own mailboxes stay,
+  with their mail.
 - The API token manages every mailbox of the Purelymail account. It stays on the server, in
   `secrets.env`, which only root can read. Keep people's mailboxes in another account, or at least
   on another domain.
-- `move` takes the mailbox along: the new server deletes it when it removes the instance, with its
-  own `[email]` settings (the same Purelymail account). After the move, check that the instance
-  still gets and sends mail. When a move fails after the instance may have reached the other
-  server, remove the copy here with `--keep-mailbox` if it did.
+- `move` takes the mailbox along: the new server deletes a Purelymail one when it removes the
+  instance, with its own `[email]` settings (the same Purelymail account). After the move, check
+  that the instance still gets and sends mail. When a move fails after the instance may have reached
+  the other server, remove the copy here with `--keep-mailbox` if it did.
 
 ## Updates
 

@@ -46,8 +46,13 @@ interface = "eth0"              # the server's internet interface; containers go
 blocked_networks = []           # public networks instance containers may not reach, e.g. ["203.0.113.0/24"]
                                 # (private networks and the tailnet are always out of reach)
 
-[email]                         # a mailbox <instance>@<domain> at Purelymail per instance (see README, Email)
-domain = ""                     # e.g. "example.org", set up in Purelymail; "" = off
+[email]                         # a mailbox per instance, which its agent reads and sends from (see README, Email)
+provider = ""                   # "" = off | custom: mailboxes you create, at any provider | purelymail: thinny
+                                # creates <instance>@<domain> there
+imap_host = ""                  # custom: e.g. "imap.example.org" (port 993, TLS)
+smtp_host = ""                  # custom: e.g. "smtp.example.org" (port 587, STARTTLS)
+authserv_id = ""                # custom: the id in the Authentication-Results your provider adds to incoming mail
+domain = ""                     # purelymail: e.g. "example.org", set up in Purelymail
 
 [dashboard]                     # history of the server's and each instance's CPU, memory, disk and network
 enabled = false                 # true: thinny config apply asks, then installs Prometheus and Grafana (about 2.2 GB)

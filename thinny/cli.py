@@ -163,11 +163,15 @@ def main(argv: list[str] | None = None) -> int:
     unl.add_argument("name", nargs="?")
     inst.add_parser("telegram", help="give an instance a Telegram bot its user creates with a link (see README)") \
         .add_argument("name")
-    eml = inst.add_parser("email", help="give an instance a mailbox, <name>@<email.domain> (see README, Email)")
+    eml = inst.add_parser("email", help="give an instance a mailbox (see README, Email)")
     eml.add_argument("name")
     eml.add_argument("senders", nargs="*", metavar="ADDRESS",
                      help="who may write to it; the first also gets its scheduled jobs' mail (default: as before)")
-    eml.add_argument("--new-password", action="store_true", help="give its mailbox a new password")
+    eml.add_argument("--address", default="",
+                     help="the mailbox you created for it (email.provider custom); thinny asks for its password")
+    eml.add_argument("--new-password", action="store_true",
+                     help="ask for its mailbox's password again, once you changed it (custom), or give it a new one "
+                          "(purelymail)")
     inst.add_parser("export", help="save an instance's chats, memories, skills and settings for its users, without "
                                    "sign-ins (see README)").add_argument("name")
     trc = inst.add_parser("trace-sheet", help="send an instance's access trace to its users' Google Sheet too")
@@ -182,7 +186,8 @@ def main(argv: list[str] | None = None) -> int:
     rmv.add_argument("--purge", action="store_true",
                      help="free its name and port too, also once removed (its access trace stays, renamed)")
     rmv.add_argument("--keep-mailbox", action="store_true",
-                     help="leave its mailbox in Purelymail (e.g. another server's after a move)")
+                     help="leave the mailbox thinny created for it in Purelymail (e.g. another server's after a "
+                          "move); one you created always stays")
     rst = inst.add_parser("restart", help="restart gateways one by one (all, or the named instances)")
     rst.add_argument("names", nargs="*")
     mov = inst.add_parser("move", help="move instances to another thinny server over SSH (experimental)")
@@ -200,6 +205,7 @@ def main(argv: list[str] | None = None) -> int:
     rcv.add_argument("--built-ins", required=True)
     rcv.add_argument("--disk-gb", type=at_least_1, required=True)
     rcv.add_argument("--mailbox", default="")
+    rcv.add_argument("--own-mailbox", action="store_true")
     rcv.add_argument("--check", action="store_true")
     bkp = sub.add_parser("backup", help="back up every instance and the server now (see README, Backups)")
     bkp.add_argument("--scheduled", action="store_true", help=argparse.SUPPRESS)   # thinny-update.service, first
@@ -361,7 +367,7 @@ def main(argv: list[str] | None = None) -> int:
                 for name in chosen(reg, [a.name] if a.name else [], a.group):
                     instances.unlock(s, reg, name)
             elif command == "instance email":
-                mail.connect(s, reg, a.name, a.senders, a.new_password)
+                mail.connect(s, reg, a.name, a.senders, a.new_password, a.address, ask_secret)
             elif command == "instance export":
                 export.export(reg, a.name)
             elif command == "backup":
@@ -390,7 +396,8 @@ def main(argv: list[str] | None = None) -> int:
                 move.move(s, reg, [] if a.all else chosen(reg, a.names, a.group), a.to)
             elif command == "instance receive":
                 move.receive(s, reg, a.name, a.access, a.url, tuple(a.release), a.built_ins, a.disk_gb,
-                             None if a.check else sys.stdin.buffer, frontend=a.frontend, mailbox=a.mailbox)
+                             None if a.check else sys.stdin.buffer, frontend=a.frontend, mailbox=a.mailbox,
+                             own_mailbox=a.own_mailbox)
         return 0
     except (SettingsError, RegistryError, CommandError) as e:
         print(f"thinny: {e}", file=sys.stderr)

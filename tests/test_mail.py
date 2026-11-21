@@ -1,7 +1,10 @@
 import dataclasses
+import imaplib
 import io
 import json
+import smtplib
 import socket
+import ssl
 import subprocess
 import tomllib
 import urllib.request
@@ -15,7 +18,7 @@ from thinny.registry import Instance, Registry, RegistryError
 from thinny.system import CommandError
 
 TOKEN = "pm-live-" + "t" * 32
-SITE = dataclasses.replace(S, email_domain="example.org")
+SITE = dataclasses.replace(S, email_provider="purelymail", email_domain="example.org")
 NO_TOKEN = "set THINNY_PURELYMAIL_API_TOKEN first: thinny config edit --secrets \\(see README, Email\\)"
 ENV = "/home/alice/.hermes/.env"
 HIMALAYA_CONFIG = "/home/alice/.config/himalaya/config.toml"
@@ -165,6 +168,9 @@ def test_himalayas_account_for_the_mailbox_reads_the_password_from_the_env_at_ev
     assert password() == purelymail.users["alice@example.org"]
     mail.connect(SITE, alice, "alice", [], new_password=True)
     assert password() == purelymail.users["alice@example.org"]
+    typed = 'it\'s "pa$$" #word\\'   # as an admin may type their own mailbox's
+    instances.set_env("alice", {"EMAIL_PASSWORD": typed})
+    assert password() == typed
 
 
 def test_a_users_own_himalaya_accounts_stay(alice, incus, purelymail):
@@ -319,8 +325,8 @@ def test_a_mailbox_needs_its_domain_set_up_in_purelymail(alice, purelymail, chan
     assert "createUser" not in purelymail.methods()
 
 
-def test_a_mailbox_needs_the_sites_domain_and_purelymail_account(alice, purelymail):
-    with pytest.raises(CommandError, match="set email.domain first: thinny config edit \\(see README, Email\\)"):
+def test_a_mailbox_needs_the_sites_provider_and_purelymail_account(alice, purelymail):
+    with pytest.raises(CommandError, match="set email.provider first: thinny config edit \\(see README, Email\\)"):
         mail.connect(S, alice, "alice", ["anna@example.com"])
     settings.SECRETS_ENV.unlink()
     with pytest.raises(CommandError, match=NO_TOKEN):
@@ -333,6 +339,151 @@ def test_a_disabled_instance_gets_no_mailbox(alice, purelymail):
     with pytest.raises(RegistryError, match="alice is disabled"):
         mail.connect(SITE, alice, "alice", ["anna@example.com"])
     assert purelymail.calls == []
+
+
+class Provider:
+    """Another provider's IMAP and SMTP servers, which take their mailboxes' passwords, over TLS whose
+    certificates the client checks."""
+
+    def __init__(self):
+        self.passwords = {"alice@example.net": PASSWORD}
+        self.logins = []   # (host, port, address)
+        self.down = set()   # (host, port) that do not answer
+
+    def imap(self, host, port, ssl_context, timeout):
+        assert ssl_context.verify_mode == ssl.CERT_REQUIRED and ssl_context.check_hostname
+        return self.Session(self, host, port, tls=True)
+
+    def smtp(self, host, port, timeout):
+        return self.Session(self, host, port, tls=False)
+
+    class Session:
+        def __init__(self, provider, host, port, tls):
+            if (host, port) in provider.down:
+                raise TimeoutError("timed out")
+            self.provider, self.host, self.port, self.tls = provider, host, port, tls
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+        def starttls(self, context):
+            assert context.verify_mode == ssl.CERT_REQUIRED and context.check_hostname
+            self.tls = True
+
+        def login(self, address, password):
+            assert self.tls
+            if self.provider.passwords.get(address) != password:
+                raise imaplib.IMAP4.error("[AUTHENTICATIONFAILED] Invalid credentials") if self.port == 993 else \
+                    smtplib.SMTPAuthenticationError(535, b"5.7.8 Authentication failed")
+            self.provider.logins.append((self.host, self.port, address))
+
+
+PASSWORD = 'it\'s "pa$$" #word\\'
+OWN = dataclasses.replace(S, email_provider="custom", email_imap_host="imap.example.net",
+                          email_smtp_host="smtp.example.net", email_authserv_id="mx.example.net")
+
+
+@pytest.fixture
+def provider(monkeypatch):
+    fake = Provider()
+    monkeypatch.setattr(mail.imaplib, "IMAP4_SSL", fake.imap)
+    monkeypatch.setattr(mail.smtplib, "SMTP", fake.smtp)
+    return fake
+
+
+def typing(*answers):
+    """The admin, typing `answers` to thinny's questions in turn; the questions land in its `asked`."""
+    def ask(question):
+        ask.asked.append(question)
+        return answers[len(ask.asked) - 1]
+    ask.asked = []
+    return ask
+
+
+def test_an_instance_gets_a_mailbox_the_admin_created_at_another_provider(alice, incus, gateways, provider, capsys):
+    ask = typing(PASSWORD)
+    mail.connect(OWN, alice, "alice", ["anna@example.com"], address="alice@example.net", ask=ask)
+    assert ask.asked == ["Password of alice@example.net"]
+    assert provider.logins == [("imap.example.net", 993, "alice@example.net"),
+                               ("smtp.example.net", 587, "alice@example.net")]
+    assert env(incus) == {"HERMES_WEBAPP_AUTH_USERNAME": "alice", "EMAIL_ADDRESS": "alice@example.net",
+                          "EMAIL_PASSWORD": PASSWORD, "EMAIL_IMAP_HOST": "imap.example.net",
+                          "EMAIL_SMTP_HOST": "smtp.example.net", "EMAIL_AUTHSERV_ID": "mx.example.net",
+                          "EMAIL_ALLOWED_USERS": "anna@example.com", "EMAIL_HOME_ADDRESS": "anna@example.com"}
+    inst = alice.get("alice")
+    assert (inst.mailbox, inst.own_mailbox) == ("alice@example.net", True)
+    account = tomllib.loads(incus.containers["alice"]["files"][HIMALAYA_CONFIG])["accounts"]["alice@example.net"]
+    assert (account["backend"]["host"], account["message"]["send"]["backend"]["host"]) == \
+        ("imap.example.net", "smtp.example.net")
+    restarted, _ = gateways
+    assert restarted == ["alice"]
+    assert not any(PASSWORD in call for call in incus.calls)
+    assert "alice reads and sends mail as alice@example.net. anna@example.com may write to it." \
+        in capsys.readouterr().out
+
+
+def test_running_it_again_keeps_the_admins_mailbox_and_asks_its_password_only_for_a_new_one(alice, incus, provider):
+    mail.connect(OWN, alice, "alice", ["anna@example.com"], address="alice@example.net", ask=typing(PASSWORD))
+    mail.connect(OWN, alice, "alice", ["ben@example.com"], ask=typing())
+    assert (env(incus)["EMAIL_ALLOWED_USERS"], env(incus)["EMAIL_PASSWORD"]) == ("ben@example.com", PASSWORD)
+
+    provider.passwords["alice@example.net"] = "changed there"
+    ask = typing("changed there")
+    mail.connect(OWN, alice, "alice", [], new_password=True, address="alice@example.net", ask=ask)
+    assert ask.asked == ["Password of alice@example.net"]
+    assert (env(incus)["EMAIL_ALLOWED_USERS"], env(incus)["EMAIL_PASSWORD"]) == ("ben@example.com", "changed there")
+
+
+@pytest.mark.parametrize("password, down, message", [
+    ("wrong", None, "cannot sign in to alice@example.net at imap.example.net:993: \\[AUTHENTICATIONFAILED\\]"),
+    (PASSWORD, ("smtp.example.net", 587), "cannot sign in to alice@example.net at smtp.example.net:587: timed out"),
+    ("${mine}", None, "Hermes would read \\$\\{\\.\\.\\.\\} in this password as a variable"),   # in its .env
+])
+def test_a_mailbox_thinny_cannot_sign_in_to_changes_nothing(alice, incus, gateways, provider, password, down, message):
+    provider.down.add(down)
+    with pytest.raises(CommandError, match=message) as e:
+        mail.connect(OWN, alice, "alice", ["anna@example.com"], address="alice@example.net", ask=typing(password))
+    assert password not in str(e.value)   # typed unseen
+    assert "EMAIL" not in incus.containers["alice"]["files"][ENV] and alice.get("alice").mailbox == ""
+    restarted, _ = gateways
+    assert restarted == []
+
+
+@pytest.mark.parametrize("address, message", [
+    ("", "name the mailbox you created for alice: thinny instance email alice --address <its address>"),
+    ("alice", "'alice' is not an address"),
+    ("bob@example.net", "bob@example.net is bob's mailbox"),   # two gateways would answer its mail
+    ("bob@Example.NET", "bob@Example.NET is bob's mailbox"),
+])
+def test_an_instance_needs_a_mailbox_of_its_own(alice, provider, address, message):
+    alice.add("bob", "local", (9120, 9199)).mailbox = "bob@example.net"
+    with pytest.raises(CommandError, match=message):
+        mail.connect(OWN, alice, "alice", ["anna@example.com"], address=address, ask=typing(PASSWORD))
+    assert provider.logins == []
+
+
+def test_purelymail_mailboxes_are_thinnys_own_addresses(alice, purelymail):
+    with pytest.raises(CommandError, match="--address is for mailboxes you create \\(email.provider custom\\); at "
+                                           "Purelymail, thinny creates alice@example.org"):
+        mail.connect(SITE, alice, "alice", ["anna@example.com"], address="alice@example.net")
+    assert purelymail.calls == []
+
+
+@pytest.mark.parametrize("own, site, address, message", [
+    (True, OWN, "alice2@example.net", "alice has the mailbox alice@example.net, your own; "),
+    (False, OWN, "", "alice has the mailbox alice@example.net, which thinny created at Purelymail; "),
+    (True, SITE, "", "alice has the mailbox alice@example.net, your own; "),   # never one Purelymail changes
+])
+def test_an_instance_keeps_its_mailbox(alice, incus, provider, purelymail, own, site, address, message):
+    inst = alice.get("alice")
+    inst.mailbox, inst.own_mailbox = "alice@example.net", own
+    purelymail.users["alice@example.net"] = "x"
+    with pytest.raises(CommandError, match=message + "thinny does not give an instance another mailbox"):
+        mail.connect(site, alice, "alice", ["anna@example.com"], address=address, ask=typing(PASSWORD))
+    assert purelymail.calls == [] and provider.logins == [] and "EMAIL" not in incus.containers["alice"]["files"][ENV]
 
 
 @pytest.fixture
@@ -377,6 +528,14 @@ def test_a_remove_can_leave_the_mailbox_to_another_server(disabled, incus, purel
     assert "alice" not in incus.containers and disabled.get("alice").mailbox == ""
 
 
+def test_removing_an_instance_leaves_the_admins_own_mailbox(disabled, incus, purelymail, capsys):
+    disabled.get("alice").own_mailbox = True
+    purelymail.users = {"alice@example.org": "x"}   # even at Purelymail
+    instances.remove(SITE, disabled, "alice")
+    assert "Its mailbox alice@example.org stays: thinny did not create it." in capsys.readouterr().out
+    assert purelymail.calls == [] and "alice" not in incus.containers and disabled.get("alice").mailbox == ""
+
+
 def test_a_mailbox_needs_the_sites_purelymail_account_to_go(disabled, incus, purelymail):
     settings.SECRETS_ENV.unlink()
     with pytest.raises(CommandError, match=NO_TOKEN):
@@ -410,6 +569,23 @@ def test_doctor_finds_a_mailbox_gone_from_purelymail(purelymail):
     purelymail.users = {"bob@example.org": "x"}
     assert list(checks.mailboxes(SITE, reg))[1:] == [
         ("WARN", "alice's mailbox alice@example.org is gone from Purelymail", "thinny instance email alice")]
+
+
+def test_doctor_checks_only_that_this_server_reaches_the_mail_servers_of_another_provider(purelymail):
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="active", mailbox="alice@example.org")})
+    assert list(checks.mailboxes(OWN, reg)) == [
+        ("OK", "this server reaches imap.example.net:993 and smtp.example.net:587", "")]
+    purelymail.blocked.add(("imap.example.net", 993))
+    assert list(checks.mailboxes(OWN, reg)) == [
+        ("WARN", "this server cannot reach imap.example.net:993: its instances' mail neither goes nor comes",
+         "let outgoing TCP to port 993 through, also at your hosting provider (see README, Email)")]
+    assert purelymail.calls == []
+
+
+def test_doctor_looks_for_no_mailbox_of_the_admins_own_at_purelymail(purelymail):
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="active", mailbox="alice@example.net",
+                                      own_mailbox=True)})
+    assert list(checks.mailboxes(SITE, reg)) == [("OK", "Purelymail takes mail for example.org", "")]
 
 
 def test_purelymails_errors_come_with_http_200(alice, purelymail):

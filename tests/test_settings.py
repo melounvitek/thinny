@@ -90,6 +90,12 @@ def test_model_lock_is_off_by_default_and_then_needs_no_model():
     ({"email__api_token": "pm-live-x"}, "unknown setting email.api_token"),
     ({"email__domain": "<domain>"}, "email.domain must be a domain"),
     ({"email__domain": "Example.org"}, "email.domain must be a domain"),
+    ({"email__provider": "gmail"}, "email.provider must be custom, purelymail or \"\" \\(off\\)"),
+    ({"email__provider": "purelymail"}, "email.domain is required with purelymail"),
+    ({"email__provider": "custom", "email__imap_host": "imap.example.org", "email__smtp_host": "smtp.example.org"},
+     "email.imap_host, email.smtp_host and email.authserv_id are required with custom"),
+    ({"email__provider": "custom", "email__imap_host": "imap.example.org:993", "email__smtp_host": "smtp.example.org",
+      "email__authserv_id": "mx.example.org"}, "email.imap_host must be a host name in lowercase"),
     ({"dashboard__access": "url"}, "dashboard.access must be one of lan, tailscale, local"),
     ({"dashboard__enabled": True, "dashboard__access": "lan", "access__default": "local", "access__lan_address": None},
      "lan_address is required when dashboard.access is lan"),
@@ -122,9 +128,20 @@ def test_lan_address_is_optional_without_lan_default():
     assert parse(site(access__lan_address=None, access__default="tailscale")).lan_address == ""
 
 
-def test_mailboxes_are_off_without_a_domain():
-    assert parse(site()).email_domain == ""
-    assert parse(site(email__domain="agents.example.org")).email_domain == "agents.example.org"
+def test_mailboxes_are_off_without_a_provider():
+    assert parse(site()).email_provider == ""
+    assert parse(site(email__provider="", email__domain="agents.example.org")).email_provider == ""
+    s = parse(site(email__provider="custom", email__imap_host="imap.example.org", email__smtp_host="smtp.example.org",
+                   email__authserv_id="mx.example.org"))
+    assert (s.email_provider, s.email_imap_host, s.email_smtp_host, s.email_authserv_id) == \
+        ("custom", "imap.example.org", "smtp.example.org", "mx.example.org")
+    s = parse(site(email__provider="purelymail", email__domain="agents.example.org"))
+    assert (s.email_provider, s.email_domain) == ("purelymail", "agents.example.org")
+
+
+def test_a_config_from_before_providers_keeps_its_purelymail_mailboxes():
+    s = parse(site(email__domain="agents.example.org"))
+    assert (s.email_provider, s.email_domain) == ("purelymail", "agents.example.org")
 
 
 def test_tokens_come_from_secrets_env_or_for_one_run_from_the_environment(monkeypatch):

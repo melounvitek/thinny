@@ -1,6 +1,7 @@
 import dataclasses
 import io
 import subprocess
+import tomllib
 
 import pytest
 import yaml
@@ -226,10 +227,16 @@ def test_mailboxes_from_before_get_the_email_client(server, incus):
                          bob=Instance("bob", 9121, "local", state="active"))
     for name in reg.instances:
         incus.containers[name] = {"state": "RUNNING", "devices": {}}
+    incus.containers["alice"]["files"] = {"/home/alice/.hermes/.env": 'EMAIL_ADDRESS="alice@example.org"\n'
+                                          'EMAIL_IMAP_HOST="imap.example.net"\nEMAIL_SMTP_HOST="smtp.example.net"\n'}
 
     apply.apply(S)
     assert incus.containers["alice"]["himalaya"] == instances.HIMALAYA
-    assert '[accounts."alice@example.org"]' in incus.containers["alice"]["files"]["/home/alice/.config/himalaya/config.toml"]
+    config = tomllib.loads(incus.containers["alice"]["files"]["/home/alice/.config/himalaya/config.toml"])
+    account = config["accounts"]["alice@example.org"]
+    # its provider's, as its .env has them
+    assert (account["backend"]["host"], account["message"]["send"]["backend"]["host"]) == \
+        ("imap.example.net", "smtp.example.net")
     assert "himalaya" not in incus.containers["bob"] and "files" not in incus.containers["bob"]
 
 

@@ -388,7 +388,9 @@ def ensure_mail_client(inst: Instance) -> None:
                             HIMALAYA_BIN], timeout=600)
     path = f"/home/{name}/.config/himalaya/config.toml"
     config = read_user_file(name, path)
-    account = render.himalaya_account(inst.mailbox, str(home(name) / ".env"), default=not config.strip())
+    env = env_values(name)
+    account = render.himalaya_account(inst.mailbox, env.get("EMAIL_IMAP_HOST", ""), env.get("EMAIL_SMTP_HOST", ""),
+                                      str(home(name) / ".env"), default=not config.strip())
     try:
         if inst.mailbox not in tomllib.loads(config).get("accounts", {}):
             tomllib.loads(config + account)   # fails e.g. after `accounts = {...}`
@@ -805,8 +807,11 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
                   f". To pick another once it is signed in: thinny instance model {name} <model>"))
         if secret("THINNY_TELEGRAM_MANAGER_TOKEN"):
             print(f"Then send its user a Telegram bot: thinny instance telegram {name}")
-        if s.email_domain:
+        if s.email_provider == "purelymail":
             print(f"Then give it a mailbox, {name}@{s.email_domain}: thinny instance email {name} "
+                  "<its user's address>")
+        elif s.email_provider == "custom":
+            print(f"Then give it a mailbox you created: thinny instance email {name} --address <its address> "
                   "<its user's address>")
 
 
@@ -1068,7 +1073,8 @@ def remove(s: Settings, reg: Registry, name: str, purge: bool = False, keep_mail
     if inst.state != "removed":
         print(f"This deletes {name}'s container, with all its data.")
     if inst.mailbox:
-        print(f"Its mailbox {inst.mailbox} stays in Purelymail." if keep_mailbox else
+        print(f"Its mailbox {inst.mailbox} stays: thinny did not create it." if inst.own_mailbox else
+              f"Its mailbox {inst.mailbox} stays in Purelymail." if keep_mailbox else
               f"This deletes its mailbox {inst.mailbox} too, with all its mail.")
     if purge:
         print(f"This frees {name}'s name and port for a new instance.")
@@ -1081,7 +1087,7 @@ def remove(s: Settings, reg: Registry, name: str, purge: bool = False, keep_mail
         raise CommandError("nothing removed")
 
     if inst.mailbox:   # first: when Purelymail fails, the instance stays as it is
-        if not keep_mailbox:
+        if not keep_mailbox and not inst.own_mailbox:
             purelymail.delete(inst.mailbox)
         inst.mailbox = ""
         reg.save()   # at once: a mailbox created at its address later is not thinny's to delete

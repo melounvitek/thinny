@@ -466,16 +466,21 @@ def test_instance_telegram_waits_without_thinnys_lock(server, monkeypatch):
 
 def test_instance_email_takes_who_may_write_and_runs_with_thinnys_lock(server, monkeypatch):
     connected = []
+    hidden = answering(monkeypatch, "it's mine")
 
-    def connect(s, reg, name, senders, new_password):
+    def connect(s, reg, name, senders, new_password, address, ask):
         with pytest.raises(system.CommandError, match="in progress"):
             with system.lock():
                 pass
-        connected.append((name, senders, new_password))
+        connected.append((name, senders, new_password, address, address and ask(f"Password of {address}")))
     monkeypatch.setattr(mail, "connect", connect)
     assert cli.main(["instance", "email", "alice", "anna@example.com", "ben@example.com"]) == 0
     assert cli.main(["instance", "email", "alice", "--new-password"]) == 0
-    assert connected == [("alice", ["anna@example.com", "ben@example.com"], False), ("alice", [], True)]
+    assert cli.main(["instance", "email", "bob", "--address", "bob@example.net", "anna@example.com"]) == 0
+    assert connected == [("alice", ["anna@example.com", "ben@example.com"], False, "", ""),
+                         ("alice", [], True, "", ""),
+                         ("bob", ["anna@example.com"], False, "bob@example.net", "it's mine")]
+    assert hidden == ["Password of bob@example.net: "]   # typed unseen, never in the shell's history
 
 
 def test_instance_export_runs_with_thinnys_lock(server, monkeypatch):
@@ -512,16 +517,16 @@ def test_instance_move_takes_names_or_all(server, monkeypatch, capsys):
 
 def test_the_other_server_takes_the_archive_from_stdin_or_only_checks(server, monkeypatch):
     received = []
-    monkeypatch.setattr(move, "receive", lambda s, reg, *args, frontend, mailbox:
-                        received.append((*args, frontend, mailbox)))
+    monkeypatch.setattr(move, "receive", lambda s, reg, *args, frontend, mailbox, own_mailbox:
+                        received.append((*args, frontend, mailbox, own_mailbox)))
     monkeypatch.setattr(cli.sys, "stdin", type("Pipe", (), {"buffer": "the archive"})())
     args = ["instance", "receive", "bob", "--access", "url", "--url", "https://bob.example.org/",
             "--release", "v2", "c0ffee", "--built-ins", "", "--disk-gb", "30"]   # added by a thinny without built-ins
     assert cli.main(args) == 0
-    assert cli.main([*args, "--check", "--frontend", "webui", "--mailbox", "bob@example.org"]) == 0
+    assert cli.main([*args, "--check", "--frontend", "webui", "--mailbox", "bob@example.org", "--own-mailbox"]) == 0
     assert received == [
-        ("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", 30, "the archive", "webapp", ""),
-        ("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", 30, None, "webui", "bob@example.org")]
+        ("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", 30, "the archive", "webapp", "", False),
+        ("bob", "url", "https://bob.example.org/", ("v2", "c0ffee"), "", 30, None, "webui", "bob@example.org", True)]
 
 
 def test_the_trace_runs_even_with_a_broken_site_toml(server, monkeypatch):
