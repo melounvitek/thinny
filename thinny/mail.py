@@ -25,8 +25,8 @@ def connect(s: Settings, reg: Registry, name: str, senders: list[str], new_passw
     """Give the instance its mailbox, which `senders` may write to (the first also gets its scheduled jobs' mail):
     create it, or change who may write, keeping its password unless `new_password`. No `senders` keeps those it
     has."""
-    if not s.email_domain:
-        raise CommandError("set email.domain first: thinny config edit (see README, Email)")
+    if not s.email_provider:
+        raise CommandError("set email.provider first: thinny config edit (see README, Email)")
     inst = reg.get(name)
     if inst.state != "active":
         raise RegistryError(f"{name} is {inst.state}")

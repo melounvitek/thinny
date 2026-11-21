@@ -805,8 +805,11 @@ def add(s: Settings, reg: Registry, name: str, access: str | None, url: str = ""
                   f". To pick another once it is signed in: thinny instance model {name} <model>"))
         if secret("THINNY_TELEGRAM_MANAGER_TOKEN"):
             print(f"Then send its user a Telegram bot: thinny instance telegram {name}")
-        if s.email_domain:
+        if s.email_provider == "purelymail":
             print(f"Then give it a mailbox, {name}@{s.email_domain}: thinny instance email {name} "
+                  "<its user's address>")
+        elif s.email_provider == "custom":
+            print(f"Then give it a mailbox you created: thinny instance email {name} --address <its address> "
                   "<its user's address>")
 
 

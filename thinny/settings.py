@@ -19,6 +19,7 @@ FRONTENDS = ("webapp", "webui")   # Hermes's built-in Webapp, or hermes-webui
 DASHBOARD_ACCESS = ("lan", "tailscale", "local")
 # On 127.0.0.1 while the dashboard is on: Incus's metrics, Prometheus, its node exporter.
 MONITORING_PORTS = (8444, 9090, 9100)
+HOST_RE = re.compile(r"([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}")
 
 
 class SettingsError(Exception):
@@ -53,7 +54,11 @@ class Settings:
     tunnel_port: int = 0
     network_interface: str = "eth0"
     blocked_networks: tuple[str, ...] = ()
+    email_provider: str = ""   # "": no mailboxes | custom: the admin's own, anywhere | purelymail: thinny's
     email_domain: str = ""
+    email_imap_host: str = ""
+    email_smtp_host: str = ""
+    email_authserv_id: str = ""
     dashboard_enabled: bool = False
     dashboard_access: str = "local"
     dashboard_port: int = 9200
@@ -92,7 +97,11 @@ KEYS = {
     ("access", "tunnel_port"): "tunnel_port",
     ("network", "interface"): "network_interface",
     ("network", "blocked_networks"): "blocked_networks",
+    ("email", "provider"): "email_provider",
     ("email", "domain"): "email_domain",
+    ("email", "imap_host"): "email_imap_host",
+    ("email", "smtp_host"): "email_smtp_host",
+    ("email", "authserv_id"): "email_authserv_id",
     ("dashboard", "enabled"): "dashboard_enabled",
     ("dashboard", "access"): "dashboard_access",
     ("dashboard", "port"): "dashboard_port",
@@ -178,6 +187,8 @@ def parse(text: str, source: str = "config.toml") -> Settings:
             if name is None:
                 raise SettingsError(f"{source}: unknown setting {section}.{key}")
             values[name] = value
+    if "provider" not in data.get("email", {}) and values.get("email_domain"):   # from before custom mailboxes
+        values["email_provider"] = "purelymail"
 
     types = {f.name: f.type for f in fields(Settings)}
     for name, value in values.items():
@@ -260,8 +271,18 @@ def _validate(s: Settings, source: str) -> None:
             ipaddress.ip_network(network)
         except ValueError:
             fail(f"network.blocked_networks: {network!r} is not a network")
-    if s.email_domain and not re.fullmatch(r"([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}", s.email_domain):
+    if s.email_domain and not HOST_RE.fullmatch(s.email_domain):
         fail("email.domain must be a domain in lowercase, like example.org")
+    if s.email_provider not in ("", "custom", "purelymail"):
+        fail('email.provider must be custom, purelymail or "" (off)')
+    if s.email_provider == "purelymail" and not s.email_domain:
+        fail("email.domain is required with purelymail")
+    if s.email_provider == "custom":
+        if not (s.email_imap_host and s.email_smtp_host and s.email_authserv_id):
+            fail("email.imap_host, email.smtp_host and email.authserv_id are required with custom")
+        for key, value in (("imap_host", s.email_imap_host), ("smtp_host", s.email_smtp_host)):
+            if not HOST_RE.fullmatch(value):
+                fail(f"email.{key} must be a host name in lowercase, like mail.example.org")
     if s.dashboard_access not in DASHBOARD_ACCESS:
         fail(f"dashboard.access must be one of {', '.join(DASHBOARD_ACCESS)}")
     if s.dashboard_retention_days < 1:

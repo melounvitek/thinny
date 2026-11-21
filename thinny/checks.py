@@ -98,7 +98,7 @@ def access_trace(s: Settings, reg: Registry):
 
 
 def mailboxes(s: Settings, reg: Registry):
-    if not s.email_domain:
+    if not s.email_provider:
         return
     for host_name, port in ((purelymail.IMAP_HOST, 993), (purelymail.SMTP_HOST, 587)):   # Hermes's ports
         try:

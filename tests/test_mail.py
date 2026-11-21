@@ -15,7 +15,7 @@ from thinny.registry import Instance, Registry, RegistryError
 from thinny.system import CommandError
 
 TOKEN = "pm-live-" + "t" * 32
-SITE = dataclasses.replace(S, email_domain="example.org")
+SITE = dataclasses.replace(S, email_provider="purelymail", email_domain="example.org")
 NO_TOKEN = "set THINNY_PURELYMAIL_API_TOKEN first: thinny config edit --secrets \\(see README, Email\\)"
 ENV = "/home/alice/.hermes/.env"
 HIMALAYA_CONFIG = "/home/alice/.config/himalaya/config.toml"
@@ -322,8 +322,8 @@ def test_a_mailbox_needs_its_domain_set_up_in_purelymail(alice, purelymail, chan
     assert "createUser" not in purelymail.methods()
 
 
-def test_a_mailbox_needs_the_sites_domain_and_purelymail_account(alice, purelymail):
-    with pytest.raises(CommandError, match="set email.domain first: thinny config edit \\(see README, Email\\)"):
+def test_a_mailbox_needs_the_sites_provider_and_purelymail_account(alice, purelymail):
+    with pytest.raises(CommandError, match="set email.provider first: thinny config edit \\(see README, Email\\)"):
         mail.connect(S, alice, "alice", ["anna@example.com"])
     settings.SECRETS_ENV.unlink()
     with pytest.raises(CommandError, match=NO_TOKEN):

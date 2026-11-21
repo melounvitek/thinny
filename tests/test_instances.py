@@ -427,12 +427,17 @@ def test_a_new_instance_ends_with_the_telegram_step_on_a_site_with_a_manager_bot
     assert ("Then send its user a Telegram bot: thinny instance telegram alice" in out) == step
 
 
-@pytest.mark.parametrize("domain, step", [("", False), ("example.org", True)])
-def test_a_new_instance_ends_with_the_mailbox_step_on_a_site_with_purelymail(incus, capsys, domain, step):
-    instances.add(dataclasses.replace(S, email_domain=domain), Registry(), "alice", "local")
+@pytest.mark.parametrize("provider, step", [
+    ("", None),
+    ("purelymail", "Then give it a mailbox, alice@example.org: thinny instance email alice <its user's address>"),
+    ("custom", "Then give it a mailbox you created: thinny instance email alice --address <its address> "
+               "<its user's address>"),
+])
+def test_a_new_instance_ends_with_the_mailbox_step_on_a_site_with_mailboxes(incus, capsys, provider, step):
+    instances.add(dataclasses.replace(S, email_provider=provider, email_domain="example.org"), Registry(), "alice",
+                  "local")
     out = capsys.readouterr().out
-    assert ("Then give it a mailbox, alice@example.org: thinny instance email alice <its user's address>" in out) \
-        == step
+    assert ("Then give it a mailbox" in out) == bool(step) and (step or "") in out
 
 
 PHONE = {"SIP_SERVER": "sip.odorik.cz", "SIP_USER": "794000", "SIP_PASSWORD": "it's \"pa$$\" #word\\", "PHONE_PIN": "246813",
