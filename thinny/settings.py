@@ -13,7 +13,7 @@ from pathlib import Path
 CONFIG_TOML = Path("/etc/thinny/config.toml")
 # Tokens, which config.toml never holds, so that it is safe to show. Only root reads this file.
 SECRETS_ENV = CONFIG_TOML.parent / "secrets.env"
-SECRETS = ("THINNY_TELEGRAM_MANAGER_TOKEN", "THINNY_PURELYMAIL_API_TOKEN")
+SECRETS = ("THINNY_TELEGRAM_MANAGER_TOKEN", "THINNY_PURELYMAIL_API_TOKEN", "THINNY_BACKUP_PASSPHRASE")
 ACCESS_METHODS = ("lan", "tailscale", "url", "local")
 FRONTENDS = ("webapp", "webui")   # Hermes's built-in Webapp, or hermes-webui
 DASHBOARD_ACCESS = ("lan", "tailscale", "local")
@@ -59,6 +59,7 @@ class Settings:
     dashboard_port: int = 9200
     dashboard_retention_days: int = 30
     dashboard_subscription_usage: bool = False
+    backup_target: str = ""
     groups: dict[str, dict] = field(default_factory=dict)   # name -> the Hermes settings its members' policies pin
     hermes: dict = field(default_factory=dict)   # one instance's: its group's and mailbox's (instances.settings_for)
 
@@ -97,6 +98,7 @@ KEYS = {
     ("dashboard", "port"): "dashboard_port",
     ("dashboard", "retention_days"): "dashboard_retention_days",
     ("dashboard", "subscription_usage"): "dashboard_subscription_usage",
+    ("backup", "target"): "backup_target",
 }
 
 
@@ -264,6 +266,10 @@ def _validate(s: Settings, source: str) -> None:
         fail(f"dashboard.access must be one of {', '.join(DASHBOARD_ACCESS)}")
     if s.dashboard_retention_days < 1:
         fail("dashboard.retention_days must be at least 1")
+    # Plain characters only: the path goes into the backup machine's authorized_keys and crontab.
+    if s.backup_target and not re.fullmatch(r"[a-z_][a-z0-9_.-]*@[A-Za-z0-9.-]+:[A-Za-z0-9_./-]+", s.backup_target):
+        fail("backup.target must be user@host:path, e.g. you@nas:thinny-backups (a relative path is in that "
+             "account's home)")
     if not s.dashboard_enabled:   # its defaults take nothing from a server without it
         return
     if s.dashboard_access == "lan" and not s.lan_address:

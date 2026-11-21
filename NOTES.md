@@ -612,6 +612,70 @@ own), through `sudo -n` there. The instance: Webapp, local access, no group, loc
   nothing of the archive left in `/var/lib/thinny`, `doctor` all OK. It was not rebooted.
 - The new server logs `resuming the unfinished setup of <name>` for the instance it just received.
 
+### Backups (2026-11-20)
+borg 1.4.4 and 1.2.8 (the static binaries of their releases), Incus 6.0.5 on this workstation, without root: a
+throwaway empty container in the default btrfs pool, and in place of SSH a script that runs what the backup
+machine's forced command runs, `borg serve --append-only --restrict-to-repository <repo>` from the account's home.
+
+- Distributions: Debian 13 and Ubuntu 26.04 ship borg 1.4, Ubuntu 24.04 1.2.8 **[docs]**. A 1.2.8 client against
+  1.4.4's `borg serve` and the other way round: list, create, info and extract worked **[tested]**.
+- `incus export <name> -` writes the archive to stdout, but the server builds it first under
+  `/var/lib/incus/backups/instances/<name>/` and then sends it; `incus import - <name>` reads stdin
+  (`cmd/incus/export.go`, `import.go`, v6.0.0 and v6.0.5) **[src]**. So the server's disk needs room for the whole
+  uncompressed archive either way, which `du -sb` of the container's folder in its pool tells.
+- A running container exports from a read-only btrfs snapshot (`driver_btrfs_volumes.go`, `BackupVolume`,
+  non-optimized; v6.0.0 and v6.0.5) **[src]**: a crash-consistent copy, without stopping it. Not tried with a running
+  instance.
+- `borg create --content-from-command ... -- incus export <name> - --instance-only --compression none --quiet`
+  (thinny adds `--optimized-storage`, see below)
+  stored the export; an export that failed (no such container) ended with exit 2 and no archive **[tested]**. A
+  shell pipe into `borg create -` would have stored a cut-off stream **[docs]**. Two runs of an unchanged container
+  of 9 KiB added 1.9 KiB **[tested]**.
+- `--comment` takes borg's `{placeholders}`: `{"release": ...}` fails with "Invalid placeholder"; doubled braces
+  come back as single ones, also from 1.2.8 **[tested]**.
+- `borg init` through `borg serve --append-only` creates a repository that is not append-only (`borg serve`
+  makes each session append-only) **[docs]**; a relative path from the client (`you@nas:thinny-backups`) matched the
+  absolute `--restrict-to-repository`, and another path got "Repository path not allowed" **[tested]**.
+- Deletes and prunes through `--append-only` work, and `borg compact` there frees nothing without a word; on the
+  backup machine, `borg check --repository-only` and `borg compact` need no passphrase and freed the deleted
+  archives' space (59,876 to 51,328 bytes) **[tested]**. Compaction makes a deletion by a server broken into final
+  too, so the protection lasts until the next cleanup.
+- The repository's key is not append-only (`Repository.save_key`, 1.4.4) **[src]**: `borg key change-passphrase`
+  through `--append-only` worked, the kept passphrase then failed, and `borg key import <repo> <repo>.key-copy` on
+  the backup machine made it work again. `borg key export` there needs no passphrase **[tested]**.
+- A wrong passphrase: exit 2, "Passphrase supplied in BORG_PASSPHRASE, by BORG_PASSCOMMAND, or via
+  BORG_PASSPHRASE_FD is incorrect." **[tested]**.
+- `ssh <thinny's key> echo thinny-unrestricted` against the forced command prints nothing on stdout and exits 0
+  (`borg serve` reads EOF: "Got connection close before repository was opened.") **[tested]**.
+- `borg extract --stdout ::<archive> | incus import - <name> --storage <pool>` (bash, pipefail) brought back the
+  container with its file **[tested]**.
+- `borg --timestamp` is UTC **[docs]**; every archive of a run gets the same one, so prune keeps whole runs.
+
+On servers (2026-11-20, thinny 0300715): Debian 13 VMs on this workstation (Incus 6.0.5 VMs, 4 CPUs, 6 GiB, the
+guests' Incus 6.0.4 and borg 1.4.0), one the old server with alice (Webapp) and bob (WebUI, disabled), each about
+3.2 GiB, one a fresh new server; a Debian 13 VM with sshd, cron and borg 1.4.0 as the backup machine, account
+`you` with a password. The admin's answers came from `expect` **[tested]**:
+
+- `backup init` asked for the host key and the password, showed the passphrase and set up the forced command,
+  the crontab line and the key's copy. thinny's key got no shell: `borg serve` reads `SSH_ORIGINAL_COMMAND`, so
+  `ssh ... id` printed borg's usage, and `echo thinny-unrestricted` exited 2 with the word on stderr only.
+- `incus export` as a tarball of the files took 5 min 13 s for alice: 8.3 GB uncompressed at about 27 MB/s, while
+  the VM's disk wrote 738 MB/s. With `--optimized-storage` (a btrfs stream): 1 min 23 s, 6.5 GB. Through borg,
+  each instance took about 2 min 40 s per run with the stream, the first run too, against 5 min 40 s with the
+  tarball, also when nothing had changed; a second stream of alice with a line changed added 74 MB. `incus import -` of such a stream into another btrfs
+  pool took 89 s.
+- `systemctl start thinny-update.service` ran the backup, then the update. With the backup machine's disk full,
+  borg failed with "No space left on device": the service failed without updating, the status kept the last
+  good run, and the run's first archive was gone.
+- `backup restore alice` took 5 min 23 s (her state before it, the import, Hermes again) and brought back her
+  file; her Webapp answered, `doctor` was all OK.
+- `backup restore --all` on the new server took 4 min 51 s: alice active at her port and address with her file,
+  bob disabled with his, the access traces back, `doctor` without a failure. With alice on `lan`, it first stopped
+  at the old server's LAN address; after `config apply` with the new one, it went on, and Caddy ran with the old
+  server's certificate authority (the same fingerprint): curl trusting only the old root certificate got 302
+  from the new address.
+- The monthly cleanup line, run as `you`, took 24 s and freed 3 of 16 GB.
+
 ## 2. Rejected options (and why)
 
 - Docker: docker group = root.
@@ -649,6 +713,11 @@ own), through `sudo -n` there. The instance: Webapp, local access, no group, loc
   reboot) and needs a signed module under Secure Boot. LVM thin gives each container a filesystem of
   its own, but without compression (about 6 GB instead of 3 GB for an idle instance), and a full
   thin pool can damage every one of them. A `df` wrapper in the containers: only `df` would see it.
+- Backups with restic over SFTP: append-only needs rclone or rest-server on the backup machine; borg's own `serve
+  --append-only` in authorized_keys does it. Backing up the containers' files rather than Incus's exports: faster
+  nightly, but a restore would have to rebuild the container, its idmap and devices. `incus copy --refresh` to a
+  standby server: a second Incus and its API port, not SSH. Plain archives over scp, like `move`: the whole of each
+  container every night, unencrypted.
 - Mail: a mail server on the host (inbound port 25, and mail from a VPS address lands in spam), Migadu
   (daily sending caps per account), Cloudflare's Email Routing and agent inbox (no mailboxes or IMAP,
   which Hermes needs). DNS records through Cloudflare's API in thinny: a one-time step, and sites use
@@ -679,6 +748,10 @@ own), through `sudo -n` there. The instance: Webapp, local access, no group, loc
 - Export: not tried are its time on a large `state.db` (2 s with 1.4 MB) and `hermes import` into a Hermes
   outside thinny. It follows Hermes's list of credentials, but mirrors its private any-depth names: check
   them when Hermes changes.
+- Backups are tried on Debian 13 VMs only (section 1, Backups): not on Ubuntu, nor with a NAS as the backup
+  machine, nor with large or busy instances (how long a run takes, and the consistency of a running one's
+  export). A Hetzner Storage Box is not supported: its restricted shell cannot run init's setup, and its key
+  cannot be restricted.
 - Per-instance SSH and Tailscale are left to the users; SSH needs the host as jump host.
 - The firewall check: a flush with Tailscale's tables around is untried (the VM had no Tailscale, and nothing
   was flushed on the workstation).

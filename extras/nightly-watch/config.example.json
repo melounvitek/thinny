@@ -7,6 +7,11 @@
       "host": "<user>@<server>"
     },
     {
+      "name": "thinny backup",
+      "kind": "thinny-backup",
+      "host": "<user>@<server>"
+    },
+    {
       "name": "Nightly snapshot",
       "kind": "netcup-snapshot",
       "host": "<user>@<snapshot machine>",

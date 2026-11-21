@@ -85,7 +85,7 @@ def test_a_moved_instance_keeps_its_users_settings_and_gets_this_servers_port_an
     assert not incus.ran("write_preferences") and not incus.ran("hermes-install.sh")
     out = capsys.readouterr().out
     assert "Password: unchanged" in out
-    assert "if alice did not use openai-codex on its old server, sign it in: thinny instance login alice" in out
+    assert "if alice did not use openai-codex before, sign it in: thinny instance login alice" in out
 
 
 def test_a_moved_instance_loses_the_disk_quota_of_a_server_with_one_shared_pool(target, incus):

@@ -111,6 +111,8 @@ class Incus:
         if cmd[:2] == ["incus", "list"] and "json" in cmd:   # every container, with its state
             return json.dumps([{"name": name, "status": c["state"].title(), "expanded_config": c.get("config", {}),
                                 "state": c.get("incus_state", {})} for name, c in self.containers.items()]), 0
+        if cmd[:2] == ["incus", "list"] and cmd[-1] == "ns":   # every container's state
+            return "".join(f"{name},{c['state']}\n" for name, c in self.containers.items()), 0
         if cmd[:2] == ["incus", "list"]:
             c = self.containers.get(cmd[-1].strip("^$"))
             return (c["state"] + "\n" if c else ""), 0
@@ -150,13 +152,16 @@ class Incus:
             c = self.containers[cmd[2]]
             if c.get("export_fails"):
                 return "Error: no space left on device", 1
+            if cmd[3] == "-":
+                return json.dumps(c), 0
             with open(cmd[3], "w") as f:
                 json.dump(c, f)
             self.exported_mode = os.stat(os.path.dirname(cmd[3])).st_mode & 0o777
         elif cmd[:2] == ["incus", "import"]:
-            self.imported_mode = os.stat(cmd[2]).st_mode & 0o777
+            if cmd[2] != "-":   # else from its input
+                self.imported_mode = os.stat(cmd[2]).st_mode & 0o777
             try:
-                container = json.loads(Path(cmd[2]).read_text())
+                container = json.loads(input if cmd[2] == "-" else Path(cmd[2]).read_text())
             except ValueError:
                 return "Error: not a backup", 1
             for device, d in container["devices"].items():
@@ -554,10 +559,12 @@ def test_the_instances_disks_together_take_at_most_80_percent_of_the_servers(inc
     assert incus.pools["thinny-alice"]["size"] == 30 * 2**30
 
 
-def server_disk(monkeypatch, total):
-    """The size of the server's disk, where Incus keeps the pools' files."""
-    monkeypatch.setattr(shutil, "disk_usage", lambda path: types.SimpleNamespace(
-        total=total, used=0, free=total) if str(path) == "/var/lib/incus" else pytest.fail(f"disk_usage({path})"))
+def server_disk(monkeypatch, total, free=None):
+    """The size of the server's disk, where Incus keeps the pools' files, and its free space (default: all)."""
+    free = total if free is None else free
+    usage = types.SimpleNamespace(total=total, used=total - free, free=free)
+    monkeypatch.setattr(shutil, "disk_usage", lambda path: usage if str(path) == "/var/lib/incus" else
+                        pytest.fail(f"disk_usage({path})"))
 
 
 def test_the_list_shows_what_each_instance_uses(incus, monkeypatch, capsys, tmp_path):
