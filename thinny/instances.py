@@ -1073,7 +1073,8 @@ def remove(s: Settings, reg: Registry, name: str, purge: bool = False, keep_mail
     if inst.state != "removed":
         print(f"This deletes {name}'s container, with all its data.")
     if inst.mailbox:
-        print(f"Its mailbox {inst.mailbox} stays in Purelymail." if keep_mailbox else
+        print(f"Its mailbox {inst.mailbox} stays: thinny did not create it." if inst.own_mailbox else
+              f"Its mailbox {inst.mailbox} stays in Purelymail." if keep_mailbox else
               f"This deletes its mailbox {inst.mailbox} too, with all its mail.")
     if purge:
         print(f"This frees {name}'s name and port for a new instance.")
@@ -1086,7 +1087,7 @@ def remove(s: Settings, reg: Registry, name: str, purge: bool = False, keep_mail
         raise CommandError("nothing removed")
 
     if inst.mailbox:   # first: when Purelymail fails, the instance stays as it is
-        if not keep_mailbox:
+        if not keep_mailbox and not inst.own_mailbox:
             purelymail.delete(inst.mailbox)
         inst.mailbox = ""
         reg.save()   # at once: a mailbox created at its address later is not thinny's to delete

@@ -186,6 +186,21 @@ def test_uninstall_deletes_the_instances_mailboxes_or_names_those_left(server, m
     assert list(purelymail.users) == left.split(", ")
 
 
+def test_uninstall_leaves_the_admins_own_mailboxes(server, monkeypatch, capsys):
+    write(settings.SECRETS_ENV, f"THINNY_PURELYMAIL_API_TOKEN={TOKEN}\n")
+    path = system.STATE_DIR / "instances.json"
+    reg = Registry.load()
+    reg.get("alice").mailbox, reg.get("alice").own_mailbox = "alice@example.org", True
+    reg.save(path)
+    purelymail = Purelymail()
+    purelymail.users = {"alice@example.org": "a"}   # even at Purelymail
+    monkeypatch.setattr(urllib.request, "urlopen", purelymail.urlopen)
+    assert cli.main(["uninstall"]) == 0
+    out = capsys.readouterr().out
+    assert "alice (active, own mailbox alice@example.org, which stays)" in out
+    assert purelymail.calls == [] and "Mailboxes it could not delete" not in out
+
+
 def test_uninstall_takes_the_dashboard_back_and_leaves_its_packages(server, monkeypatch, capsys):
     srv = server
     monkeypatch.setattr(dashboard.shutil, "which", lambda name: f"/usr/bin/{name}")

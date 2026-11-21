@@ -407,7 +407,8 @@ def test_an_instance_gets_a_mailbox_the_admin_created_at_another_provider(alice,
     ask = typing(PASSWORD)
     mail.connect(OWN, alice, "alice", ["anna@example.com"], address="alice@example.net", ask=ask)
     assert ask.asked == ["Password of alice@example.net"]
-    assert provider.logins == [("imap.example.net", 993, "alice@example.net"), ("smtp.example.net", 587, "alice@example.net")]
+    assert provider.logins == [("imap.example.net", 993, "alice@example.net"),
+                               ("smtp.example.net", 587, "alice@example.net")]
     assert env(incus) == {"HERMES_WEBAPP_AUTH_USERNAME": "alice", "EMAIL_ADDRESS": "alice@example.net",
                           "EMAIL_PASSWORD": PASSWORD, "EMAIL_IMAP_HOST": "imap.example.net",
                           "EMAIL_SMTP_HOST": "smtp.example.net", "EMAIL_AUTHSERV_ID": "mx.example.net",
@@ -525,6 +526,14 @@ def test_a_remove_can_leave_the_mailbox_to_another_server(disabled, incus, purel
     assert "Its mailbox alice@example.org stays in Purelymail." in capsys.readouterr().out
     assert purelymail.users == {"alice@example.org": "x"} and purelymail.calls == []
     assert "alice" not in incus.containers and disabled.get("alice").mailbox == ""
+
+
+def test_removing_an_instance_leaves_the_admins_own_mailbox(disabled, incus, purelymail, capsys):
+    disabled.get("alice").own_mailbox = True
+    purelymail.users = {"alice@example.org": "x"}   # even at Purelymail
+    instances.remove(SITE, disabled, "alice")
+    assert "Its mailbox alice@example.org stays: thinny did not create it." in capsys.readouterr().out
+    assert purelymail.calls == [] and "alice" not in incus.containers and disabled.get("alice").mailbox == ""
 
 
 def test_a_mailbox_needs_the_sites_purelymail_account_to_go(disabled, incus, purelymail):

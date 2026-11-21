@@ -28,7 +28,9 @@ def run() -> None:
     if not sys.stdin.isatty():
         raise CommandError("no terminal to confirm on; nothing removed")
     print("This deletes every instance, with all its data:")
-    print("\n".join(f"  {inst.name} ({inst.state}{', mailbox ' + inst.mailbox if inst.mailbox else ''})"
+    mailboxes = {inst.name: f", own mailbox {inst.mailbox}, which stays" if inst.own_mailbox else
+                 f", mailbox {inst.mailbox}" for inst in reg.instances.values() if inst.mailbox}
+    print("\n".join(f"  {inst.name} ({inst.state}{mailboxes.get(inst.name, '')})"
                     for inst in reg.instances.values()) or "  (none)")
     print("It also removes what thinny set up: the Incus profile and the instances' storage pools, the\n"
           "firewall table and its check, the nightly update, the access trace, the\n"
@@ -55,7 +57,7 @@ def run() -> None:
     dashboard.turn_off()
     left = []   # mailboxes Purelymail keeps: their failure must not keep thinny here
     for inst in reg.instances.values():
-        if inst.mailbox:
+        if inst.mailbox and not inst.own_mailbox:
             try:
                 purelymail.delete(inst.mailbox)
             except (settings.SettingsError, CommandError) as e:

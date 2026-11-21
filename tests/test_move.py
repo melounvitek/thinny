@@ -340,6 +340,16 @@ def test_a_mailbox_goes_with_its_instance_after_a_note_to_check_it(source, incus
     assert reg.get("alice").mailbox == ""   # a remove here must not delete it
 
 
+def test_the_admins_own_mailbox_goes_with_its_instance_and_stays_theirs(source, incus, monkeypatch, capsys):
+    reg, other = source
+    reg.get("alice").mailbox, reg.get("alice").own_mailbox = "alice@example.net", True
+    move.move(S, reg, ["alice"], "admin@new")
+    assert "alice has the mailbox alice@example.net. It goes with alice. After the move, check there that alice " \
+           "still gets and sends mail." in capsys.readouterr().out
+    for _, args in other.calls:   # the check too: a thinny without own mailboxes refuses it
+        assert args[args.index("--mailbox") + 1] == "alice@example.net" and "--own-mailbox" in args
+
+
 def test_a_moved_mailbox_is_the_other_servers_also_when_disabling_the_instance_here_fails(source, monkeypatch):
     reg, other = source
     reg.get("alice").mailbox = "alice@example.org"
@@ -364,9 +374,20 @@ def test_a_failed_move_keeps_the_mailbox_here(source, incus, failure):
             "thinny instance remove alice --keep-mailbox" in str(e.value)) == (failure == "lost")
 
 
-def test_a_moved_instance_brings_its_mailbox(target, incus):
-    move.receive(S, target, "alice", "local", "", RELEASE, render.BUILT_INS, 30, archive(), mailbox="alice@example.org")
-    assert target.get("alice").mailbox == "alice@example.org"
+def test_a_failed_move_of_the_admins_own_mailbox_needs_no_keep_mailbox(source):
+    reg, other = source
+    reg.get("alice").mailbox, reg.get("alice").own_mailbox = "alice@example.net", True
+    other.lost.add("alice")
+    with pytest.raises(CommandError, match="moving alice failed") as e:
+        move.move(S, reg, ["alice"], "admin@new")
+    assert "--keep-mailbox" not in str(e.value)   # a remove leaves it anyway
+
+
+@pytest.mark.parametrize("own", [False, True])
+def test_a_moved_instance_brings_its_mailbox(target, incus, own):
+    move.receive(S, target, "alice", "local", "", RELEASE, render.BUILT_INS, 30, archive(), mailbox="alice@example.org",
+                 own_mailbox=own)
+    assert (target.get("alice").mailbox, target.get("alice").own_mailbox) == ("alice@example.org", own)
     assert incus.containers["alice"]["himalaya"] == instances.HIMALAYA   # from an older thinny, with none
 
 
