@@ -204,6 +204,70 @@ def test_unattended_upgrades_off_warns_about_automatic_reboots_too(setting):
         [] if setting else ["automatic reboots are off"])
 
 
+def at(hour, minute=0, day=22):
+    """This server's local time on 2026-11-<day>, as `systemctl show --timestamp=unix` has it."""
+    return f"@{dt.datetime(2026, 11, day, hour, minute).timestamp():.0f}"
+
+
+# `systemctl show <timer> --timestamp=unix -p TimersCalendar,RandomizedDelayUSec,NextElapseUSecRealtime` on Ubuntu 26.04
+THINNY_TIMER = (f"TimersCalendar={{ OnCalendar=*-*-* 03:00:00 ; next_elapse={at(3)} }}\n"
+                f"NextElapseUSecRealtime={at(3)}\nRandomizedDelayUSec=0\n")
+UPGRADES_TIMER = (f"TimersCalendar={{ OnCalendar=*-*-* 06:00:00 ; next_elapse={at(6)} }}\n"
+                  f"NextElapseUSecRealtime={at(6, 4)}\nRandomizedDelayUSec=1h\n")
+REBOOTS = ('APT::Periodic::Unattended-Upgrade "1";\nUnattended-Upgrade::Automatic-Reboot "true";\n'
+           'Unattended-Upgrade::Automatic-Reboot-Time "05:00";\n')
+
+
+@pytest.fixture
+def nightly(monkeypatch):
+    """thinny's nightly run at 03:00, the OS upgrades at 06:00 (+ up to 1h) and their reboots at 05:00, as systemd and
+    apt have them: the test changes the commands' `answers`."""
+    answers = {"systemctl show thinny-update.timer": THINNY_TIMER,
+               "systemctl show apt-daily-upgrade.timer": UPGRADES_TIMER, "apt-config dump": REBOOTS}
+
+    def run(cmd, **kw):
+        line = " ".join(cmd)
+        return subprocess.CompletedProcess(cmd, 0, next((out for start, out in answers.items()
+                                                         if line.startswith(start)), ""), "")
+    monkeypatch.setattr(system, "run", run)
+    return answers
+
+
+SCHEDULE = "nightly: update at 03:00 (next 2026-11-22 03:00); OS upgrades at 06:00 (+ up to 1h), reboots when needed at 05:00"
+
+
+@pytest.mark.parametrize("changes, expected", [
+    ({}, SCHEDULE),
+    # changed by hand, from what thinny and Debian set
+    ({"systemctl show thinny-update.timer": THINNY_TIMER.replace("03:00:00", "02:30:00").replace(at(3), at(2, 30)),
+      "systemctl show apt-daily-upgrade.timer": UPGRADES_TIMER.replace("06:00:00", "04:15:00").replace("=1h", "=0")},
+     "nightly: update at 02:30 (next 2026-11-22 02:30); OS upgrades at 04:15, reboots when needed at 05:00"),
+    ({"apt-config dump": REBOOTS.replace('Unattended-Upgrade::Automatic-Reboot-Time "05:00";\n', "")},
+     SCHEDULE.replace("at 05:00", "right after them")),   # apt's default: now
+    ({"apt-config dump": REBOOTS.replace('Reboot "true"', 'Reboot "false"')},
+     SCHEDULE.removesuffix(", reboots when needed at 05:00")),
+    ({"apt-config dump": REBOOTS.replace('Unattended-Upgrade "1"', 'Unattended-Upgrade "0"')},
+     "nightly: update at 03:00 (next 2026-11-22 03:00)"),   # nothing upgrades, nothing reboots
+    ({"systemctl show thinny-update.timer": "NextElapseUSecRealtime=\nRandomizedDelayUSec=0\n"},   # not there
+     SCHEDULE.replace("update at 03:00 (next 2026-11-22 03:00)", "update not scheduled")),
+])
+def test_the_schedule_shows_when_the_nightly_run_the_os_upgrades_and_their_reboots_come(nightly, changes, expected):
+    nightly.update(changes)
+    assert checks.schedule(S, nightly["apt-config dump"]) == ("OK", expected, "")
+
+
+def test_the_nightly_run_backs_up_first_when_backups_are_on(nightly):
+    s = dataclasses.replace(S, backup_target="thinny@backup.example.org")
+    assert checks.schedule(s, REBOOTS)[1].startswith("nightly: backup and update at 03:00 ")
+
+
+def test_doctor_shows_the_nightly_schedule_after_the_unattended_upgrades(nightly, tmp_path, monkeypatch):
+    monkeypatch.setattr("thinny.update.REBOOT_REQUIRED", tmp_path / "reboot-required")
+    assert list(checks.prerequisites(S, Registry()))[-4:] == [
+        ("OK", "unattended upgrades on", ""), ("OK", "automatic reboots on", ""), ("OK", SCHEDULE, ""),
+        ("OK", "no reboot pending", "")]
+
+
 @pytest.mark.parametrize("pending", [True, False])
 def test_doctor_warns_while_a_reboot_is_pending(monkeypatch, tmp_path, pending):
     # Also when an automatic reboot would come tonight.
@@ -213,7 +277,7 @@ def test_doctor_warns_while_a_reboot_is_pending(monkeypatch, tmp_path, pending):
     monkeypatch.setattr("thinny.update.REBOOT_REQUIRED", flag)
     if pending:
         flag.touch()
-    results = [r for r in checks.prerequisites(S, Registry()) if "reboot" in r[1]]
+    results = [r for r in checks.prerequisites(S, Registry()) if "reboot" in r[1] and not r[1].startswith("nightly:")]
     assert results == [("OK", "automatic reboots on", ""), ("WARN", f"a reboot is pending ({flag}): "
                         "until then, upgrades that need it, such as a new kernel, protect nothing",
                         "reboot at a quiet time, or wait for the automatic reboot") if pending
@@ -422,7 +486,8 @@ def test_status_is_the_quick_look(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(instances, "run", run)
     overview = ("OK   Hermes release of all instances: v0.23.1\n"
                 "OK   WebUI release of the instances that use it: v0.52.678\n"
-                "WARN no nightly update status yet (the update timer has not run)\n")
+                "WARN no nightly update status yet (the update timer has not run)\n"
+                "OK   nightly: update not scheduled\n")   # no timer, nor unattended upgrades
     assert checks.status(S, reg) == 1
     assert capsys.readouterr().out == overview + ("OK   alice: running, gateway active\n"
                                                   "FAIL bob: container is STOPPED\n"

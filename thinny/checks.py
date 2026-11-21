@@ -177,7 +177,9 @@ def prerequisites(s: Settings, reg: Registry):
            else warn("no forward firewall with policy drop: with forwarding on, the server routes between its "
                      "networks", "set up a forward chain that drops by default; " + FORWARD_FIX))
 
-    yield from unattended_upgrades(system.run(["apt-config", "dump"], check=False).stdout, s.update_time)
+    apt_dump = system.run(["apt-config", "dump"], check=False).stdout
+    yield from unattended_upgrades(apt_dump, s.update_time)
+    yield schedule(s, apt_dump)
     # The containers share the server's kernel: a fixed one protects them only once it runs.
     yield (warn(f"a reboot is pending ({update.REBOOT_REQUIRED}): until then, upgrades that need it, such as a new "
                 "kernel, protect nothing", "reboot at a quiet time, or wait for the automatic reboot")
@@ -186,14 +188,11 @@ def prerequisites(s: Settings, reg: Registry):
 
 def unattended_upgrades(apt_dump: str, update_time: str):
     """Unattended upgrades on, and automatic reboots on, after the nightly Hermes update."""
-    values = dict(re.findall(r'^(\S+) "(.*)";$', apt_dump, re.M))
-    upgrades = values.get("APT::Periodic::Unattended-Upgrade") == "1"
+    upgrades, reboot = apt_upgrades(apt_dump)
     yield (ok("unattended upgrades on") if upgrades
            else warn("unattended upgrades are off: security updates wait for you",
                      "apt install unattended-upgrades && dpkg-reconfigure -plow unattended-upgrades"))
-    reboot = values.get("Unattended-Upgrade::Automatic-Reboot-Time", "")
-    # apt's words for true
-    if values.get("Unattended-Upgrade::Automatic-Reboot", "").lower() not in ("true", "yes", "on", "1", "with", "enable"):
+    if not reboot:
         yield warn("automatic reboots are off: a new kernel protects the containers only after you reboot",
                    'set Unattended-Upgrade::Automatic-Reboot "true" and Unattended-Upgrade::Automatic-Reboot-Time '
                    f"later than {update_time} in /etc/apt/apt.conf.d/ (see README, Prerequisites)")
@@ -202,6 +201,46 @@ def unattended_upgrades(apt_dump: str, update_time: str):
                    f"set Unattended-Upgrade::Automatic-Reboot-Time later than {update_time} in /etc/apt/apt.conf.d/")
     elif upgrades:   # unattended-upgrades reboots at the end of its run
         yield ok("automatic reboots on")
+
+
+def apt_upgrades(apt_dump: str) -> tuple[bool, str]:
+    """Whether unattended upgrades are on, and when they reboot when needed: "" never, "now" at the end of their run."""
+    values = dict(re.findall(r'^(\S+) "(.*)";$', apt_dump, re.M))
+    # apt's words for true
+    reboots = values.get("Unattended-Upgrade::Automatic-Reboot", "").lower() in ("true", "yes", "on", "1", "with", "enable")
+    return (values.get("APT::Periodic::Unattended-Upgrade") == "1",
+            values.get("Unattended-Upgrade::Automatic-Reboot-Time", "now") if reboots else "")
+
+
+def schedule(s: Settings, apt_dump: str):
+    """When thinny's nightly run, the OS upgrades and their automatic reboots come, as systemd and apt have them: also
+    after changes by hand."""
+    when, upcoming = timer("thinny-update.timer")
+    message = (f"nightly: {'backup and update' if s.backup_target else 'update'} "
+               + (f"at {when} (next {upcoming:%Y-%m-%d %H:%M})" if upcoming else "not scheduled"))
+    upgrades, reboot = apt_upgrades(apt_dump)
+    if upgrades:
+        when, upcoming = timer("apt-daily-upgrade.timer")
+        message += "; OS upgrades " + (f"at {when}" if upcoming else "not scheduled")
+        if reboot:
+            message += ", reboots when needed " + (f"at {reboot}" if re.fullmatch(r"\d\d:\d\d", reboot)
+                                                   else "right after them")
+    return ok(message)
+
+
+def timer(unit: str) -> tuple[str, dt.datetime | None]:
+    """When systemd starts the timer's service, e.g. "06:00 (+ up to 1h)", and next; None while the timer is not
+    active."""
+    out = system.run(["systemctl", "show", unit, "--timestamp=unix",
+                      "-p", "TimersCalendar,RandomizedDelayUSec,NextElapseUSecRealtime"], check=False).stdout
+    # A line for each OnCalendar; a daily one as HH:MM
+    when = " and ".join(re.sub(r"^\*-\*-\* (\d\d:\d\d):00$", r"\1", spec)
+                        for spec in re.findall(r"OnCalendar=(.+?) ;", out))
+    delay = re.search(r"^RandomizedDelayUSec=(.+)$", out, re.M)
+    if delay and delay[1] != "0":
+        when += f" (+ up to {delay[1]})"
+    upcoming = re.search(r"^NextElapseUSecRealtime=@(\d+)$", out, re.M)
+    return when, dt.datetime.fromtimestamp(int(upcoming[1])) if upcoming else None
 
 
 def firewall(s: Settings, reg: Registry):
@@ -434,6 +473,7 @@ def overview(s: Settings, reg: Registry):
         yield ok(f"WebUI release of the instances that use it: {webui[0]}")
     yield update_status(UPDATE_STATUS, dt.datetime.now(dt.UTC))
     yield from backups(s, reg)
+    yield schedule(s, system.run(["apt-config", "dump"], check=False).stdout)
 
 
 # ---------- runner ----------
