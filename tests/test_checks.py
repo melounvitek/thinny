@@ -245,6 +245,7 @@ SCHEDULE = "nightly: update at 03:00 (next 2026-11-22 03:00); OS upgrades at 06:
      "nightly: update at 02:30 (next 2026-11-22 02:30); OS upgrades at 04:15 and 06:00, reboots when needed at 05:00"),
     ({"apt-config dump": REBOOTS.replace('Unattended-Upgrade::Automatic-Reboot-Time "05:00";\n', "")},
      SCHEDULE.replace("at 05:00", "right after them")),   # apt's default: now
+    ({"apt-config dump": REBOOTS.replace('"05:00"', '"+60"')}, SCHEDULE.replace("05:00", "+60")),   # as shutdown takes it
     ({"apt-config dump": REBOOTS.replace('Reboot "true"', 'Reboot "false"')},
      SCHEDULE.removesuffix(", reboots when needed at 05:00")),
     ({"apt-config dump": REBOOTS.replace('Unattended-Upgrade "1"', 'Unattended-Upgrade "0"')},
@@ -275,19 +276,21 @@ def ran(start, end):
     return f"InactiveExitTimestamp={start}\nInactiveEnterTimestamp={end}\n"
 
 
-@pytest.mark.parametrize("service, warned", [
-    (ran(at(3, day=21), at(4, 40, day=21)), ""),
-    (ran(at(3, day=21), at(5, 20, day=21)), "03:00 to 05:20"),
-    (ran(at(23, day=20), at(5, 20, day=21)), "23:00 to 05:20"),   # its timer moved to 23:00 by hand
-    (ran(at(5, 30, day=21), at(6, day=21)), ""),    # started by hand after the reboot time
-    (ran(at(3, day=22), at(5, 20, day=21)), ""),    # running since 03:00: when the run before started is gone
-    (ran("", ""), ""),                              # none since the server started
+@pytest.mark.parametrize("update_time, service, warned", [
+    ("03:00", ran(at(3, day=21), at(4, 40, day=21)), ""),
+    ("03:00", ran(at(3, day=21), at(5, 20, day=21)), "03:00 to 05:20"),
+    ("03:00", ran(at(23, day=20), at(5, 20, day=21)), "23:00 to 05:20"),   # its timer moved to 23:00 by hand
+    ("23:00", ran(at(23, day=20), at(5, 20, day=21)), "23:00 to 05:20"),   # rather than: not after 23:00
+    ("03:00", ran(at(5, 30, day=21), at(6, day=21)), ""),    # started by hand after the reboot time
+    ("03:00", ran(at(3, day=22), at(5, 20, day=21)), ""),    # running since 03:00: when the run before started is gone
+    ("03:00", ran("", ""), ""),                              # none since the server started
 ])
 def test_doctor_warns_when_the_last_nightly_run_went_past_the_automatic_reboots(nightly, tmp_path, monkeypatch,
-                                                                                 service, warned):
+                                                                                 update_time, service, warned):
     nightly["systemctl show thinny-update.service"] = service
     monkeypatch.setattr("thinny.update.REBOOT_REQUIRED", tmp_path / "reboot-required")
-    [result] = [r for r in checks.prerequisites(S, Registry()) if r[1].startswith("automatic reboots")]
+    s = dataclasses.replace(S, update_time=update_time)
+    [result] = [r for r in checks.prerequisites(s, Registry()) if r[1].startswith("automatic reboots")]
     assert result == (("WARN", f"automatic reboots at 05:00 would cut the nightly run short: the last one ran from "
                                f"{warned}", "set Unattended-Upgrade::Automatic-Reboot-Time well after 05:20 in "
                        "/etc/apt/apt.conf.d/ (see README, Prerequisites)") if warned

@@ -198,15 +198,15 @@ def unattended_upgrades(apt_dump: str, update_time: str, last_run: tuple[dt.date
         yield warn("automatic reboots are off: a new kernel protects the containers only after you reboot",
                    'set Unattended-Upgrade::Automatic-Reboot "true" and Unattended-Upgrade::Automatic-Reboot-Time '
                    f"later than {update_time} in /etc/apt/apt.conf.d/ (see README, Prerequisites)")
-    elif re.fullmatch(r"\d\d:\d\d", reboot) and reboot <= update_time:
-        yield warn(f"automatic reboots at {reboot}, not after the nightly run at {update_time}",
-                   f"set Unattended-Upgrade::Automatic-Reboot-Time later than {update_time} in /etc/apt/apt.conf.d/")
     # On the day the run started or ended: it lasts 12 h at most (TimeoutStartSec).
     elif re.fullmatch(r"\d\d:\d\d", reboot) and last_run and any(
             start <= dt.datetime.combine(day, dt.time.fromisoformat(reboot)) < end for day in (start.date(), end.date())):
         yield warn(f"automatic reboots at {reboot} would cut the nightly run short: the last one ran from "
                    f"{start:%H:%M} to {end:%H:%M}", f"set Unattended-Upgrade::Automatic-Reboot-Time well after "
                    f"{end:%H:%M} in /etc/apt/apt.conf.d/ (see README, Prerequisites)")
+    elif re.fullmatch(r"\d\d:\d\d", reboot) and reboot <= update_time:
+        yield warn(f"automatic reboots at {reboot}, not after the nightly run at {update_time}",
+                   f"set Unattended-Upgrade::Automatic-Reboot-Time later than {update_time} in /etc/apt/apt.conf.d/")
     elif upgrades:   # unattended-upgrades reboots at the end of its run
         yield ok("automatic reboots on")
 
@@ -242,8 +242,7 @@ def schedule(s: Settings, apt_dump: str):
         when, upcoming = timer("apt-daily-upgrade.timer")
         message += "; OS upgrades " + (f"at {when}" if upcoming else "not scheduled")
         if reboot:
-            message += ", reboots when needed " + (f"at {reboot}" if re.fullmatch(r"\d\d:\d\d", reboot)
-                                                   else "right after them")
+            message += ", reboots when needed " + ("right after them" if reboot == "now" else f"at {reboot}")
     return ok(message)
 
 
