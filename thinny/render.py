@@ -128,8 +128,8 @@ message.send.save-copy = false
 
 def himalaya_account(address: str, env: str, default: bool) -> str:
     """thinny's account in an instance's himalaya config. The password comes from the instance's .env, as set_env
-    writes it, at every use: a new one needs no change here."""
-    password = rf"""'''sed -n 's/^EMAIL_PASSWORD="\(.*\)"$/\1/p' {env}'''"""
+    writes it (quotes and backslashes escaped), at every use: a new one needs no change here."""
+    password = rf"""'''sed -n '/^EMAIL_PASSWORD="\(.*\)"$/{{s//\1/;s/\\\(.\)/\1/g;p;}}' {env}'''"""
     return HIMALAYA_ACCOUNT.format(default="default = true\n" if default else "", address=address, imap=IMAP_HOST,
                                    smtp=SMTP_HOST, password=password)
 

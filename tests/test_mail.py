@@ -165,6 +165,9 @@ def test_himalayas_account_for_the_mailbox_reads_the_password_from_the_env_at_ev
     assert password() == purelymail.users["alice@example.org"]
     mail.connect(SITE, alice, "alice", [], new_password=True)
     assert password() == purelymail.users["alice@example.org"]
+    typed = 'it\'s "pa$$" #word\\'   # as an admin may type their own mailbox's
+    instances.set_env("alice", {"EMAIL_PASSWORD": typed})
+    assert password() == typed
 
 
 def test_a_users_own_himalaya_accounts_stay(alice, incus, purelymail):
