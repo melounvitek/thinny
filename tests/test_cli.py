@@ -466,16 +466,21 @@ def test_instance_telegram_waits_without_thinnys_lock(server, monkeypatch):
 
 def test_instance_email_takes_who_may_write_and_runs_with_thinnys_lock(server, monkeypatch):
     connected = []
+    hidden = answering(monkeypatch, "it's mine")
 
-    def connect(s, reg, name, senders, new_password):
+    def connect(s, reg, name, senders, new_password, address, ask):
         with pytest.raises(system.CommandError, match="in progress"):
             with system.lock():
                 pass
-        connected.append((name, senders, new_password))
+        connected.append((name, senders, new_password, address, address and ask(f"Password of {address}")))
     monkeypatch.setattr(mail, "connect", connect)
     assert cli.main(["instance", "email", "alice", "anna@example.com", "ben@example.com"]) == 0
     assert cli.main(["instance", "email", "alice", "--new-password"]) == 0
-    assert connected == [("alice", ["anna@example.com", "ben@example.com"], False), ("alice", [], True)]
+    assert cli.main(["instance", "email", "bob", "--address", "bob@example.net", "anna@example.com"]) == 0
+    assert connected == [("alice", ["anna@example.com", "ben@example.com"], False, "", ""),
+                         ("alice", [], True, "", ""),
+                         ("bob", ["anna@example.com"], False, "bob@example.net", "it's mine")]
+    assert hidden == ["Password of bob@example.net: "]   # typed unseen, never in the shell's history
 
 
 def test_instance_export_runs_with_thinnys_lock(server, monkeypatch):

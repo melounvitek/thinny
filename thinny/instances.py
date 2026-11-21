@@ -388,7 +388,9 @@ def ensure_mail_client(inst: Instance) -> None:
                             HIMALAYA_BIN], timeout=600)
     path = f"/home/{name}/.config/himalaya/config.toml"
     config = read_user_file(name, path)
-    account = render.himalaya_account(inst.mailbox, str(home(name) / ".env"), default=not config.strip())
+    env = env_values(name)
+    account = render.himalaya_account(inst.mailbox, env.get("EMAIL_IMAP_HOST", ""), env.get("EMAIL_SMTP_HOST", ""),
+                                      str(home(name) / ".env"), default=not config.strip())
     try:
         if inst.mailbox not in tomllib.loads(config).get("accounts", {}):
             tomllib.loads(config + account)   # fails e.g. after `accounts = {...}`
