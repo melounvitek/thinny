@@ -222,6 +222,16 @@ Debian 13, kernel 6.12, Incus 6.0.4 (`incus-base`), Hermes v0.23.0 -> v0.23.1. A
   namespace with nesting on, so a kernel privilege escalation is the likely way out. A fixed kernel
   protects nothing until the server reboots into it: `doctor` warns when `Unattended-Upgrade::Automatic-Reboot`
   is off and whenever `/run/reboot-required` exists, also when the automatic reboot comes that night.
+- The nightly run and the automatic reboot (2026-11-21): since backups, the run takes minutes per instance
+  longer, so `doctor` warns when the reboot time fell within the last run. Not by the status files: `thinny
+  backup` and `thinny update --all` by hand write them too. systemd has the run's start and end as
+  `thinny-update.service`'s `InactiveExitTimestamp` (before `ExecStartPre`, the backup) and
+  `InactiveEnterTimestamp`, which a failed run sets too **[tested, systemd 259 on this workstation]**. It keeps
+  them in memory, so they are gone after a reboot, and while a run goes on the end is the run's before
+  **[static]**.
+- `systemctl show --timestamp=unix` (systemd 251 and later) gives seconds since 1970. A timer that is not active
+  has no `NextElapseUSecRealtime`, one that is not there has no `TimersCalendar`, and each `OnCalendar` is a
+  `TimersCalendar` line of its own, the last first **[tested]**.
 - Who creates `/run/reboot-required` after a kernel upgrade, read in the packages **[static]**: on Debian 13
   only the hook of `unattended-upgrades` 2.12, `/etc/kernel/postinst.d/unattended-upgrades`, which the
   kernel's postinst runs through `linux-run-hooks` (linux-base 4.12.1, without the `touch-reboot-required`
