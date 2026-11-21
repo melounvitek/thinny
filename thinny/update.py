@@ -21,6 +21,8 @@ STATUS_FILE = STATE_DIR / "update-status.json"
 # "<tag> <commit> [<instance being updated>]" while an update runs; a later run finishes the job.
 UNFINISHED = STATE_DIR / "update-unfinished"
 REBOOT_REQUIRED = Path("/run/reboot-required")
+# Hermes's own pruning keeps every kind of session 90 days; scheduled jobs pile up gigabytes by then.
+CRON_SESSION_DAYS = 30
 
 
 def run(s: Settings, reg: Registry, *, dry_run: bool = False, manual: bool = False, now: bool = False) -> int:
@@ -62,6 +64,7 @@ def run(s: Settings, reg: Registry, *, dry_run: bool = False, manual: bool = Fal
         result, detail = "FAILED", str(e) or type(e).__name__
     if not dry_run:
         update_claude(reg)
+        prune_cron_sessions(reg)
     log(f"{result}: {detail}")
     if not dry_run:
         save_status(result, detail)
@@ -178,3 +181,15 @@ def update_claude(reg: Registry) -> None:
                 as_user(inst.name, ["claude", "update"], timeout=600)
             except CommandError as e:
                 log(f"{inst.name}: Claude Code not updated: {e}")
+
+
+def prune_cron_sessions(reg: Registry) -> None:
+    """Delete every instance's ended scheduled-job sessions older than CRON_SESSION_DAYS, whatever happened to
+    Hermes. A failure is only logged."""
+    for inst in reg.current():
+        if inst.state == "active":
+            try:
+                as_user(inst.name, ["hermes", "sessions", "prune", "--source", "cron",
+                                    "--older-than", str(CRON_SESSION_DAYS), "--yes"], timeout=1800)
+            except CommandError as e:
+                log(f"{inst.name}: old cron sessions not deleted: {e}")
