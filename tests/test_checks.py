@@ -209,11 +209,9 @@ def at(hour, minute=0, day=22):
     return f"@{dt.datetime(2026, 11, day, hour, minute).timestamp():.0f}"
 
 
-# `systemctl show <timer> --timestamp=unix -p TimersCalendar,RandomizedDelayUSec,NextElapseUSecRealtime` on Ubuntu 26.04
-THINNY_TIMER = (f"TimersCalendar={{ OnCalendar=*-*-* 03:00:00 ; next_elapse={at(3)} }}\n"
-                f"NextElapseUSecRealtime={at(3)}\nRandomizedDelayUSec=0\n")
-UPGRADES_TIMER = (f"TimersCalendar={{ OnCalendar=*-*-* 06:00:00 ; next_elapse={at(6)} }}\n"
-                  f"NextElapseUSecRealtime={at(6, 4)}\nRandomizedDelayUSec=1h\n")
+# `systemctl show <timer> --timestamp=unix -p TimersCalendar,RandomizedDelayUSec`
+THINNY_TIMER = f"TimersCalendar={{ OnCalendar=*-*-* 03:00:00 ; next_elapse={at(3)} }}\nRandomizedDelayUSec=0\n"
+UPGRADES_TIMER = f"TimersCalendar={{ OnCalendar=*-*-* 06:00:00 ; next_elapse={at(6)} }}\nRandomizedDelayUSec=1h\n"
 REBOOTS = ('APT::Periodic::Unattended-Upgrade "1";\nUnattended-Upgrade::Automatic-Reboot "true";\n'
            'Unattended-Upgrade::Automatic-Reboot-Time "05:00";\n')
 
@@ -243,6 +241,9 @@ SCHEDULE = "nightly: update at 03:00 (next 2026-11-22 03:00); OS upgrades at 06:
       "systemctl show apt-daily-upgrade.timer": f"TimersCalendar={{ OnCalendar=*-*-* 04:15:00 ; next_elapse={at(4, 15)} }}\n"
                                                 + UPGRADES_TIMER.replace("=1h", "=0")},
      "nightly: update at 02:30 (next 2026-11-22 02:30); OS upgrades at 04:15 and 06:00, reboots when needed at 05:00"),
+    ({"systemctl show thinny-update.timer": THINNY_TIMER + THINNY_TIMER.replace("03:00:00", "02:30:00")
+      .replace(at(3), at(2, 30))},   # twice a night (a line for each, the last first): the next is the earlier
+     SCHEDULE.replace("update at 03:00 (next 2026-11-22 03:00)", "update at 02:30 and 03:00 (next 2026-11-22 02:30)")),
     ({"apt-config dump": REBOOTS.replace('Unattended-Upgrade::Automatic-Reboot-Time "05:00";\n', "")},
      SCHEDULE.replace("at 05:00", "right after them")),   # apt's default: now
     ({"apt-config dump": REBOOTS.replace('"05:00"', '"+60"')}, SCHEDULE.replace("05:00", "+60")),   # as shutdown takes it
@@ -250,7 +251,10 @@ SCHEDULE = "nightly: update at 03:00 (next 2026-11-22 03:00); OS upgrades at 06:
      SCHEDULE.removesuffix(", reboots when needed at 05:00")),
     ({"apt-config dump": REBOOTS.replace('Unattended-Upgrade "1"', 'Unattended-Upgrade "0"')},
      "nightly: update at 03:00 (next 2026-11-22 03:00)"),   # nothing upgrades, nothing reboots
-    ({"systemctl show thinny-update.timer": "NextElapseUSecRealtime=\nRandomizedDelayUSec=0\n"},   # not there
+    ({"systemctl show thinny-update.timer": "RandomizedDelayUSec=0\n"},   # not there
+     SCHEDULE.replace("update at 03:00 (next 2026-11-22 03:00)", "update not scheduled")),
+    ({"systemctl show thinny-update.timer": "TimersCalendar={ OnCalendar=*-*-* 03:00:00 ; next_elapse=(null) }\n"
+                                            "RandomizedDelayUSec=0\n"},   # not active
      SCHEDULE.replace("update at 03:00 (next 2026-11-22 03:00)", "update not scheduled")),
 ])
 def test_the_schedule_shows_when_the_nightly_run_the_os_upgrades_and_their_reboots_come(nightly, changes, expected):

@@ -249,16 +249,17 @@ def schedule(s: Settings, apt_dump: str):
 def timer(unit: str) -> tuple[str, dt.datetime | None]:
     """When systemd starts the timer's service, e.g. "06:00 (+ up to 1h)", and next; None while the timer is not
     active."""
-    out = system.run(["systemctl", "show", unit, "--timestamp=unix",
-                      "-p", "TimersCalendar,RandomizedDelayUSec,NextElapseUSecRealtime"], check=False).stdout
+    out = system.run(["systemctl", "show", unit, "--timestamp=unix", "-p", "TimersCalendar,RandomizedDelayUSec"],
+                     check=False).stdout
     # A line for each OnCalendar, the last first; a daily one as HH:MM
     when = " and ".join(sorted(re.sub(r"^\*-\*-\* (\d\d:\d\d):00$", r"\1", spec)
                                for spec in re.findall(r"OnCalendar=(.+?) ;", out)))
     delay = re.search(r"^RandomizedDelayUSec=(.+)$", out, re.M)
     if delay and delay[1] != "0":
         when += f" (+ up to {delay[1]})"
-    upcoming = re.search(r"^NextElapseUSecRealtime=@(\d+)$", out, re.M)
-    return when, dt.datetime.fromtimestamp(int(upcoming[1])) if upcoming else None
+    # Not NextElapseUSecRealtime: systemd before 259 gives it as a date, whatever --timestamp says.
+    upcoming = [int(seconds) for seconds in re.findall(r"next_elapse=@(\d+)", out)]   # none while not active
+    return when, dt.datetime.fromtimestamp(min(upcoming)) if upcoming else None
 
 
 def firewall(s: Settings, reg: Registry):

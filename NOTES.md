@@ -229,9 +229,11 @@ Debian 13, kernel 6.12, Incus 6.0.4 (`incus-base`), Hermes v0.23.0 -> v0.23.1. A
   `InactiveEnterTimestamp`, which a failed run sets too **[tested, systemd 259 on this workstation]**. It keeps
   them in memory, so they are gone after a reboot, and while a run goes on the end is the run's before
   **[static]**.
-- `systemctl show --timestamp=unix` (systemd 251 and later) gives seconds since 1970. A timer that is not active
-  has no `NextElapseUSecRealtime`, one that is not there has no `TimersCalendar`, and each `OnCalendar` is a
-  `TimersCalendar` line of its own, the last first **[tested]**.
+- `systemctl show --timestamp=unix` (systemd 251 and later) gives seconds since 1970 for the `...Timestamp`
+  properties and `TimersCalendar`'s `next_elapse`, but `NextElapseUSecRealtime` only from 259 on: Debian 13's 257
+  and Ubuntu 24.04's 255 give it as a date (`Sun 2026-11-22 06:33:15 UTC`) **[tested, VMs]**. A timer that is not
+  active has `next_elapse=(null)` (257) **[tested]**, one that is not there has no `TimersCalendar`, and each
+  `OnCalendar` is a `TimersCalendar` line of its own, the last first **[tested]**.
 - Who creates `/run/reboot-required` after a kernel upgrade, read in the packages **[static]**: on Debian 13
   only the hook of `unattended-upgrades` 2.12, `/etc/kernel/postinst.d/unattended-upgrades`, which the
   kernel's postinst runs through `linux-run-hooks` (linux-base 4.12.1, without the `touch-reboot-required`
