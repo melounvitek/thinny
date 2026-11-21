@@ -238,10 +238,11 @@ SCHEDULE = "nightly: update at 03:00 (next 2026-11-22 03:00); OS upgrades at 06:
 
 @pytest.mark.parametrize("changes, expected", [
     ({}, SCHEDULE),
-    # changed by hand, from what thinny and Debian set
+    # changed by hand, from what thinny and Debian set; a drop-in's OnCalendar without an empty one adds a time
     ({"systemctl show thinny-update.timer": THINNY_TIMER.replace("03:00:00", "02:30:00").replace(at(3), at(2, 30)),
-      "systemctl show apt-daily-upgrade.timer": UPGRADES_TIMER.replace("06:00:00", "04:15:00").replace("=1h", "=0")},
-     "nightly: update at 02:30 (next 2026-11-22 02:30); OS upgrades at 04:15, reboots when needed at 05:00"),
+      "systemctl show apt-daily-upgrade.timer": f"TimersCalendar={{ OnCalendar=*-*-* 04:15:00 ; next_elapse={at(4, 15)} }}\n"
+                                                + UPGRADES_TIMER.replace("=1h", "=0")},
+     "nightly: update at 02:30 (next 2026-11-22 02:30); OS upgrades at 04:15 and 06:00, reboots when needed at 05:00"),
     ({"apt-config dump": REBOOTS.replace('Unattended-Upgrade::Automatic-Reboot-Time "05:00";\n', "")},
      SCHEDULE.replace("at 05:00", "right after them")),   # apt's default: now
     ({"apt-config dump": REBOOTS.replace('Reboot "true"', 'Reboot "false"')},
