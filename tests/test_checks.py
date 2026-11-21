@@ -268,6 +268,31 @@ def test_doctor_shows_the_nightly_schedule_after_the_unattended_upgrades(nightly
         ("OK", "no reboot pending", "")]
 
 
+def ran(start, end):
+    """`systemctl show thinny-update.service --timestamp=unix -p InactiveExitTimestamp,InactiveEnterTimestamp`: when it
+    last started and ended since the server started."""
+    return f"InactiveExitTimestamp={start}\nInactiveEnterTimestamp={end}\n"
+
+
+@pytest.mark.parametrize("service, warned", [
+    (ran(at(3, day=21), at(4, 40, day=21)), ""),
+    (ran(at(3, day=21), at(5, 20, day=21)), "03:00 to 05:20"),
+    (ran(at(23, day=20), at(5, 20, day=21)), "23:00 to 05:20"),   # its timer moved to 23:00 by hand
+    (ran(at(5, 30, day=21), at(6, day=21)), ""),    # started by hand after the reboot time
+    (ran(at(3, day=22), at(5, 20, day=21)), ""),    # running since 03:00: when the run before started is gone
+    (ran("", ""), ""),                              # none since the server started
+])
+def test_doctor_warns_when_the_last_nightly_run_went_past_the_automatic_reboots(nightly, tmp_path, monkeypatch,
+                                                                                 service, warned):
+    nightly["systemctl show thinny-update.service"] = service
+    monkeypatch.setattr("thinny.update.REBOOT_REQUIRED", tmp_path / "reboot-required")
+    [result] = [r for r in checks.prerequisites(S, Registry()) if r[1].startswith("automatic reboots")]
+    assert result == (("WARN", f"automatic reboots at 05:00 would cut the nightly run short: the last one ran from "
+                               f"{warned}", "set Unattended-Upgrade::Automatic-Reboot-Time well after 05:20 in "
+                       "/etc/apt/apt.conf.d/ (see README, Prerequisites)") if warned
+                      else ("OK", "automatic reboots on", ""))
+
+
 @pytest.mark.parametrize("pending", [True, False])
 def test_doctor_warns_while_a_reboot_is_pending(monkeypatch, tmp_path, pending):
     # Also when an automatic reboot would come tonight.

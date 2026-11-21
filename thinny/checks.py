@@ -178,7 +178,7 @@ def prerequisites(s: Settings, reg: Registry):
                      "networks", "set up a forward chain that drops by default; " + FORWARD_FIX))
 
     apt_dump = system.run(["apt-config", "dump"], check=False).stdout
-    yield from unattended_upgrades(apt_dump, s.update_time)
+    yield from unattended_upgrades(apt_dump, s.update_time, last_run())
     yield schedule(s, apt_dump)
     # The containers share the server's kernel: a fixed one protects them only once it runs.
     yield (warn(f"a reboot is pending ({update.REBOOT_REQUIRED}): until then, upgrades that need it, such as a new "
@@ -186,9 +186,11 @@ def prerequisites(s: Settings, reg: Registry):
            if update.REBOOT_REQUIRED.exists() else ok("no reboot pending"))
 
 
-def unattended_upgrades(apt_dump: str, update_time: str):
-    """Unattended upgrades on, and automatic reboots on, after the nightly Hermes update."""
+def unattended_upgrades(apt_dump: str, update_time: str, last_run: tuple[dt.datetime, dt.datetime] | None = None):
+    """Unattended upgrades on, and automatic reboots on, after thinny's nightly run: after `update_time`, and not
+    during its `last_run` (start, end)."""
     upgrades, reboot = apt_upgrades(apt_dump)
+    start, end = last_run or (None, None)
     yield (ok("unattended upgrades on") if upgrades
            else warn("unattended upgrades are off: security updates wait for you",
                      "apt install unattended-upgrades && dpkg-reconfigure -plow unattended-upgrades"))
@@ -197,10 +199,27 @@ def unattended_upgrades(apt_dump: str, update_time: str):
                    'set Unattended-Upgrade::Automatic-Reboot "true" and Unattended-Upgrade::Automatic-Reboot-Time '
                    f"later than {update_time} in /etc/apt/apt.conf.d/ (see README, Prerequisites)")
     elif re.fullmatch(r"\d\d:\d\d", reboot) and reboot <= update_time:
-        yield warn(f"automatic reboots at {reboot}, not after the nightly Hermes update at {update_time}",
+        yield warn(f"automatic reboots at {reboot}, not after the nightly run at {update_time}",
                    f"set Unattended-Upgrade::Automatic-Reboot-Time later than {update_time} in /etc/apt/apt.conf.d/")
+    # On the day the run started or ended: it lasts 12 h at most (TimeoutStartSec).
+    elif re.fullmatch(r"\d\d:\d\d", reboot) and last_run and any(
+            start <= dt.datetime.combine(day, dt.time.fromisoformat(reboot)) < end for day in (start.date(), end.date())):
+        yield warn(f"automatic reboots at {reboot} would cut the nightly run short: the last one ran from "
+                   f"{start:%H:%M} to {end:%H:%M}", f"set Unattended-Upgrade::Automatic-Reboot-Time well after "
+                   f"{end:%H:%M} in /etc/apt/apt.conf.d/ (see README, Prerequisites)")
     elif upgrades:   # unattended-upgrades reboots at the end of its run
         yield ok("automatic reboots on")
+
+
+def last_run() -> tuple[dt.datetime, dt.datetime] | None:
+    """When thinny's last nightly run started and ended, as systemd has it since the server started; None before one
+    ended."""
+    out = system.run(["systemctl", "show", "thinny-update.service", "--timestamp=unix",
+                      "-p", "InactiveExitTimestamp,InactiveEnterTimestamp"], check=False).stdout
+    times = dict(re.findall(r"^(\w+)=@(\d+)$", out, re.M))
+    start, end = (dt.datetime.fromtimestamp(int(times.get(name, 0)))
+                  for name in ("InactiveExitTimestamp", "InactiveEnterTimestamp"))
+    return (start, end) if start < end else None   # while one runs, the end is the run's before
 
 
 def apt_upgrades(apt_dump: str) -> tuple[bool, str]:
