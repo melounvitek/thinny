@@ -29,6 +29,7 @@ class Server:
         self.broken = set()
         self.stops_after_checkout = set()   # their installer moves the checkout, then fails
         self.claude, self.claude_broken = [], set()   # Claude Code updates
+        self.pruned, self.prune_broken = [], set()   # deletions of old cron sessions
 
     def status(self):
         return json.loads((self.tmp / "status.json").read_text())
@@ -53,10 +54,15 @@ class Server:
         self.calls.append(f"restart {inst.name}")
 
     def as_user(self, name, cmd, **kw):
-        assert cmd == ["claude", "update"]
-        if name in self.claude_broken:
-            raise CommandError(f"{name}: claude update -> exit 1")
-        self.claude.append(name)
+        if cmd[0] == "hermes":
+            assert cmd == ["hermes", "sessions", "prune", "--source", "cron", "--older-than", "30", "--yes"]
+            done, broken = self.pruned, self.prune_broken
+        else:
+            assert cmd == ["claude", "update"]
+            done, broken = self.claude, self.claude_broken
+        if name in broken:
+            raise CommandError(f"{name}: {cmd[0]} -> exit 1")
+        done.append(name)
 
 
 @pytest.fixture
@@ -185,7 +191,7 @@ def test_instances_with_webui_restart_it_after_a_hermes_update(server):
 
 def test_check_only_reports(server):
     assert update.run(S, registry(), dry_run=True) == 0
-    assert server.calls == [] and server.claude == []
+    assert server.calls == [] and server.claude == [] and server.pruned == []
     assert not (server.tmp / "status.json").exists()
 
 
@@ -316,6 +322,20 @@ def test_claude_code_is_updated_every_night_whatever_happens_to_hermes(server):
     server.claude.clear()
     assert update.run(S, registry()) == 0
     assert server.claude == ["bob"]
+
+
+def test_cron_sessions_older_than_a_month_are_deleted_every_night_whatever_happens_to_hermes(server):
+    server.broken.add("bob")
+    assert update.run(S, registry()) == 1
+    assert server.pruned == ["alice", "bob"]   # active instances only
+
+    server.release, server.broken, server.pruned = ("v2", "c2"), set(), []
+    server.commits = {"alice": "c2", "bob": "c2", "carol": "c2"}
+    server.prune_broken.add("alice")
+    assert update.run(S, registry()) == 0   # a failed deletion is only logged
+    assert server.status()["result"] == "ok"
+    assert server.pruned == ["bob"]
+    assert "alice: old cron sessions not deleted: alice: hermes -> exit 1" in (server.tmp / "thinny.log").read_text()
 
 
 def git(*args, cwd):

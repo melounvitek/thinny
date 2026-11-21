@@ -648,7 +648,8 @@ With `auto_update = false` the nightly run leaves thinny as it is and only repor
 release. The result is
 in `/var/lib/thinny/update-status.json`, the log in `/var/log/thinny.log`. Nightly runs
 also deliver new built-ins unless `auto_update = false`. Every nightly or `--all` run that gets past the thinny
-update, except a dry run, updates Claude Code.
+update, except a dry run, updates Claude Code and deletes the scheduled jobs' sessions older than 30 days
+(Hermes's own retention, 90 days by default, still applies to the rest).
 
 ```sh
 thinny update                   # thinny only
