@@ -571,6 +571,23 @@ def test_doctor_finds_a_mailbox_gone_from_purelymail(purelymail):
         ("WARN", "alice's mailbox alice@example.org is gone from Purelymail", "thinny instance email alice")]
 
 
+def test_doctor_checks_only_that_this_server_reaches_the_mail_servers_of_another_provider(purelymail):
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="active", mailbox="alice@example.org")})
+    assert list(checks.mailboxes(OWN, reg)) == [
+        ("OK", "this server reaches imap.example.net:993 and smtp.example.net:587", "")]
+    purelymail.blocked.add(("imap.example.net", 993))
+    assert list(checks.mailboxes(OWN, reg)) == [
+        ("WARN", "this server cannot reach imap.example.net:993: its instances' mail neither goes nor comes",
+         "let outgoing TCP to port 993 through, also at your hosting provider (see README, Email)")]
+    assert purelymail.calls == []
+
+
+def test_doctor_looks_for_no_mailbox_of_the_admins_own_at_purelymail(purelymail):
+    reg = Registry({"alice": Instance("alice", 9120, "local", state="active", mailbox="alice@example.net",
+                                      own_mailbox=True)})
+    assert list(checks.mailboxes(SITE, reg)) == [("OK", "Purelymail takes mail for example.org", "")]
+
+
 def test_purelymails_errors_come_with_http_200(alice, purelymail):
     purelymail.broken["createUser"] = "Password is too weak"
     with pytest.raises(CommandError, match="^Purelymail refused createUser: Password is too weak$"):

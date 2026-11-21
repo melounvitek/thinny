@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import dashboard as dash
-from . import backup, host, instances, purelymail, render, settings, system, trace, update
+from . import backup, host, instances, mail, purelymail, render, settings, system, trace, update
 from .registry import Instance, Registry
 from .settings import MONITORING_PORTS, Settings
 
@@ -100,12 +100,19 @@ def access_trace(s: Settings, reg: Registry):
 def mailboxes(s: Settings, reg: Registry):
     if not s.email_provider:
         return
-    for host_name, port in ((purelymail.IMAP_HOST, 993), (purelymail.SMTP_HOST, 587)):   # Hermes's ports
+    imap, smtp, _ = mail.servers(s)
+    reached = True
+    for host_name, port in ((imap, 993), (smtp, 587)):   # Hermes's ports
         try:
             socket.create_connection((host_name, port), timeout=10).close()
         except OSError:   # Hermes then takes no mail either
+            reached = False
             yield warn(f"this server cannot reach {host_name}:{port}: its instances' mail neither goes nor comes",
                        f"let outgoing TCP to port {port} through, also at your hosting provider (see README, Email)")
+    if s.email_provider == "custom":   # the admin's own mailboxes: thinny has no account to check them in
+        if reached:
+            yield ok(f"this server reaches {imap}:993 and {smtp}:587")
+        return
     try:
         purelymail.check_domain(s)
         found = purelymail.api("listUser")["users"]
@@ -114,7 +121,7 @@ def mailboxes(s: Settings, reg: Registry):
         return
     yield ok(f"Purelymail takes mail for {s.email_domain}")
     for inst in active(reg):
-        if inst.mailbox and inst.mailbox not in found:
+        if inst.mailbox and not inst.own_mailbox and inst.mailbox not in found:
             yield warn(f"{inst.name}'s mailbox {inst.mailbox} is gone from Purelymail",
                        f"thinny instance email {inst.name}")
 
