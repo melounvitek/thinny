@@ -213,6 +213,29 @@ Debian 13, kernel 6.12, Incus 6.0.4 (`incus-base`), Hermes v0.23.0 -> v0.23.1. A
   lines in the profile's `raw.apparmor` hide those files, but the CPU folders and the server's disk
   size: `incus profile edit` applied them to running containers, root in a container cannot lift
   them, they log nothing, and Docker inside still ran `hello-world` (workstation).
+- What a container still saw with those rules (2026-11-23, the server, thinny cc229dd, LXCFS without `-l`):
+  `/proc/diskstats` as the server has it (LXCFS passes it through on cgroup v2), with every pool's loop device
+  and the server's disk and their reads and writes, the server's disk's journal in `/proc/fs/jbd2` and
+  `/proc/fs/ext4`, and a folder per pool in `/sys/fs/btrfs` (their contents denied). Also the server's memory
+  size: in sysinfo() (Python's `os.sysconf`), LXCFS's `CommitLimit` in `/proc/meminfo`,
+  `/proc/sys/kernel/threads-max`, `/proc/sys/vm/min_free_kbytes`, `/sys/firmware/memmap` and which
+  `/sys/devices/system/memory/memory*` exist (denying `r` leaves `stat`), and its load and threads in
+  `/proc/loadavg`; `free` and `nproc` show the container's own memory and CPUs, `top` both and the server's
+  load. `deny` lines keep the disks out of the usual files; nothing safe hides the memory size or the load. Incus's `security.syscalls.intercept.sysinfo` covers sysinfo() only,
+  applies at a container's next start, and by Incus's and liblxc's source falls back to the server's values on
+  some errors and fails with ENOSYS while incusd is down; LXCFS's `-l` needs LXCFS restarted under running
+  containers; denying `/proc/meminfo` or `/proc/loadavg` breaks `free`, `top` and `uptime`.
+  The new rules on one running instance (`incus config set <name> raw.apparmor`, at once): its root and its
+  user lost `/proc/diskstats`, what is in `/proc/fs` and the pools' folders; `free`, `top`, `uptime`, `df`,
+  `os.getloadavg()`, the gateway, Docker (`hello-world`, `docker stats`, the phone's Asterisk) and headless
+  Chromium went on, and no Hermes or WebUI code reads those files.
+  None of these rules is a wall: the rules match paths, and nesting allows mounts. Root in the container read
+  `/proc/partitions` in a proc mounted elsewhere or bound to another file, and the pools in a sysfs mounted
+  elsewhere; its user without sudo too, in a proc mounted in a user namespace of its own (`unshare -Urmpf`).
+  In a sysfs and a proc mounted elsewhere, the other instances' names were only in their pools' btrfs labels
+  and loop files (`grep -r` for them; AppArmor's list of profiles is empty in a container). So a pool's name
+  is since a hash of its instance's name with a key of the server's (`thinny-<12 hex digits>`, the key in
+  `/var/lib/thinny/pool-key`).
 - With the admin's forward-chain lines removed, `instance add` hung in apt for over 15 minutes
   (apt neither fails nor gives up without a network): now a DNS probe fails it in 40 s.
 - A running gateway got the `docker` group only after `incus restart` of its container.
@@ -790,8 +813,10 @@ guests' Incus 6.0.4 and borg 1.4.0), one the old server with alice (Webapp) and 
   was flushed on the workstation).
 - A disk cannot shrink (nor can a pool): a smaller one means moving the container into a new pool by
   hand.
-- Instances still see the server's number of CPUs, and the size and use of its disk through the
-  folders thinny mounts into them (the policy and the access trace).
+- Instances still see the server's number of CPUs, its amount of memory, its load, and the size and use of
+  its disk through the folders thinny mounts into them (the policy and the access trace), and in a proc or
+  sysfs they mount themselves what the AppArmor rules hide: the other instances' disks' sizes, use and
+  activity, not their names (their size or activity can still tell whose they are).
 - Alerting from the server itself: the dashboard sends none, and the watchdog runs off-server.
 - The dashboard on Debian 13 and Ubuntu 24.04, and a Grafana upgrade by unattended upgrades.
 - Subscription usage on the dashboard is untested on a server: a day with a ChatGPT and a Claude instance

@@ -57,10 +57,13 @@ to mail servers on port 25 either, so spam sent that way cannot get the server's
 - the policy from an instance's users: they are root in their container, so the policy is a
   guardrail. `doctor` reports the bypasses it can see;
 - users from their own agent: it can do whatever they can in the container, but cannot leave it;
-- a little of the server, which a shared kernel shows every container: an instance sees its number of
-  CPUs, the size and use of its disk (through the folders thinny mounts into it), and a few kernel
-  counters that hint at how busy it is. The other instances' disks (their names, sizes and activity)
-  and the server's memory stay hidden;
+- a little of the server, which a shared kernel shows every container: an instance sees the server's
+  number of CPUs and amount of memory, the size and use of the server's disk (through the folders
+  thinny mounts into it), and kernel counters of how busy the whole server is, such as its load.
+  Anyone in an instance can also see the other instances' disks, how large, how full and how busy
+  they are, by mounting the kernel's files elsewhere. Their names do not say whose they are, but
+  their size or when they are busy can give it away. The usual files, which programs and agents
+  read, show none of that;
 - an instance's sign-in from other instances' users, with `lan` or `tailscale` access. Those
   instances share one address, and browsers send a site's cookies to every port of it: when
   Alice opens Bob's address in the browser she is signed in with, Bob's container gets her
@@ -318,9 +321,11 @@ thinny instance restart --group sales   # instead of names: resize, login, model
   not given follow `[container]` in `config.toml`, also when it changes; its disk gets `disk_gb` when
   it is added. `resize` applies at once, even to a running instance. A disk can grow but not shrink.
 - Each instance's disk is a storage pool of its own, a file on the server's disk that grows as the
-  instance writes, so `df` in the container shows its size. `add` and `resize` refuse a disk that
-  would make the instances' disks together larger than 80% of the server's disk. The storage is
-  compressed, and disk use and its size count the compressed size (about half of what the files take).
+  instance writes, so `df` in the container shows its size. Its name does not tell whose it is, as
+  every instance sees it: `incus config device get alice root pool` shows alice's. `add` and `resize`
+  refuse a disk that would make the instances' disks together larger than 80% of the server's disk.
+  The storage is compressed, and disk use and its size count the compressed size (about half of what
+  the files take).
 - `lock` keeps the provider `alice` uses and allows the models given, the first by default; it
   pins effort and plugins as the server's lock does. `unlock` leaves `alice` on the model it was
   locked to, for its users to change. Either stays whatever `policy.model_lock` says. The model

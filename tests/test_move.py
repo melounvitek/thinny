@@ -318,7 +318,7 @@ def test_an_instance_that_may_have_reached_the_other_server_stays_stopped_with_w
         move.move(S, reg, ["alice", "bob"], "admin@new")
     # also when the other server has the container but did not register it
     for hint in ("thinny instance list", "thinny instance add alice", "thinny instance disable alice",
-                 "incus delete alice", "incus storage delete thinny-alice",
+                 "incus config device get alice root pool before incus delete alice", "the pool the check above names",
                  "incus config unset alice boot.autostart && incus start alice"):
         assert hint in str(e.value)
     assert incus.containers["alice"]["state"] == "STOPPED" and reg.get("alice").state == "active"

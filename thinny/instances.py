@@ -4,15 +4,18 @@ its home runs as the instance's account, inside it."""
 from __future__ import annotations
 
 import base64
+import contextlib
 import dataclasses
 import datetime as dt
 import hashlib
+import hmac
 import json
 import os
 import re
 import secrets
 import shutil
 import sys
+import tempfile
 import textwrap
 import time
 import tomllib
@@ -33,6 +36,8 @@ RESTART_TIMEOUT = 45 * 60  # a restart waits for a running reply (up to 30 min b
 RESTART_PENDING = STATE_DIR / "restart-pending"
 IMAGE = "images:debian/13"
 SERVER_DISK = "/var/lib/incus"   # where Incus keeps the instances' pools, each a file
+POOL_PREFIX = "thinny-"
+POOL_KEY = STATE_DIR / "pool-key"   # root's only; without it, thinny would not find the pools
 URL_RE = re.compile(r"https?://[a-z0-9.-]+(:\d+)?/?")
 CLAUDE_INSTALLER = "https://claude.ai/install.sh"
 # The email client of Hermes's himalaya skill, for a mailbox. v2 dropped the commands the skill uses (template,
@@ -122,15 +127,24 @@ def container_states() -> dict[str, str]:
 
 def pool_of(name: str) -> str:
     """The instance's own Incus storage pool, sized to its disk: df in its container shows that, not the
-    server's disk."""
-    return f"thinny-{name}"
+    server's disk. Every container sees each pool's name (its btrfs label and loop file), so it comes from the
+    instance's name and a key of this server's."""
+    if not POOL_KEY.exists():
+        POOL_KEY.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=POOL_KEY.parent)   # root's only
+        with os.fdopen(fd, "w") as f:
+            f.write(secrets.token_hex(32))
+        with contextlib.suppress(FileExistsError):
+            os.link(tmp, POOL_KEY)   # never in place of the one another thinny made meanwhile
+        os.unlink(tmp)
+    return POOL_PREFIX + hmac.new(POOL_KEY.read_bytes(), name.encode(), hashlib.sha256).hexdigest()[:12]
 
 
 def pool_sizes() -> dict[str, int]:
     """The size in bytes of each instance's pool by the pool's name, also of one whose instance is gone."""
     pools = json.loads(run(["incus", "storage", "list", "--format", "json"]).stdout)
     return {p["name"]: int(p["config"]["size"].removesuffix("GiB")) * 2**30
-            for p in pools if p["name"].startswith(pool_of(""))}
+            for p in pools if p["name"].startswith(POOL_PREFIX)}
 
 
 def check_room(name: str, disk_gb: int) -> None:

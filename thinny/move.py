@@ -68,8 +68,8 @@ def move(s: Settings, reg: Registry, names: list[str], to: str) -> None:
                 f"moving {name} failed, and it may have reached {to}; it stays stopped here. On {to}:\n"
                 f"  - if thinny instance list shows {name}, finish it there if pending (thinny instance add {name}), "
                 f"then here: thinny instance disable {name}\n"
-                f"  - if not, delete any container {name} there (incus delete {name}) and its pool (incus storage "
-                f"delete {instances.pool_of(name)}), then here: "
+                f"  - if not, delete any container {name} there and its pool (incus config device get {name} root pool "
+                f"before incus delete {name}; without a container, the pool the check above names), then here: "
                 f"incus config unset {name} boot.autostart && incus start {name}" +
                 (f"\nif {name} is there, its mailbox {inst.mailbox} is that server's: remove {name} here with "
                  f"thinny instance remove {name} --keep-mailbox" if inst.mailbox and not inst.own_mailbox else ""))

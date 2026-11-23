@@ -21,6 +21,8 @@ from thinny.registry import Instance, Registry, RegistryError
 from thinny.settings import Settings
 from thinny.system import CommandError
 
+REAL_POOL_OF = instances.pool_of   # the other tests read the pools as thinny-<name> (conftest)
+
 
 @pytest.fixture
 def gateways(tmp_path, monkeypatch):
@@ -1274,6 +1276,31 @@ def test_an_add_that_stopped_before_its_container_keeps_the_pool_it_has(incus):
     instances.add(S, reg, "alice", "local")
     assert not incus.ran("incus storage create") and incus.pools["thinny-alice"]["size"] == 50 * 2**30
     assert incus.ran("incus init images:debian/13 alice --profile thinny-instance --storage thinny-alice")
+
+
+def test_a_pool_does_not_name_its_instance(incus, tmp_path, monkeypatch):
+    # Every container sees each pool's name (its btrfs label and loop file), so it must not tell whose it is. It
+    # stays the same on this server, from a key only root reads.
+    monkeypatch.setattr(instances, "pool_of", REAL_POOL_OF)
+    reg = Registry()
+    instances.add(S, reg, "alice", "local")
+    pool = re.match(r"incus storage create (thinny-[0-9a-f]{12}) ", incus.calls[incus.where("incus storage create")])[1]
+    assert incus.ran(f"incus init images:debian/13 alice --profile thinny-instance --storage {pool}")
+    assert instances.disk_use("alice") and REAL_POOL_OF("alice") == pool != REAL_POOL_OF("bob")
+    assert (tmp_path / "pool-key").stat().st_mode & 0o777 == 0o600
+    monkeypatch.setattr(instances, "POOL_KEY", tmp_path / "another-servers-key")
+    assert REAL_POOL_OF("alice") != pool
+
+
+def test_the_pool_key_another_thinny_made_meanwhile_stays(tmp_path, monkeypatch):
+    # e.g. thinny metrics, which takes no lock, or instance list's lookups alongside each other
+    def token_hex(size):
+        (tmp_path / "pool-key").write_text("theirs")
+        return "ours"
+    monkeypatch.setattr(instances.secrets, "token_hex", token_hex)
+    pool = REAL_POOL_OF("alice")
+    assert (tmp_path / "pool-key").read_text() == "theirs" and REAL_POOL_OF("alice") == pool
+    assert list(tmp_path.iterdir()) == [tmp_path / "pool-key"]
 
 
 def test_a_new_instance_does_not_take_a_pool_that_exists(incus):
