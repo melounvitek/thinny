@@ -18,7 +18,7 @@ with `BatchMode=yes`).
 | `thinny-backup` | `/var/lib/thinny/backup-status.json` | `ok` |
 | `netcup-snapshot` | `status.json` next to its config (set `file`) | `ok` |
 
-Both files look like `{"time": "<ISO 8601>", "result": "...", "detail": "..."}`. A time without
+Each file looks like `{"time": "<ISO 8601>", "result": "...", "detail": "..."}`. A time without
 an offset is read as the local time of the machine running the check.
 
 ## Config
