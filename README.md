@@ -6,7 +6,8 @@ system container with its own Hermes and a password-protected Webapp, or
 [hermes-webui](https://github.com/nesquena/hermes-webui) in its place. All instances share one
 central policy and one Hermes release.
 
-Status: in development. Design notes: [`NOTES.md`](NOTES.md).
+Status: in development. Design notes: [`NOTES.md`](NOTES.md). Website, in Czech:
+[thinny.ai](https://thinny.ai/).
 
 - **Isolated instances:** one container each (Debian 13 with systemd), with CPU, memory,
   process and disk limits. A firewall lets it reach the internet but not mail servers on port 25,
@@ -18,10 +19,14 @@ Status: in development. Design notes: [`NOTES.md`](NOTES.md).
   a reboot. It also tells the agent that it runs on a server its users reach from their own
   devices, so it does not offer to open things in their browser. The optional **model
   lock** (`policy.model_lock`) also pins the provider, model, reasoning effort and plugins, and
-  allows only `allowed_models`. Without it, users choose their own. One instance can have its own
-  lock, or none, whatever the server's (`thinny instance lock` and `unlock`).
+  allows only `allowed_models`; one instance can have its own lock, or none (`thinny instance lock`
+  and `unlock`).
 - **Groups** of instances share Hermes settings their users cannot change, and take commands
-  together.
+  together (see [Groups](#groups)).
+- **An access trace** tells an instance's users when the admin entered their container, and with
+  what command, also off the server (see [Access trace](#access-trace)).
+- **Export and move:** an instance's chats, memories and skills for its users, or the whole
+  instance to another thinny server (experimental; see [Instances](#instances)).
 - **Built into every instance:** [Claude Code](https://code.claude.com/) with the Claude
   subscription plugin, and the [hermes-3310](https://github.com/melounvitek/hermes-3310) phone
   plugin with Docker.
@@ -29,16 +34,17 @@ Status: in development. Design notes: [`NOTES.md`](NOTES.md).
   write to (optional, see [Telegram](#telegram)).
 - **A mailbox per instance**, at any provider, or created for you at Purelymail, that the people you
   name can email and get replies from (optional, see [Email](#email)).
-- **One Hermes release**, with an optional nightly update that moves instances one at a time.
-- **Nightly backups** of every instance and of the server to another machine over SSH, encrypted, that a
-  server broken into cannot delete, and restores of one instance or of everything on a new server
-  (optional, see [Backups](#backups)).
+- **One Hermes release**, with an optional nightly update that moves instances one at a time (see
+  [Updates](#updates)).
+- **Nightly backups** of every instance and of the server to another machine over SSH, encrypted and
+  append-only, and restores of one instance or of everything on a new server (optional, see
+  [Backups](#backups)).
 - **Webapp or WebUI per instance:** Hermes's built-in Webapp, or hermes-webui, with the same
   password. WebUI follows its stable releases like Hermes.
 - **Four ways to open the Webapp:** office network (HTTPS), Tailscale, your own address, or an
-  SSH tunnel.
+  SSH tunnel (see [Access](#access)).
 - **`thinny status`** for a quick look, **`thinny doctor`** for every isolation and health
-  check, each with a fix.
+  check, with fixes (see [Status and checks](#status-and-checks)).
 - **An optional dashboard** with the history of the server's and each instance's CPU, memory,
   disk and network, and if you choose, of its users' subscription usage, turns and tokens (see
   [Dashboard](#dashboard)).
@@ -77,6 +83,8 @@ to mail servers on port 25 either, so spam sent that way cannot get the server's
   Debian mirrors and the model provider.
 - About 0.4 GB RAM and 3 GB disk per idle instance, plus what its agent, Docker and Claude Code
   use. WebUI takes about 0.3 GB RAM more, the optional dashboard about 0.3 GB RAM and 2.5 GB disk.
+- Room for the instances' disks: each counts with its full size (`[container] disk_gb`, 30 GiB by
+  default), and together they may take at most 80% of the server's disk (where `/var/lib/incus` is).
 
 With a sudo account, thinny runs itself with sudo, which asks for your password. On Debian, whose
 `PATH` has `/usr/local/sbin` only for root, type `sudo thinny`. Prefix other commands with `sudo`
@@ -84,7 +92,7 @@ With a sudo account, thinny runs itself with sudo, which asks for your password.
 
 ## Prerequisites
 
-`thinny doctor` checks these and prints the fix.
+`thinny doctor` checks most of these and prints fixes.
 
 **Key-only SSH**, reachable only from a private network. Create
 `/etc/ssh/sshd_config.d/10-keys-only.conf`, then run `systemctl reload ssh`:
@@ -139,8 +147,9 @@ thinny's table only: Incus's and Tailscale's tables stay gone, so the steps abov
 fixed kernel protects them only once the server reboots into it. Schedule the reboot well after
 thinny's whole nightly run at `hermes.update_time` (03:00): the [backup](#backups), when on, takes a
 few minutes per instance, and then the Hermes update can take an hour with many instances.
-`thinny status` and `thinny doctor` show when each comes, and `thinny doctor` warns when automatic
-reboots are off, when the last nightly run went on past their time, and while a reboot is pending:
+`thinny status` and `thinny doctor` show when each comes, and `thinny doctor` warns when upgrades or
+automatic reboots are off, when reboots come before the nightly run or the last one went on past
+their time, and while a reboot is pending:
 
 ```sh
 apt install unattended-upgrades
@@ -166,7 +175,8 @@ bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/melounvitek/th
 
 1. Downloads and runs thinny's installer from the `main` branch. Without root, it runs the next
    steps with sudo.
-2. On the first run, lists what it changes on the machine and asks whether to continue.
+2. On the first run, with a terminal, lists what it changes on the machine and asks whether to
+   continue.
 3. Installs Git with apt if it is missing.
 4. Clones thinny to `/usr/local/src/thinny`. If a clone is already there, it uses it as it is.
 5. Runs its `install.sh`, which installs the packages (Incus, btrfs-progs, nftables, curl, Git,
@@ -176,7 +186,7 @@ bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/melounvitek/th
    `/etc/thinny/config.toml`, a copy of the commented example. Without a terminal, it copies the
    example and stops.
 7. Once `config.toml` exists, it runs `thinny setup`: the Incus profile, the firewall and its
-   check, the update timer and the shared policy.
+   check, IP forwarding, the nightly timer and the access trace.
 
 It does not add any instances.
 
@@ -188,15 +198,15 @@ suggests the interface and LAN address it detects and the language pack it finds
 catalog, shows a summary, and sets up the server once you confirm. Everything else keeps the
 example's defaults: change them with `thinny config edit`.
 
-Without a terminal, it stops after copying the example. Edit `/etc/thinny/config.toml` (at least
+Without a terminal, edit `/etc/thinny/config.toml` (at least
 `network.interface` and `access.lan_address`, or `""` and another
 `access.default`), then run `sudo sh /usr/local/src/thinny/install.sh`.
 
 Rerunning `install.sh` is safe. `thinny update` updates thinny from its clone (see [Updates](#updates)).
+A changed model guard loads at each gateway's next restart (`thinny instance restart`).
 
 In bash, Tab completes thinny's commands and options. Instance names complete only in a root
 shell (`sudo -i`): elsewhere, the completion runs as you, and only root reads the instances.
-A changed model guard loads at each gateway's next restart (`thinny instance restart`).
 
 ## Settings
 
@@ -229,8 +239,9 @@ thinny config edit --secrets   # edit a copy, check it, then save it (nothing to
 ```
 
 It takes one `NAME=value` per line, without quotes: `THINNY_TELEGRAM_MANAGER_TOKEN` (see
-[Telegram](#telegram)) and `THINNY_PURELYMAIL_API_TOKEN` (for Purelymail mailboxes, see
-[Email](#email)). Commands read it when they need a token.
+[Telegram](#telegram)), `THINNY_PURELYMAIL_API_TOKEN` (for Purelymail mailboxes, see
+[Email](#email)) and `THINNY_BACKUP_PASSPHRASE` (set by `thinny backup init`, see
+[Backups](#backups)). Commands read it when they need a token.
 `sudo grep -o '^[A-Z_]*=' /etc/thinny/secrets.env` lists the names set without their tokens, and
 `thinny doctor` warns when others than root can read the file.
 
@@ -280,15 +291,16 @@ thinny instance restart --group sales   # instead of names: resize, login, model
   browser shows every sidebar tab until it has opened WebUI's Settings once (WebUI v0.52.678).
   `frontend` switches an instance either way; one added before thinny had WebUI gets a new
   password when it first switches (the Webapp keeps only a hash of it).
-- WebUI takes the password in plain text, in `~/.config/hermes-webui.env` in the container. The
-  agent runs inside WebUI and can read it from its environment, so it could end up in a chat, and
-  at the model provider. `reset-password` signs everyone out of WebUI, but its public share links
-  stay.
+- Since thinny has WebUI, an instance keeps its password in plain text in
+  `~/.config/hermes-webui.env`, also while it uses the Webapp. Its agent can read it there (under
+  WebUI also from its environment), so it could end up in a chat, and at the model provider.
+  `reset-password` signs everyone out of WebUI, but its public share links stay.
 - WebUI's model picker ignores the model lock and lists every model; the model guard refuses
   chats with the others, but not WebUI's chat titles.
 - Run `login` before the hand-over. Enter takes the provider `alice` uses; with the model lock,
-  `login` signs in to the lock's provider without asking. Whoever uses `alice` opens the link and
-  signs in with their own account within about 15 minutes. Signed in to another provider, they
+  `login` signs in to the lock's provider without asking. Whoever uses `alice` signs in with their
+  own account: with OpenAI's code within about 15 minutes; with Anthropic's link, they send you the
+  code they get, which you type in. Signed in to another provider, they
   choose its models in the Webapp's model picker (Anthropic: *Claude Subscription DirectSDK
   (Experimental)*). thinny offers OpenAI and Anthropic only; users set up others in Hermes.
 - `usage` shows admins how much of their ChatGPT or Claude subscription the users of each active
@@ -297,12 +309,10 @@ thinny instance restart --group sales   # instead of names: resize, login, model
   the provider afresh (`hermes usage`; for Claude, Claude Code answers without using any of the
   limits), for every instance at once, up to about 20 s each. `?` means no answer. The
   [dashboard](#dashboard) can keep its history.
-  It also shows how much they used their agent in the last 7 days, to tell who uses most of a
-  subscription that several instances share: their turns (messages to it) and its tokens (input,
-  output and cache writes, without the cache reads, which count the least against a limit). They
-  come from Hermes's chats in the instance, so not what the users do in Claude Code, ChatGPT or
-  Claude.ai. Hermes counts a chat's tokens, not each reply's, so thinny shares them out by its
-  replies: a close estimate, not the provider's count.
+  It also shows their turns (messages to the agent) and its tokens (input, output and cache writes,
+  not cache reads) in the last 7 days, to tell who uses most of a shared subscription. They come
+  from Hermes's chats in the instance only, not from Claude Code, ChatGPT or Claude.ai, and are a
+  close estimate, not the provider's count.
 - `add` can connect a phone line to the phone plugin. Answer `y` and it asks for the SIP account
   (Odorik's server by default), the PIN, the numbers that may call, the number Hermes calls back
   and an OpenAI API key for speech recognition, then starts Asterisk in the container. With
@@ -332,7 +342,8 @@ thinny instance restart --group sales   # instead of names: resize, login, model
   picker keeps showing every model; the model guard refuses the others.
 - `model` sets the model `alice`'s new chats start on, in its own config, at once (no restart); its
   users can still choose others. Hermes must offer it to `alice`, as its model picker does: a model
-  of the provider `alice` uses, or with `--provider`, of another one it is signed in to (`login`).
+  of the provider `alice` uses, or with `--provider`, of another one it is signed in to (`login`),
+  which `alice` then uses.
   Open chats keep their model, but Telegram and phone chats take the new one at their next message.
   A browser where a user picked a model in the Webapp keeps that pick for new chats, and an open
   WebUI tab keeps the old model until it is reloaded.
@@ -340,8 +351,10 @@ thinny instance restart --group sales   # instead of names: resize, login, model
   (ChatGPT: the first of Hermes's list, such as `gpt-6-sol`; Claude, for which Hermes has none:
   the Claude plugin's first model); `model` changes it. On a locked instance (the server's lock,
   or its own `lock`), the lock decides where new chats start, so `model` refuses it: change its
-  lock with `lock`, or `unlock` it first.
-- Names are 2-32 lowercase letters, digits and `-`, starting with a letter. Names and ports are
+  lock with `lock`, or `unlock` it first. Without a lock, a group that sets `model.default` or
+  `model.provider` decides those, and `model` refuses too: change the group's file.
+- Names are 2-32 lowercase letters, digits and `-`, starting with a letter and not ending with
+  `-`. Names and ports are
   not reused, and a disabled instance cannot be re-enabled.
 - `remove` takes a disabled instance, or a pending one whose `add` you give up on. Its name
   stays taken and its [access trace](#access-trace) stays on the server.
@@ -360,22 +373,20 @@ thinny instance restart --group sales   # instead of names: resize, login, model
   (`sudo install -m 600 -o "$USER" /var/lib/thinny/exports/alice-<time>.zip ~/`), then e.g. with `scp`,
   and delete both copies once it is handed over. `remove` leaves it, `uninstall` deletes it.
 - Export before `disable`: only an active instance's container runs. Hermes makes the archive in the
-  container first, so it needs room there (`resize --disk-gb`). Before that, the server needs the
-  size of the instance's disk free on top of a tenth of its disk: the archive takes from the same disk. Its
-  copy stops at that size, or before it would leave the server's disk less than 10% free. Files the agent made
-  outside Hermes's home (`~/.hermes`) are not in it.
-  The [access trace](#access-trace) notes `thinny instance export alice ran its commands in alice`.
+  container first, so it needs room there (`resize --disk-gb`), and the server needs the size of the
+  instance's disk free on top of a tenth of its own. Files the agent made outside Hermes's home
+  (`~/.hermes`) are not in it.
 - Shell in a container: `sudo incus exec alice -- runuser -l alice` (or `-- bash` for root).
   Both show in the [access trace](#access-trace).
-- **`move` is experimental:** so far it has moved one small instance between two servers, once.
-  Snapshot both servers first.
+- **`move` is experimental:** so far it has moved one small instance between two servers, once,
+  which was down for about ten minutes. Snapshot both servers first.
 - `move` takes whole containers over SSH to another server that runs thinny, one at a time, each
-  down for a few minutes. Everything inside comes along: data, sign-ins, the password, Webapp or
-  WebUI (at the new server's WebUI release), the model (unless the new server's model lock pins it), language, look and limits; its own
-  `lock` or `unlock` does not: it follows the new server's `policy.model_lock`. The new
-  server gives it its own port, address, policy and packages: `lan`, `tailscale` and `local`
-  instances get a new address; for `url` ones, point your DNS or tunnel at the new server. The
-  old copy stays here, disabled.
+  down meanwhile. Everything inside comes along: data, sign-ins, the password, Webapp or WebUI (at
+  the new server's WebUI release), the model (unless the new server's model lock pins it),
+  language, look and limits; its own `lock` or `unlock` does not: it follows the new server's
+  `policy.model_lock`. The new server gives it its own port, address, policy and packages: `lan`,
+  `tailscale` and `local` instances get a new address; for `url` ones, point your DNS or tunnel at
+  the new server. The old copy stays here, disabled.
 - Before a move, run `thinny update --all` on both servers: they need the same Hermes release. Each
   needs room for one container archive. The new server takes them only while its instances' disks stay
   within 80% of its own. SSH must reach the new server as root, or as an account
@@ -436,9 +447,9 @@ microphone, notifications and the Bot Screen. `<name>.localhost` through SSH kee
 
 **LAN certificate:** thinny runs Caddy with its own certificate authority and owns
 `/etc/caddy/Caddyfile`. It copies the root certificate to `/etc/thinny/office-root.crt`, readable
-by any account. While an instance uses LAN access, Caddy also serves it on the office network at
-`http://<lan_address>/office-root.crt`; thinny prints the link when an instance gets LAN access.
-Download it on each office PC, install it as trusted and restart the browser:
+by any account. While an instance or the dashboard uses LAN access, Caddy also serves it on the
+office network at `http://<lan_address>/office-root.crt`; thinny prints the link when an instance
+gets LAN access. Download it on each office PC, install it as trusted and restart the browser:
 
 - Windows: open it, "Install Certificate", "Current User", "Trusted Root Certification Authorities"
   (or for all accounts, as administrator: `certutil -addstore Root office-root.crt`).
@@ -458,8 +469,8 @@ Download it on each office PC, install it as trusted and restart the browser:
 Over plain HTTP, someone on the office network could swap the file; where that matters, copy it
 with `scp <you>@<server>:/etc/thinny/office-root.crt .` instead.
 
-**One tunnel for every `url` instance:** set `access.tunnel_port` (e.g. `8080`) and run
-`thinny config apply`. Caddy then serves every `url` instance at `http://127.0.0.1:8080`, by the
+**One tunnel for every `url` instance:** set `access.tunnel_port` (e.g. `8080`) with
+`thinny config edit`. Caddy then serves every `url` instance at `http://127.0.0.1:8080`, by the
 host of its address. Set up the tunnel once, e.g. with Cloudflare:
 
 1. `cloudflared` on this server, with a tunnel route from `*.example.org` to
@@ -503,9 +514,8 @@ Telegram and tap *Create*. thinny shows who created which bot and asks whether i
 can write to it. Their chat is also Hermes's Telegram home channel, so Hermes does not ask for one.
 
 - Anyone who knows the manager bot can create a bot through it, also with the suggested name.
-  Check the name and Telegram ID before you answer `y`.
-- The manager token gets the token of every bot created through it. It stays on the server, in
-  `secrets.env`, which only root can read.
+  Check the name and Telegram ID before you answer `y`; `n` skips it.
+- The manager token gets the token of every bot created through it. It stays in `secrets.env`.
 - The bot belongs to its user: it is in their BotFather, where they can rename or delete it.
 - Ctrl+C stops the wait. A bot created meanwhile waits up to 24 hours: run the command again and
   confirm it. One wait at a time per server; other thinny commands run meanwhile.
@@ -585,8 +595,6 @@ All instances of a server use one provider, `email.provider`:
 
    It creates `alice@example.org`, sets alice's Hermes up with it and restarts alice's gateway.
 
-A config from before `provider` with only a `domain` keeps working as `purelymail`.
-
 ### Both
 
 The server must reach the IMAP server on port 993 and the SMTP server on 587 (Purelymail's:
@@ -597,14 +605,12 @@ through your provider. Until Hermes reaches both, it logs `email failed to conne
 every few minutes. `thinny doctor` checks that the server reaches both, and with Purelymail, that the
 domain passes Purelymail's DNS checks.
 
-Only `anna@example.com` and `boss@example.com` can write to alice; mail from alice's scheduled jobs
-goes to the first.
+Only `anna@example.com` and `boss@example.com` can write to alice.
 
 - Name whole addresses. Hermes ignores mail from anyone else, without an answer. thinny refuses
   `*`: whoever can write to the agent can have it run commands in its container.
 - Hermes answers only mail whose sender the provider could verify (DMARC, SPF or DKIM), so a forged
-  sender gets nothing, as long as the provider removes `Authentication-Results` that came with the
-  mail (see above).
+  sender gets nothing (but see `authserv_id` above).
 - **Best effort:** Hermes skips mail that arrives while its gateway restarts (a Hermes update,
   `config apply`, `reset-password`, a reboot) or while the instance is disabled. That mail stays
   unread in the mailbox, and its sender has to write again.
@@ -613,8 +619,8 @@ goes to the first.
 - Its agent can also send mail from the mailbox, attachments too, and read it, when its users ask:
   with Hermes's himalaya skill and [himalaya](https://github.com/pimalaya/himalaya) v1.2.0, which
   thinny installs in the instance. The mailbox is an account named after its address, added to its
-  users' own himalaya config, if any. thinny's policy tells the agent so, and where its users' address is. No copy of
-  what it sends is kept. Mailboxes from before get it at the next `thinny config apply` or update.
+  users' own himalaya config, if any. thinny's policy tells the agent so, and where its users'
+  address is. No copy of what it sends is kept.
 - Run it again to change who can write to it; without addresses it keeps them. `--new-password`
   gives a Purelymail mailbox a new password; for your own, change it at your provider, then type
   the new one with `--new-password`. The password is in the instance's `.env`, where its users can
@@ -628,47 +634,48 @@ goes to the first.
   fails, nothing is deleted: run it again. `--keep-mailbox` leaves the mailbox in Purelymail.
   `uninstall` deletes every Purelymail mailbox it can and names the rest. Your own mailboxes stay,
   with their mail.
-- The API token manages every mailbox of the Purelymail account. It stays on the server, in
-  `secrets.env`, which only root can read. Keep people's mailboxes in another account, or at least
-  on another domain.
+- The API token manages every mailbox of the Purelymail account. It stays in `secrets.env`. Keep
+  people's mailboxes in another account, or at least on another domain.
 - `move` takes the mailbox along: the new server deletes a Purelymail one when it removes the
-  instance, with its own `[email]` settings (the same Purelymail account). After the move, check
-  that the instance still gets and sends mail. When a move fails after the instance may have reached
-  the other server, remove the copy here with `--keep-mailbox` if it did.
+  instance, with its own `THINNY_PURELYMAIL_API_TOKEN` (of the same Purelymail account). After the
+  move, check that the instance still gets and sends mail. When a move fails after the instance may
+  have reached the other server, remove the copy here with `--keep-mailbox` if it did.
 
 ## Updates
 
-Every night at `hermes.update_time`, thinny first updates itself: it pulls the clone it was
-installed from (`git pull --ff-only`) and, on a new commit, runs its `install.sh`, which also
-applies `config.toml`. If that fails, the run stops there. A private clone needs read access
-without a password, such as a deploy key.
+Every night at `hermes.update_time`, after the [backup](#backups) when it is on, thinny:
 
-Then it installs the latest stable Hermes release once it is `min_release_age_hours` old, with
-the plugins from Hermes's catalog (the Claude plugin, the language pack) at the versions that
-release pins. It updates one instance at a time and stops at the first failure; the next run
-finishes the job.
-Then the same for WebUI's latest stable release, on the instances that use it. WebUI restarts
-with every gateway restart, which a new Hermes needs.
-With `auto_update = false` the nightly run leaves thinny as it is and only reports a new Hermes
-release. The result is
-in `/var/lib/thinny/update-status.json`, the log in `/var/log/thinny.log`. Nightly runs
-also deliver new built-ins unless `auto_update = false`. Every nightly or `--all` run that gets past the thinny
-update, except a dry run, updates Claude Code and deletes the scheduled jobs' sessions older than 30 days
-(Hermes's own retention, 90 days by default, still applies to the rest).
+1. Updates itself: it pulls the clone it was installed from (`git pull --ff-only`) and, on a new
+   commit, runs its `install.sh`, which also applies `config.toml`. If that fails, the run stops
+   there. A private clone needs read access without a password, such as a deploy key.
+2. Installs the latest stable Hermes release once it is `min_release_age_hours` old, with the
+   plugins from Hermes's catalog (the Claude plugin, the language pack) at the versions that
+   release pins, and the built-ins a new thinny brings (the packages and plugins it gives every
+   instance), which do not wait for a new release. It updates one instance at a time and stops at
+   the first failure; the next run finishes the job.
+3. Does the same for WebUI's latest stable release, on the instances that use it. WebUI restarts
+   with every gateway restart, which a new Hermes needs.
+4. Whatever came of steps 2 and 3, updates Claude Code and deletes the scheduled jobs' sessions
+   older than 30 days in the active instances (Hermes's own retention, 90 days by default, still
+   applies to the rest).
+
+With `auto_update = false`, it skips step 1 and, unless an update is unfinished, only reports what
+steps 2 and 3 would do. The result is in `/var/lib/thinny/update-status.json`, the log in
+`/var/log/thinny.log`.
 
 ```sh
 thinny update                   # thinny only
-thinny update --all             # thinny, then Hermes, WebUI and built-ins, even with auto_update = false
+thinny update --all             # steps 1-4, even with auto_update = false; no backup first
 thinny update --all --now       # the same, without waiting for min_release_age_hours
-thinny update --all --dry-run   # only report what --all would do
+thinny update --all --dry-run   # only report what --all would do to Hermes, WebUI and built-ins
 ```
 
 - **There is no rollback.** Hermes databases cannot be downgraded. Snapshot the server before
   `update_time` (see [`extras/netcup-snapshot`](extras/netcup-snapshot/)), or turn on
-  [Backups](#backups): the update then runs only after a backup that worked, which `thinny backup
-  restore --all` on a new server brings back as it was, at its release.
+  [Backups](#backups): the nightly update then runs only after a backup that worked, which `thinny
+  backup restore --all` on a new server brings back as it was, at its release.
 - A gateway restart waits for a reply in progress, but cuts off scheduled jobs. Keep them away
-  from `update_time`.
+  from the nightly run.
 - The update never reboots the server.
 
 ## Backups
@@ -695,13 +702,14 @@ restored.
    with your SSH key if you run `sudo --preserve-env=SSH_AUTH_SOCK thinny backup init` (sudo hides your
    SSH agent). You confirm the machine's host key. thinny keeps nothing of that login. There it:
    - adds thinny's own key to `~/.ssh/authorized_keys`, allowed only `borg serve --append-only` in that
-     folder: it can add backups, but not delete or change them;
+     folder: it can add backups, and what it deletes or changes can be brought back until the monthly
+     cleanup (see [Limits](#limits));
    - creates the backups, encrypted with a new **passphrase that thinny shows once**. Keep it off the
      server, e.g. in your password manager: without it, nothing can be restored. The server keeps a copy
      in `secrets.env` for its nightly runs;
    - leaves a spare copy of the backups' key beside them (`thinny-backups.key-copy`, see below);
-   - adds a monthly cleanup to its crontab, which frees the space of old backups. Where there is no
-     crontab (some NAS), it prints the line for the NAS's task scheduler.
+   - adds a monthly cleanup (the 1st, at noon) to its crontab, which frees the space of old backups.
+     Where there is no crontab (some NAS), it prints the line for the NAS's task scheduler.
 
    Run again, it changes nothing that is set up. On another SSH port, give the host a `Host` entry with
    `Port` in `/root/.ssh/config`.
@@ -715,18 +723,19 @@ thinny backup          # back up now
 thinny backup list     # the backups: each run, with its instances
 ```
 
-- Before the update, thinny backs up each container (active, disabled or pending) without stopping it,
+- thinny backs up each container (active, disabled or pending) without stopping it,
   from an instant snapshot, then the server's settings, tokens, instances and access traces, and the
   certificate authority office PCs trust. Exports stay out.
 - It keeps 7 daily, 4 weekly and 6 monthly backups of each instance and of the server. A run that
-  failed or stopped halfway leaves nothing: the next run deletes what it left.
+  failed or stopped halfway leaves nothing: the next run deletes what it left. A removed instance's
+  backups go as the server's of the same runs are pruned.
 - **If the backup fails, the update waits** for one that works (`thinny update --all` does not). An
-  active or disabled instance without its container fails it too. `thinny doctor` fails then, and when
-  no backup worked for 36 hours. [`extras/nightly-watch`](extras/nightly-watch/)
-  can watch it too (`thinny-backup`).
+  active or disabled instance without its container fails it too. `thinny status` and `doctor` fail
+  then, and when no backup worked for 36 hours. [`extras/nightly-watch`](extras/nightly-watch/) can
+  watch it too (`thinny-backup`).
 - Each instance takes a few minutes, even with little changed (about 2.5 for 3 GB on a test server):
-  Incus exports it whole, to the server's disk, before borg reads it. A container whose archive does not
-  fit there above the last tenth of the disk is not backed up. Only what changed goes over the network.
+  Incus exports it whole, to the server's disk, before borg reads it. When one does not fit there above
+  the disk's last tenth, the backup fails. Only what changed goes over the network.
 - The [access trace](#access-trace) notes each backup as `incus export <name>`, so its users can see
   their data is backed up.
 
@@ -737,22 +746,23 @@ thinny backup restore alice                              # from the newest backu
 thinny backup restore alice --from 2026-11-18T03:00:12   # a run from thinny backup list
 ```
 
-- It stops `alice`, backs up its state then (`before-restore.alice.<time>`, kept 30 days; `--from` takes
-  it back), replaces its container with the backup's and finishes it like a [moved](#instances)
-  instance, at the server's Hermes release.
+- Only an active instance: it stops `alice`, backs up its state then (`before-restore.alice.<time>`,
+  kept 30 days; `--from` takes it back), replaces its container with the backup's and finishes it
+  like a [moved](#instances) instance, at the server's Hermes release.
 - Everything in it is as it was then: data, the password, sign-ins and its users' settings. A sign-in
   renewed since may need `thinny instance login alice` again.
 - It refuses a backup from a newer Hermes release than the server's, and runs only when no update is
-  unfinished. If it stops halfway, run it again: it goes on where it stopped. Until then, no backup
-  runs.
+  unfinished. If it stops halfway, run it again: it goes on where it stopped. Until then, every backup
+  fails, and the nightly update waits.
 
 ### Rebuild on a new server
 
 1. [Install](#install) thinny on the new server, with the same `[backup] target`. If instances use
    Tailscale, sign the server in to it first.
 2. `thinny backup init` adds the new server's key on the backup machine and asks for the passphrase.
-3. `thinny backup restore --all`, or `--from <run>`. It refuses a run that lacks an instance's backup,
-   and names that the new server uses for its own containers.
+3. `thinny backup restore --all`, or `--from <run>`. It refuses a server that has instances, even
+   removed ones, a run that lacks an active or disabled instance's backup, and names that the new
+   server uses for its own containers, pools or accounts.
 
 - It brings back `config.toml`, `secrets.env`, the groups, the access traces and the certificate
   authority, and every instance at its old port and address, with everything in it, at the Hermes
@@ -778,8 +788,8 @@ thinny backup restore alice --from 2026-11-18T03:00:12   # a run from thinny bac
 ## Status and checks
 
 ```sh
-thinny status   # releases, last update, the nightly schedule, containers, gateways
-thinny doctor   # every isolation and health check, each with a fix
+thinny status   # releases, last update and backup, the nightly schedule, containers, gateways
+thinny doctor   # every isolation and health check, with fixes
 ```
 
 Both show when thinny's nightly run, the OS upgrades and their automatic reboots come, as systemd and
@@ -789,9 +799,9 @@ apt have them, also after changes by hand:
 OK   nightly: backup and update at 03:00 (next 2026-11-22 03:00); OS upgrades at 06:00 (+ up to 1h), reboots when needed at 05:00
 ```
 
-Both exit with status 1 when anything fails, so monitoring can use them. Over SSH, a sudo account
-that needs a password cannot run them unattended (`sudo -n thinny doctor` fails). Both only read,
-so allow exactly these two without a password, with `sudo visudo -f /etc/sudoers.d/thinny-checks`:
+Both exit with status 1 when a check fails (not on warnings), so monitoring can use them. Both only
+read, so for a sudo account that needs a password to run them unattended over SSH, allow exactly
+these two without one, with `sudo visudo -f /etc/sudoers.d/thinny-checks`:
 
 ```
 <you> ALL=(root) NOPASSWD: /usr/local/sbin/thinny status, /usr/local/sbin/thinny doctor
@@ -853,8 +863,8 @@ reads it). A password changed in Grafana stays in Grafana only.
 The dashboard then shows how much of their ChatGPT or Claude subscription's 5-hour and weekly limits
 the users of the instance you choose used, and the weekly one of the 10 that used the most. Only
 these two shares: no plan, credits, reset times or accounts. Next to them, their turns and tokens
-of the last 5 hours and 7 days, as `thinny instance usage` counts them, read from Hermes's chats
-in the instance: only how many, nothing of what they say.
+of the last 5 hours and 7 days, read from Hermes's chats in the instance: only how many, nothing of
+what they say.
 
 - **Tell the instances' users before you turn it on.** Whoever can sign in to the dashboard sees
   their use hour by hour, for `retention_days`. The limits are the whole subscription's: with their
@@ -876,13 +886,15 @@ in the instance: only how many, nothing of what they say.
 When someone reaches into an instance's container through Incus, with `incus exec`, `incus shell`,
 `incus console` (or its log), `incus file`, a snapshot or an export, thinny notes the time and the
 command. thinny's own commands there are noted once per run of thinny, e.g. `thinny doctor ran its
-commands in alice` (`doctor` reads the instance's `.env`, among others). With the dashboard's
-[subscription usage](#dashboard), `thinny metrics` runs there once an hour.
+commands in alice` (`doctor` reads the instance's `.env`, among others). Expect regular entries from
+the nightly run (`thinny update --scheduled`) and its [backup](#backups) (`incus export alice`),
+every `thinny status` and `doctor`, and with the dashboard's [subscription usage](#dashboard),
+`thinny metrics` once an hour.
 
 - **On the server:** `journalctl -t thinny-trace`, and per instance in
   `/var/lib/thinny/trace/<name>/admin-access.log`.
 - **Inside the instance:** the same file, read-only, at `/var/log/thinny/admin-access.log`. Its
-  users can ask their agent whether anyone came in.
+  users can ask their agent to read it.
 - **Off the server**, out of reach of whoever is root on it: the entries have the syslog tag
   `thinny-trace` and the facility `authpriv`, so they can go wherever your logins go. With
   rsyslog (`apt install rsyslog`), put this in `/etc/rsyslog.d/50-thinny-trace.conf`, then run
@@ -918,8 +930,8 @@ thinny instance trace-sheet alice off   # stop
 
 - thinny connects a sheet only once it took a test row. A sheet that stops getting the trace (`off`
   or another URL) gets a last row saying so.
-- The URL only lets the server add rows. Keep yourself out of the sheet's editors: whoever can
-  edit it can delete rows, and only its version history would show it.
+- The URL only adds rows, but anyone who has it can: keep it private. Keep yourself out of the
+  sheet's editors: whoever can edit it can delete rows, and only its version history would show it.
 - Rows the sheet cannot take wait on the server, and go again every 5 minutes, oldest first;
   `doctor` warns while they wait. A Google Workspace that allows no access from outside it
   refuses them all.
@@ -938,15 +950,17 @@ when the trace is not running.
 thinny uninstall
 ```
 
-It lists the instances and asks you to type the server's hostname. Then it deletes every
-instance's container with all its data, and everything thinny set up: the update timer, the
-access trace, `tailscale serve` of the instances' ports, thinny's Caddyfile (Caddy is disabled),
-the dashboard's settings, the Incus profile and the instances' storage pools, the firewall table and
-its check, `/etc/thinny`, `/etc/hermes`, `/var/lib/thinny`, the log, `/etc/sudoers.d/thinny-checks`,
-the clone in `/usr/local/src/thinny` and thinny itself. **There is no undo.** If a step fails, fix the
+It lists the instances and asks you to type the server's hostname. Then it deletes the Purelymail
+mailboxes thinny created, with their mail (naming any it could not), every instance's container with
+all its data, and everything thinny set up: the nightly timer, the access trace, `tailscale serve`
+of the instances' ports, thinny's Caddyfile (Caddy is disabled), the dashboard's settings, the Incus
+profile and the instances' storage pools, the firewall table and its check, `/etc/thinny`,
+`/etc/hermes`, `/var/lib/thinny`, the log, `/etc/sudoers.d/thinny-checks`, the clone in
+`/usr/local/src/thinny` and thinny itself. **There is no undo.** If a step fails, fix the
 cause and run it again: it continues.
 
-The backups stay on the backup machine, and so does thinny's line in its `~/.ssh/authorized_keys`.
+The backups stay on the backup machine, with thinny's line in its `~/.ssh/authorized_keys` and the
+monthly cleanup; the server's copy of their passphrase goes with `/etc/thinny`, so keep yours.
 Storage pools that are not thinny's stay. The packages stay installed (the dashboard's with their
 services masked, and their history): `apt purge` removes those nothing else uses. IP forwarding and
 user namespaces stay on until the next reboot.
@@ -957,8 +971,8 @@ Optional tools, off unless you set them up:
 
 - [`extras/netcup-snapshot`](extras/netcup-snapshot/): a nightly snapshot of a netcup VPS
   before the update, run from another machine.
-- [`extras/nightly-watch`](extras/nightly-watch/): a morning check of the update and snapshot
-  status over SSH, with a mail on failure.
+- [`extras/nightly-watch`](extras/nightly-watch/): a morning check of the nightly update, backup
+  and snapshot over SSH, with a mail when one failed or did not run.
 
 ## License
 
