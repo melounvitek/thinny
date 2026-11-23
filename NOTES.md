@@ -232,6 +232,10 @@ Debian 13, kernel 6.12, Incus 6.0.4 (`incus-base`), Hermes v0.23.0 -> v0.23.1. A
   None of these rules is a wall: the rules match paths, and nesting allows mounts. Root in the container read
   `/proc/partitions` in a proc mounted elsewhere or bound to another file, and the pools in a sysfs mounted
   elsewhere; its user without sudo too, in a proc mounted in a user namespace of its own (`unshare -Urmpf`).
+  In a sysfs and a proc mounted elsewhere, the other instances' names were only in their pools' btrfs labels
+  and loop files (`grep -r` for them; AppArmor's list of profiles is empty in a container). So a pool's name
+  is since a hash of its instance's name with a key of the server's (`thinny-<12 hex digits>`, the key in
+  `/var/lib/thinny/pool-key`).
 - With the admin's forward-chain lines removed, `instance add` hung in apt for over 15 minutes
   (apt neither fails nor gives up without a network): now a DNS probe fails it in 40 s.
 - A running gateway got the `docker` group only after `incus restart` of its container.
@@ -810,8 +814,9 @@ guests' Incus 6.0.4 and borg 1.4.0), one the old server with alice (Webapp) and 
 - A disk cannot shrink (nor can a pool): a smaller one means moving the container into a new pool by
   hand.
 - Instances still see the server's number of CPUs, its amount of memory, its load, and the size and use of
-  its disk through the folders thinny mounts into them (the policy and the access trace), and what the
-  AppArmor rules hide, in a proc or sysfs they mount themselves.
+  its disk through the folders thinny mounts into them (the policy and the access trace), and in a proc or
+  sysfs they mount themselves what the AppArmor rules hide: the other instances' disks' sizes, use and
+  activity, not their names (their size or activity can still tell whose they are).
 - Alerting from the server itself: the dashboard sends none, and the watchdog runs off-server.
 - The dashboard on Debian 13 and Ubuntu 24.04, and a Grafana upgrade by unattended upgrades.
 - Subscription usage on the dashboard is untested on a server: a day with a ChatGPT and a Claude instance
